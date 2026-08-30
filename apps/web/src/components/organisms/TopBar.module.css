@@ -1,0 +1,167 @@
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 3.25rem;
+  padding: var(--space-1) var(--space-4);
+  background: var(--bg-nav);
+  border-bottom: 1px solid rgba(240, 235, 228, 0.08);
+  flex-shrink: 0;
+  z-index: 50;
+}
+
+.menuButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  flex: 0 0 var(--touch-target);
+  border: 1px solid rgba(240, 235, 228, 0.2);
+  border-radius: var(--radius-md);
+  background: rgba(240, 235, 228, 0.06);
+  color: var(--text-on-dark);
+}
+
+.logo {
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.logo:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+/* Small rounded square icon mark — ink background, scarlet "TED" */
+.logoMark {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--scarlet);
+  color: #FFFFFF;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+  flex: none;
+}
+
+/* Wordmark text — Fraunces display font */
+.wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.wordmarkPromp {
+  color: var(--text-on-dark);
+}
+
+.wordmarkTed {
+  color: var(--scarlet);
+}
+
+.pageTitle {
+  color: var(--text-on-dark);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brandLine {
+  color: rgba(240, 235, 228, 0.55);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.accountNav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}
+
+.accountNav :global([class*="ghost"]) {
+  color: rgba(240, 235, 228, 0.75);
+}
+
+.accountNav :global([class*="ghost"]:hover) {
+  background: rgba(240, 235, 228, 0.08);
+  color: var(--text-on-dark);
+}
+
+.signIn {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(240, 235, 228, 0.25);
+  color: var(--text-on-dark);
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-body-md);
+  text-decoration: none;
+  min-height: var(--touch-target);
+  white-space: nowrap;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.signIn:hover {
+  background: rgba(240, 235, 228, 0.1);
+  border-color: rgba(240, 235, 228, 0.4);
+}
+
+.signIn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1100px) {
+  .brandLine { display: none; }
+}
+
+@media (max-width: 767px) {
+  .bar {
+    justify-content: flex-start;
+    gap: var(--space-2);
+    padding-inline: var(--space-3);
+  }
+
+  .menuButton {
+    display: inline-flex;
+  }
+
+  .logo {
+    flex: 1 1 auto;
+  }
+
+  .accountNav {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .wordmark, .pageTitle { font-size: 1.15rem; }
+  .brandLine { display: none; }
+  .accountNav button span:last-child { display: none; }
+}

@@ -1,0 +1,70 @@
+{
+  "promises": [
+    {
+      "id": "no-blank-documents",
+      "promise": "PrompTED never presents a blank document as a successful result.",
+      "requiredEvidence": [
+        "Generated sections are validated before workspace display",
+        "Generation failures produce a plain-English recovery state",
+        "Automated blank-output regression test passes"
+      ],
+      "owner": "document-generation",
+      "status": "enforced"
+    },
+    {
+      "id": "original-stays-safe",
+      "promise": "A user's original imported document remains safe and recoverable.",
+      "requiredEvidence": [
+        "Authenticated originals are retained in private storage",
+        "Imported sections begin with an original-content version",
+        "Failed persistence does not create a partial workspace"
+      ],
+      "owner": "document-import",
+      "status": "enforced"
+    },
+    {
+      "id": "user-approves-structure",
+      "promise": "TED does not silently turn uncertain parsing into a permanent document structure.",
+      "requiredEvidence": [
+        "Import review occurs before workspace creation",
+        "Uncertain sections are labelled in plain English",
+        "Users can rename, split, merge and remove sections"
+      ],
+      "owner": "master-workspace",
+      "status": "enforced"
+    },
+    {
+      "id": "changes-are-reversible",
+      "promise": "Document changes are reversible and their origin is understandable.",
+      "requiredEvidence": [
+        "User edits create labelled snapshots",
+        "TED edits create labelled snapshots",
+        "Restore operations preserve the current version first"
+      ],
+      "owner": "editing",
+      "status": "enforced"
+    },
+    {
+      "id": "final-words-not-instructions",
+      "promise": "Generated documents contain final wording rather than prompts or code-like instructions.",
+      "requiredEvidence": [
+        "Output validation rejects meta-instructions",
+        "Fixture tests cover common prompt-leak patterns",
+        "Recovery regenerates only the affected section"
+      ],
+      "owner": "document-generation",
+      "status": "planned"
+    },
+    {
+      "id": "save-state-is-obvious",
+      "promise": "Users can tell whether their work is saved locally, synced, or needs attention.",
+      "requiredEvidence": [
+        "Workspace shows save and sync status",
+        "Guest storage limitations are explained",
+        "Failed sync offers a specific retry action"
+      ],
+      "owner": "persistence",
+      "status": "planned"
+    }
+  ]
+}

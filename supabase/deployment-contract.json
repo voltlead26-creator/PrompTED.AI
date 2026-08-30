@@ -1,0 +1,369 @@
+{
+  "$comment": "Machine-readable deployment compatibility contract. scripts/check-deployment-contract.mjs validates this file against supabase/config.toml, netlify.toml, the deploy workflows, and (indirectly, via a static source scan) the Edge Function source under supabase/functions/. scripts/probe-supabase-contract.mjs re-validates the schema half of this file against a live Supabase project before functions are deployed. Do not deploy a function whose requiredMigrations are not yet applied live -- that is the exact bug class this file exists to prevent (see supabase/migrations/20260819000000_add_durable_rate_limits.sql and the consume_rate_limit RPC it defines).",
+  "projectRef": "jjsykocqpjlekgsbylkd",
+  "sharedSecrets": [
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_ANON_KEY",
+    "ALLOWED_ORIGINS",
+    "OPENAI_API_KEY",
+    "OPENAI_FAST_MODEL",
+    "OPENAI_DEEP_MODEL",
+    "OPENAI_RESEARCH_MODEL",
+    "OPENAI_REVIEW_MODEL",
+    "OPENAI_ROUTING_VERSION",
+    "PROMPTED_DEPLOYMENT_ENV",
+    "PROMPTED_CAPTURED_COHORT"
+  ],
+  "sharedRequestGuard": {
+    "$comment": "Every function with usesSharedRequestGuard=true imports supabase/functions/_shared/auth-guard.ts, directly or transitively through _shared/openai-proxy.ts. That guard calls the consume_rate_limit RPC before any provider routing happens, and reads the subscriptions/usage_ledger tables for entitlement + cost tracking. These requirements are implicit for every such function and are merged into its effective contract by the checker instead of being repeated per function.",
+    "requiredMigrations": ["20260819000000_add_durable_rate_limits"],
+    "requiredRpcs": ["consume_rate_limit"],
+    "requiredTables": ["subscriptions", "usage_ledger"]
+  },
+  "webRequirements": {
+    "$comment": "Direct browser-to-Supabase schema dependencies. These are validated read-only before any production mutation because Netlify can build successfully while an RPC or table required by the progressively rendered workspace is still missing from the hosted Data API.",
+    "requiredMigrations": [
+      "20260527111048_prompted_documents_auth",
+      "20260608000000_prompted_v1_schema",
+      "20260708000000_saved_roles_bundles",
+      "20260709000000_role_outcomes",
+      "20260711090000_atomic_document_import",
+      "20260718061340_unified_ted_artifacts",
+      "20260718062256_backfill_unified_ted_artifacts",
+      "20260812161709_profile_personal_resources",
+      "20260831090000_profile_tenant_boundary",
+      "20260831100000_dormant_captured_document_operations",
+      "20260831110000_atomic_guest_workspace_import"
+    ],
+    "requiredRpcs": [
+      "get_latest_captured_document_operation",
+      "edit_captured_document_section",
+      "approve_captured_document_revision",
+      "request_captured_document_export",
+      "commit_document_import",
+      "commit_guest_workspace_import",
+      "save_ted_artifact",
+      "set_ted_block_completed",
+      "update_own_profile_details",
+      "promote_profile_resume",
+      "restore_previous_profile_resume",
+      "create_and_link_own_business"
+    ],
+    "requiredTables": [
+      "brand_kits",
+      "businesses",
+      "checklist_items",
+      "documents",
+      "outcomes",
+      "profile_resume_versions",
+      "profiles",
+      "role_action_items",
+      "role_outcomes",
+      "saved_roles",
+      "sections",
+      "subscriptions",
+      "ted_artifact_blocks",
+      "ted_artifact_references",
+      "ted_artifacts",
+      "usage_ledger"
+    ]
+  },
+  "functions": {
+    "clarify": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/clarify",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "recommend": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/recommend",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "interpret-intent": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/interpret-intent",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "research": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/research",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "job-match": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/job-match",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": ["20260612070000_job_market_roles"],
+      "requiredRpcs": [],
+      "requiredTables": ["job_market_roles"],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "table", "name": "job_market_roles" }
+    },
+    "generate-document": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/generate-document",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [
+        "20260707000000_generation_logs",
+        "20260722080500_usage_ledger_generation_idempotency",
+        "20260805000000_usage_ledger_model_calls",
+        "20260817070051_usage_ledger_model_call_unique_constraint"
+      ],
+      "requiredRpcs": [],
+      "requiredTables": ["generation_logs"],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "table", "name": "generation_logs" }
+    },
+    "document-operation": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/document-operation",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [
+        "20260831100000_dormant_captured_document_operations"
+      ],
+      "requiredRpcs": [
+        "accept_captured_document_operation",
+        "advance_captured_document_operation",
+        "cancel_captured_document_operation",
+        "claim_captured_document_operation",
+        "finalize_captured_document_operation",
+        "get_captured_document_operation",
+        "get_latest_captured_document_operation",
+        "record_captured_document_provider_attempt",
+        "request_captured_document_cancellation"
+      ],
+      "requiredTables": ["outcomes", "documents", "sections"],
+      "requiredSecrets": ["OPENAI_API_KEY"],
+      "smokeProbe": {
+        "kind": "rpc",
+        "name": "get_captured_document_operation"
+      }
+    },
+    "generate-checklist": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/generate-checklist",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "generate-artifact": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/generate-artifact",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "generate-report": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/generate-report",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "edit-section": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/edit-section",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "explain-section": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/explain-section",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "proofread-document": {
+      "status": "active",
+      "authMode": "jwt",
+      "clientRoute": "/api/proofread-document",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "ingest-upload": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/ingest-upload",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": ["20260608000000_prompted_v1_schema"],
+      "requiredRpcs": [],
+      "requiredTables": ["uploads"],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "table", "name": "uploads" }
+    },
+    "render-export": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/render-export",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [
+        "20260527111048_prompted_documents_auth",
+        "20260718061340_unified_ted_artifacts",
+        "20260718062256_backfill_unified_ted_artifacts",
+        "20260831100000_dormant_captured_document_operations"
+      ],
+      "requiredRpcs": ["complete_captured_document_export"],
+      "requiredTables": ["ted_artifacts", "ted_artifact_blocks", "export_history"],
+      "requiredSecrets": [
+        "RENDER_SERVICE_URL",
+        "RENDER_SERVICE_ALLOWED_ORIGIN"
+      ],
+      "smokeProbe": { "kind": "table", "name": "ted_artifacts" }
+    },
+    "live-source": {
+      "status": "active",
+      "authMode": "jwt",
+      "clientRoute": "/api/live-source",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": ["OPENAI_API_KEY"],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "openai-chat": {
+      "status": "dormant",
+      "retainedFor": "historical raw-interface provenance only; no production consumer",
+      "authMode": "jwt",
+      "clientRoute": null,
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": ["OPENAI_API_KEY"],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "openai-responses": {
+      "status": "dormant",
+      "retainedFor": "historical raw-interface provenance only; no production consumer",
+      "authMode": "jwt",
+      "clientRoute": null,
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": ["OPENAI_API_KEY"],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "openai-stream": {
+      "status": "dormant",
+      "retainedFor": "historical raw-interface provenance only; no production consumer",
+      "authMode": "jwt",
+      "clientRoute": null,
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": ["OPENAI_API_KEY"],
+      "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
+    },
+    "calculate-deadline": {
+      "status": "active",
+      "authMode": "jwt",
+      "clientRoute": null,
+      "usesSharedRequestGuard": false,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "none", "name": null }
+    },
+    "government-evidence": {
+      "status": "active",
+      "authMode": "jwt",
+      "clientRoute": null,
+      "usesSharedRequestGuard": false,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "none", "name": null }
+    },
+    "transport-victoria": {
+      "status": "active",
+      "authMode": "jwt",
+      "clientRoute": null,
+      "usesSharedRequestGuard": false,
+      "requiredMigrations": [],
+      "requiredRpcs": [],
+      "requiredTables": [],
+      "requiredSecrets": ["PTV_DEVELOPER_ID", "PTV_TIMETABLE_KEY"],
+      "smokeProbe": { "kind": "none", "name": null }
+    },
+    "account-delete": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/account-delete",
+      "usesSharedRequestGuard": false,
+      "requiredMigrations": ["20260608000000_prompted_v1_schema"],
+      "requiredRpcs": [],
+      "requiredTables": ["profiles", "brand_kits", "uploads", "audit_logs"],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "table", "name": "profiles" }
+    },
+    "webhooks-revenuecat": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/webhooks/revenuecat",
+      "usesSharedRequestGuard": false,
+      "requiredMigrations": ["20260608000000_prompted_v1_schema"],
+      "requiredRpcs": [],
+      "requiredTables": ["subscriptions", "audit_logs"],
+      "requiredSecrets": ["REVENUECAT_WEBHOOK_SECRET"],
+      "smokeProbe": { "kind": "table", "name": "subscriptions" }
+    }
+  }
+}

@@ -1,0 +1,72 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  transition: opacity 150ms ease;
+}
+
+.skipped {
+  opacity: 0.55;
+}
+
+.itemInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.itemName {
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.itemReason {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.count {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: var(--text-muted);
+}

@@ -1,0 +1,384 @@
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.documentMode {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.sectionMeta {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 22px;
+}
+
+.documentMode .editorWrap {
+  min-height: 0;
+  overflow-y: auto;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.documentMode .prose {
+  min-height: 72px;
+  padding: 0;
+  color: #2B2521;
+}
+
+.documentMode .prose :global(h1),
+.documentMode .prose :global(h2) {
+  color: #2B2521;
+}
+
+.documentMode .body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Keep the action bar as the final fixed row of the section. The editorWrap
+   above owns vertical scrolling, so the section heading, status and actions
+   remain visible while long prose moves independently. */
+.documentMode .contextBar {
+  flex: 0 0 auto;
+  position: static;
+}
+
+.documentMode .editorColumn {
+  min-height: 0;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  color: var(--ink-soft, #5E544A);
+}
+
+.body {
+  display: flex;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.editorColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editorWrap {
+  flex: 1 1 auto;
+  min-height: 680px;
+  overflow-y: auto;
+  background: var(--card, #FFFDF8);
+  border: 1px solid var(--line, #E2D7C2);
+  box-shadow: 8px 10px 0 rgba(122, 96, 49, 0.18);
+}
+
+.editor {
+  height: 100%;
+}
+
+.prose {
+  min-height: 680px;
+  padding: 56px;
+  font-size: 15px;
+  line-height: 1.72;
+  color: var(--ink, #2B2521);
+  outline: none;
+}
+
+.prose :global(h1),
+.prose :global(h2) {
+  margin: 0 0 18px;
+  padding-bottom: 14px;
+  border-bottom: 2px solid var(--line, #E2D7C2);
+  color: var(--ink, #2B2521);
+  font-size: 25px;
+  font-weight: 900;
+}
+
+.prose :global(h3) {
+  margin: 22px 0 10px;
+  color: var(--scarlet, #C8442B);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.prose :global(p) {
+  margin: 0 0 14px;
+}
+
+.prose :global(ul),
+.prose :global(ol) {
+  margin: 0 0 18px;
+  padding-left: 20px;
+}
+
+.prose :global(li) {
+  margin: 0 0 9px;
+}
+
+.prose:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--scarlet, #C8442B) 45%, transparent);
+}
+
+.contextBar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 8px;
+  padding: 10px max(10px, env(safe-area-inset-left)) calc(10px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-right));
+  background: color-mix(in srgb, var(--paper, #F7F1E7) 94%, transparent);
+  border: 1px solid var(--line, #E2D7C2);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(44, 36, 28, 0.16);
+  backdrop-filter: blur(14px);
+}
+
+.contextAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line, #D8CCB7);
+  border-radius: 10px;
+  background: var(--card, #FFFDF8);
+  color: var(--ink, #2B2521);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.contextPrimary {
+  background: var(--scarlet, #C8442B);
+  border-color: var(--scarlet, #C8442B);
+  color: #fff;
+}
+
+.contextAction:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.moreMenu {
+  position: relative;
+}
+
+.moreMenu summary {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line, #D8CCB7);
+  border-radius: 10px;
+  background: var(--card, #FFFDF8);
+  color: var(--ink, #2B2521);
+  cursor: pointer;
+  list-style: none;
+}
+
+.moreMenu summary::-webkit-details-marker {
+  display: none;
+}
+
+.morePanel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: grid;
+  gap: 4px;
+  width: min(290px, calc(100vw - 32px));
+  padding: 8px;
+  background: var(--card, #FFFDF8);
+  border: 1px solid var(--line, #D8CCB7);
+  border-radius: 12px;
+  box-shadow: 0 14px 42px rgba(44, 36, 28, 0.2);
+}
+
+.morePanel > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink, #2B2521);
+  text-align: left;
+  cursor: pointer;
+}
+
+.morePanel > button:hover,
+.morePanel > button:focus-visible {
+  background: var(--paper, #F7F1E7);
+}
+
+.formatting {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line, #E2D7C2);
+}
+
+.toolBtn {
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft, #5E544A);
+  cursor: pointer;
+}
+
+.toolActive {
+  background: var(--paper, #F7F1E7);
+  color: var(--scarlet, #C8442B);
+}
+
+.aiSidebar {
+  flex: 0 0 330px;
+  width: 330px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.aiSidebarHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aiSidebarHead p {
+  margin: 4px 0 0;
+  color: var(--ink-soft, #5E544A);
+  font-size: 0.85rem;
+}
+
+.aiSidebarTitle {
+  color: var(--ink, #2B2521);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.aiClose {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ink-soft, #5E544A);
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .aiSidebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 80;
+    width: auto;
+    max-height: 78dvh;
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+    background: var(--card, #FFFDF8);
+    border-top: 1px solid var(--line, #E2D7C2);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -14px 44px rgba(44, 36, 28, 0.24);
+    animation: tedSheetUp 180ms ease;
+  }
+
+  .aiSidebar::before {
+    content: "";
+    width: 40px;
+    height: 4px;
+    margin: 0 auto 4px;
+    border-radius: 999px;
+    background: var(--line, #D8CCB7);
+  }
+}
+
+@media (max-width: 640px) {
+  .sectionMeta {
+    display: none;
+  }
+
+  .editorWrap,
+  .prose {
+    min-height: 430px;
+  }
+
+  .prose {
+    padding: 28px 20px 92px;
+    font-size: 15px;
+  }
+
+  .contextBar {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+    gap: 6px;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .contextAction {
+    min-width: 0;
+    padding: 7px 6px;
+    font-size: 0.82rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aiSidebar {
+    animation: none;
+  }
+}
+
+@keyframes tedSheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.prose :global([data-ted-placeholder="true"]) {
+  display: inline;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border-bottom: 1px dotted currentColor;
+  background: color-mix(in srgb, var(--ember, #A85D00) 14%, transparent);
+  color: #704000;
+  font-style: italic;
+  cursor: pointer;
+}
+
+.prose :global([data-ted-placeholder="true"]:focus-visible) {
+  outline: 2px solid var(--scarlet, #C8442B);
+  outline-offset: 2px;
+}

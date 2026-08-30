@@ -1,0 +1,140 @@
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.row:hover:not(.disabled) {
+  border-color: var(--accent);
+}
+
+.compact {
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+}
+
+.compact .copy {
+  gap: 0;
+}
+
+.native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.indicator {
+  display: inline-grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-page);
+  color: transparent;
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.glyph {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.glyph path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.native:checked + .indicator {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  transform: rotate(-2deg);
+}
+
+.native:focus-visible + .indicator {
+  outline: var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.native:active + .indicator {
+  transform: scale(0.94);
+}
+
+.copy {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.labelLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.label {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.status {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+}
+
+.description {
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+  line-height: 1.45;
+}
+
+.disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  background: var(--bg-page);
+}
+
+.disabled .indicator {
+  border-style: dashed;
+}
+
+@media (max-width: 520px) {
+  .labelLine {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row,
+  .indicator {
+    transition: none;
+  }
+}

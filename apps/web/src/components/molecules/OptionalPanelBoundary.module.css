@@ -1,0 +1,29 @@
+.fallback {
+  margin: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #c78a80;
+  border-radius: 0.75rem;
+  background: #fff5f2;
+  color: #6e261d;
+}
+
+.fallback p {
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.actions button {
+  min-height: 2.5rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+}

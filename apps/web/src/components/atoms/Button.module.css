@@ -1,0 +1,96 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  min-width: var(--touch-target);
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  font-family: inherit;
+  font-weight: var(--weight-bold);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    color 0.15s ease;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.button:disabled,
+.button[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Immediate visual feedback on press, ahead of whatever the click handler
+   does (which may be async) — makes the button feel like it registered the
+   tap right away instead of appearing to lag. */
+.button:not(:disabled):active {
+  transform: scale(0.97);
+  transition-duration: 0.05s;
+}
+
+/* ---- Sizes ---- */
+.sm {
+  font-size: var(--text-label);
+  padding: 0.6em 1em;
+}
+.md {
+  font-size: var(--text-body-md);
+  padding: 0.8em 1.4em;
+}
+.lg {
+  font-size: var(--text-body-lg);
+  padding: 1em 1.8em;
+}
+
+/* ---- Variants ---- */
+.primary {
+  background: var(--coral);
+  color: var(--white);
+}
+.primary:not(:disabled):hover {
+  background: var(--coral-deep);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.ghost {
+  background: transparent;
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+.ghost:not(:disabled):hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.danger {
+  background: transparent;
+  border-color: var(--red-soft);
+  color: var(--red-soft);
+}
+.danger:not(:disabled):hover {
+  background: var(--red-soft);
+  color: var(--white);
+}
+
+.text {
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  min-width: auto;
+}
+.text:not(:disabled):hover {
+  text-decoration: underline;
+}
+
+.fullWidth {
+  width: 100%;
+}

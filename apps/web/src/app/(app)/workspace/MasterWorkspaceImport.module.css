@@ -1,0 +1,164 @@
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  background: var(--paper, #F7F1E7);
+  box-sizing: border-box;
+}
+
+@media (min-width: 900px) {
+  .screen {
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+  }
+}
+
+/* Doc dropzone leads at 2fr vs sections' 1fr, matching WorkspaceScreen's
+   doc:sections ratio once a document exists. Proofread has no placeholder
+   here since there's no document yet to proofread. */
+.body {
+  display: grid;
+  /* Sections column is a fixed width sized to the card (not a fraction
+     of the doc panel) \u2014 just enough wider than the portrait card to
+     give it breathing room, not an arbitrary fr split. */
+  grid-template-columns: minmax(0, 3fr) minmax(16rem, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  /* .screen is a flex column; without flex:1 this box would only be as
+     tall as its content, leaving dead space below it instead of the
+     dropzone/sections panels running the full remaining screen height. */
+  flex: 1;
+  min-height: 0;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--line, #E2D7C2);
+  border-radius: 22px;
+  background: var(--paper-deep, #EFE5D4);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+@media (max-width: 899px) {
+  .body { grid-template-columns: 1fr; }
+}
+@media (max-width: 899px) {
+  .screen { height: auto; max-height: none; overflow: visible; }
+  .body { max-height: none; overflow: visible; }
+}
+
+.sidePanel {
+  background: var(--card, #FFFDF8);
+  border: 1px solid var(--line, #E2D7C2);
+  border-radius: 14px;
+  padding: 12px 14px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  /* The panel itself no longer scrolls \u2014 heading/sub stay fixed;
+     only .sectionsStack below scrolls. See that rule for why. */
+  overflow: hidden;
+}
+.panelHeading { margin: 0; font-size: 1.05rem; color: var(--ink, #2B2521); }
+.panelSub { margin: 0 0 10px; font-size: 0.8rem; color: var(--ink-soft, #5E544A); }
+.sectionsStack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+  /* Only this element scrolls \u2014 heading/sub above it are outside
+     this box, so they stay put while cards scroll underneath. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Fixed card width (not a % of the panel) so the panel column can be a
+   tight fixed width too, instead of being sized to leave a wide gutter
+   around a proportionally-sized card. Handles any number of sections
+   \u2014 no cap on how many render, the list just scrolls. */
+.sectionThumb {
+  width: 160px;
+  aspect-ratio: 3 / 4;
+  flex-shrink: 0;
+  border: 1px solid var(--line, #E2D7C2);
+  border-radius: 8px;
+  background: var(--card, #FFFDF8);
+  box-sizing: border-box;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sectionThumbLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--ink-soft, #5E544A);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.sectionThumbLine {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line, #E2D7C2);
+}
+.sectionThumbLineShort { width: 60%; }
+
+.dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  border: 2px dashed var(--line, #E2D7C2);
+  border-radius: 18px;
+  background: var(--card, #FFFDF8);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.dropzone:hover, .dropzone:focus-visible {
+  border-color: var(--scarlet, #C8442B);
+  outline: none;
+}
+.dropzoneActive {
+  border-color: var(--scarlet, #C8442B);
+  background: color-mix(in srgb, var(--scarlet, #C8442B) 6%, var(--card, #FFFDF8));
+}
+.dropzoneBusy { cursor: default; }
+
+.dropzoneInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  max-width: 46ch;
+}
+.iconWrap {
+  width: 56px; height: 56px;
+  border-radius: 16px;
+  background: var(--paper-deep, #EFE5D4);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--scarlet, #C8442B);
+}
+.dropzoneTitle { margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--ink, #2B2521); }
+.description { margin: 0; font-size: 0.88rem; color: var(--ink-soft, #5E544A); line-height: 1.5; }
+.uploadButton {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--scarlet, #C8442B);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+.error { margin: 8px 0 0; color: var(--scarlet-deep, #A8351F); font-size: 0.85rem; }
+.note { margin: 0; font-size: 0.8rem; color: var(--ink-soft, #5E544A); }

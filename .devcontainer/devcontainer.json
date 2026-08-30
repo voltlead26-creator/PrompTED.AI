@@ -1,0 +1,25 @@
+  {
+    "name": "PrompTED.AI",
+    "image": "mcr.microsoft.com/devcontainers/universal:2",
+    "features": {
+      "ghcr.io/devcontainers/features/node:1": {
+        "version": "22.23.2"
+      }
+    },
+    "postCreateCommand": "corepack enable && corepack prepare pnpm@10.33.0 --activate && pnpm install --frozen-lockfile",
+    "forwardPorts": [3000],
+    "portsAttributes": {
+      "3000": {
+        "label": "PrompTED Web",
+        "onAutoForward": "openPreview"
+      }
+    },
+    "customizations": {
+      "vscode": {
+        "extensions": [
+          "dbaeumer.vscode-eslint",
+          "esbenp.prettier-vscode"
+        ]
+      }
+    }
+  }

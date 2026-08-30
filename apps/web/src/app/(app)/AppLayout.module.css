@@ -1,0 +1,44 @@
+/* Hard layout law (desktop): no page in the app scrolls. .shell is pinned
+   to a HARD 100dvh (not min-height \u2014 min-height lets flex children grow
+   the shell taller than the viewport, which was the actual root cause of
+   whole-page scrolling everywhere: .main already had overflow-y: auto, but
+   its parent chain never had a bounded height for that to clip against).
+   .main remains the single scroll container for every page's content.
+   Below 900px (tablet/mobile/PWA) this is intentionally NOT enforced \u2014
+   a fixed viewport is a desktop affordance; phones keep natural scroll. */
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--bg-page);
+}
+
+@media (min-width: 900px) {
+  .shell {
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+/* Mobile navigation is a drawer, so content no longer reserves space
+   for the retired fixed bottom bar. */
+@media (max-width: 767px) {
+  .main {
+    width: 100%;
+    padding: var(--space-3);
+  }
+}

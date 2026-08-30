@@ -1,0 +1,80 @@
+.wrap {
+  background: var(--card, #FFFDF8);
+  border: 1px solid var(--line, #E2D7C2);
+  border-radius: 14px;
+  padding: 16px 18px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.heading { margin: 0; font-size: 1.05rem; color: var(--ink, #2B2521); }
+.sub { margin: 0 0 12px; font-size: 0.8rem; color: var(--ink-soft, #5E544A); }
+/* The rail itself never grows the page \u2014 once cards exceed the column
+   height, this list scrolls on its own. */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0 2px 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--paper, #F7F1E7);
+  border: 1px solid var(--line, #E2D7C2);
+  border-radius: 12px;
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+  flex-shrink: 0;
+}
+.active {
+  border-color: var(--scarlet, #C8442B);
+  box-shadow: 0 0 0 1px var(--scarlet, #C8442B);
+  background: color-mix(in srgb, var(--scarlet, #C8442B) 6%, var(--paper, #F7F1E7));
+}
+.thumb {
+  flex: 0 0 52px;
+  height: 66px;
+  background: #fff;
+  border: 1px solid var(--line, #E2D7C2);
+  border-radius: 4px;
+  box-shadow: 1px 2px 3px rgba(43, 37, 33, 0.12);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 6px;
+}
+.thumbLine, .thumbLineShort {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line, #E2D7C2);
+}
+.thumbLineShort { width: 60%; }
+.meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.number {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--scarlet-deep, #A8351F);
+}
+.name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink, #2B2521);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status { font-size: 0.76rem; color: var(--ink-soft, #5E544A); }

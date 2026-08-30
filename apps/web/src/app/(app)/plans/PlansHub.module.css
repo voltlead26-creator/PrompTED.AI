@@ -1,0 +1,141 @@
+.createSection {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.createHeadingRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.createHeadingRow h2,
+.manualLibrary h2 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.createHeadingRow p,
+.manualLibrary p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+}
+
+.createGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.createCard {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-height: 10rem;
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.createCard:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+
+.createCard:focus-visible,
+.manualCard:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.createCard strong {
+  font-size: var(--text-heading-md);
+}
+
+.createCard > span:last-child {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.cardIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-md);
+  background: var(--brand-signature-soft);
+  color: var(--accent);
+}
+
+.manualHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.manualHeader h1 {
+  margin: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-weight: var(--weight-semibold);
+}
+
+.manualLibrary {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.manualGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.manualCard {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.manualCard:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+.manualCard span {
+  color: var(--text-secondary);
+}
+
+.manualCard span:last-child {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+@media (max-width: 900px) {
+  .createGrid,
+  .manualGrid {
+    grid-template-columns: 1fr;
+  }
+}

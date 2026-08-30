@@ -1,0 +1,39 @@
+.wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.tip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: 16rem;
+  padding: var(--space-2) var(--space-3);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+  white-space: normal;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.12s ease,
+    visibility 0.12s ease;
+  pointer-events: none;
+}
+
+.top {
+  bottom: calc(100% + var(--space-2));
+}
+.bottom {
+  top: calc(100% + var(--space-2));
+}
+
+.open {
+  opacity: 1;
+  visibility: visible;
+}

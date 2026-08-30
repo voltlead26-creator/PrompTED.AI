@@ -1,0 +1,45 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.expo/
+**/.expo/
+*.tsbuildinfo
+.env
+**/.env
+.env.local
+.env.*.local
+**/.env.local
+.DS_Store
+**/.DS_Store
+.claude/
+.vscode/
+bun.lockb
+ios/
+android/
+google-service-account.json
+
+# Next.js
+.next/
+**/.next/
+out/
+**/.netlify/
+
+# pnpm
+.pnpm-store/
+
+# Vitest coverage
+coverage/
+
+# Expo
+expo-env.d.ts
+
+.codex/coordination/*
+!.codex/coordination/project.yaml
+
+# Subagent-driven-development scratch workspace (superpowers skill)
+.superpowers/
+
+# Supabase CLI local state and generated function-runtime material
+supabase/.branches/
+supabase/.temp/

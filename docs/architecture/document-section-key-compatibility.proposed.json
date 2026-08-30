@@ -1,0 +1,3752 @@
+{
+  "schemaVersion": "1.1.0",
+  "status": "owner_approved",
+  "ownerApprovalRequired": true,
+  "liveMigrationImplemented": false,
+  "ownerApproval": {
+    "status": "approved",
+    "approvedBy": "PrompTED owner",
+    "approvedAt": "2026-08-25",
+    "scope": "Alternative C, all 18 compatibility decisions, permanent historical reads, non-lossy split and merge rules, user re-approval, adapter removal criteria, and the four new canonical section policies.",
+    "liveImplementationAuthorized": false,
+    "phaseL02Authorized": true,
+    "protectedActionsAuthorized": false
+  },
+  "inventory": {
+    "catalogueTemplateCount": 86,
+    "enhancedDocumentIntelligenceProfileCount": 86,
+    "exactSectionKeyMatchCount": 68,
+    "conflictCount": 18,
+    "scope": "This matrix covers only the 18 conflicts; the future ledger remains responsible for all 86 enhanced profiles."
+  },
+  "source": {
+    "repositoryRemote": "https://github.com/voltlead26-creator/PrompTED.git",
+    "worktreeDirectory": "/Users/kaichurchw/PrompTED - Historical/PrompTED/PrompTED",
+    "branch": "reliably-prompTED",
+    "headCommit": "e7f4e37e3087ee166c16ab242b17c60b3877f16b",
+    "comparisonBaseBranch": "reliably-prompTED",
+    "cataloguePaths": [
+      "packages/shared/src/templates/templates.data.json",
+      "packages/shared/src/templates/phase2-templates.data.json"
+    ],
+    "profilePaths": [
+      "supabase/functions/_shared/document-intelligence-profiles.ts"
+    ]
+  },
+  "approvedAuthority": {
+    "decision": "Owner-approved architecture: use one immutable versioned ledger and adopt richer Enhanced DIP sections as candidate canonical keys under the approved non-lossy mappings.",
+    "historicalReadPolicy": "Catalogue keys remain permanent historical identities while referenced.",
+    "newWritePolicy": "No proposed key enters live generation until an immutable version, persistence boundary and adapter exist.",
+    "userContentPolicy": "Never silently discard, model-redistribute or auto-approve historical content."
+  },
+  "adoptionPlan": {
+    "authority": "AGENTS.md",
+    "catalogueScope": {
+      "enhancedProfileCount": 86,
+      "exactStructureCount": 68,
+      "compatibilityDecisionCount": 18,
+      "policy": "The immutable ledger must ultimately govern all 86 Enhanced Document Intelligence Profiles; this compatibility matrix remains scoped to the 18 structures whose ordered section keys conflict."
+    },
+    "foundationDependency": {
+      "workflowId": "01a02eca-55a4-79f3-926a-09c32df95900",
+      "status": "owner_accepted_locally_uncommitted_no_hosted_evidence",
+      "observedAt": "2026-08-25",
+      "repositoryRemote": "https://github.com/voltlead26-creator/PrompTED.git",
+      "sourceGitCommonDirectory": "/Users/kaichurchw/PrompTED - Historical/GitHub/PrompTED/.git",
+      "sourceWorktreeDirectory": "/Users/kaichurchw/PrompTED/PrompTED-worktrees/recovery-foundation-successor",
+      "sourceBranch": "codex/recovery-foundation-successor",
+      "sourceHeadCommit": "e7f4e37e3087ee166c16ab242b17c60b3877f16b",
+      "targetGitCommonDirectory": "/Users/kaichurchw/PrompTED - Historical/PrompTED/PrompTED/.git",
+      "targetWorktreeDirectory": "/Users/kaichurchw/PrompTED - Historical/PrompTED/PrompTED",
+      "targetBranch": "reliably-prompTED",
+      "targetHeadCommit": "e7f4e37e3087ee166c16ab242b17c60b3877f16b",
+      "comparisonBaseBranch": "reliably-prompTED",
+      "handoffPath": "docs/quality/2026-08-24-recovery-foundation-successor-handoff.md",
+      "sameRemoteAsTargetWorktree": true,
+      "sameCheckpointAsTargetWorktree": true,
+      "sameGitCommonDirectoryAsTargetWorktree": false,
+      "locallyAppliedToTargetWorktree": true,
+      "committed": false,
+      "pushed": false,
+      "reviewedInPullRequest": false,
+      "hostedCiVerified": false,
+      "mergedIntoIntegrationBase": false,
+      "productionPromoted": false,
+      "deployed": false,
+      "acceptanceRequirement": "Satisfied locally on 2026-08-25 when the PrompTED owner accepted the fresh Node 22 foundation evidence in reliably-prompTED. Commit, push, pull request, hosted CI, merge, deployment and production promotion remain separate protected actions and are not implied by local acceptance.",
+      "provenancePolicy": "The foundation files were applied locally from the separately verified successor into the target reliably-prompTED worktree through bounded patches. This proves local placement only; it does not prove a commit, remote update, pull-request review, hosted CI, merge, deployment or production behavior."
+    },
+    "currentTestingPolicy": {
+      "mode": "standalone_individual_only",
+      "standaloneInvocationRequired": true,
+      "ciIntegrationAuthorized": false,
+      "workflowIntegrationAuthorized": false,
+      "applicationWorkflowExerciseAuthorized": false,
+      "transitionGate": "Completion of the F0 foundation acceptance gate, separate authorization and local verification of L0.2 persistence/version boundaries, and locally verified L0.3 compatibility adapters."
+    },
+    "l02Implementation": {
+      "workflowId": "01a02f99-b81f-7102-ab15-f9b5a4a7a9e4",
+      "status": "implemented_and_verified_locally_live_integration_not_authorized",
+      "implementedAt": "2026-08-25",
+      "migrationPath": "supabase/migrations/20260825090000_immutable_document_ledger_persistence.sql",
+      "databaseTestPath": "supabase/tests/immutable_document_ledger_persistence.test.sql",
+      "sharedContractPath": "packages/shared/src/document-ledger.ts",
+      "adrPath": "docs/architecture/ADR-002-immutable-ledger-persistence-and-versioned-compatibility-foundation.md",
+      "freshLocalMigrationCount": 24,
+      "databaseTestCount": 60,
+      "sharedFocusedTestCount": 9,
+      "liveLedgerSelectionEnabled": false,
+      "compatibilityAdaptersImplemented": false,
+      "applicationWorkflowExercised": false,
+      "hostedMutationPerformed": false,
+      "summary": "L0.2 adds a dormant immutable ledger and generation-snapshot store, explicit legacy/captured identity seams, revision-checked artifact edit and approval RPCs, provenance-ready export metadata, and fail-closed binding controls. It does not register or activate a production ledger, transform historical keys, backfill data, or connect the shadow profiles to generation."
+    },
+    "steps": [
+      {
+        "id": "L0.1",
+        "name": "Section-key authority and compatibility decision",
+        "status": "owner_approved_locally_live_implementation_not_authorized",
+        "entryGate": "Deterministically reproduce the 86 catalogue templates, 86 enhanced profiles, 68 exact structures and 18 conflicts from the current checkout.",
+        "authorizedScope": "ADR, proposed compatibility matrix, standalone validator, individual validator tests, audit and handoff evidence only.",
+        "verification": "Invoke the compatibility validator and its deliberate negative fixtures directly; do not add them to package scripts, CI or application workflows.",
+        "exitGate": "Satisfied on 2026-08-25 when the PrompTED owner approved Alternative C, the candidate canonical keys, historical aliases, split and merge policies, re-approval rules, adapter removal criteria and all four new-section decisions."
+      },
+      {
+        "id": "L0.1A",
+        "name": "Enhanced DIP V2 shadow restructuring",
+        "status": "owner_approved_shadow_live_integration_not_authorized",
+        "entryGate": "Use the reviewed Enhanced DIPs as source evidence and reuse the shared ledger vocabulary without changing the live DIPS registry.",
+        "authorizedScope": "Compile all 86 profiles into an isolated shadow representation with explicit inputs, clarification, section, quality, source, compatibility and export contracts.",
+        "verification": "Run only the focused Deno format, lint, check and test commands for the V2 shadow files; keep them unimported by live generation and unwired from workflows.",
+        "exitGate": "Satisfied on 2026-08-25 when the PrompTED owner approved the V2 representation and the requiredness policies for all four profile-only sections."
+      },
+      {
+        "id": "F0",
+        "name": "Recovery Foundation Successor acceptance",
+        "status": "owner_accepted_locally_uncommitted_no_hosted_evidence",
+        "entryGate": "The bounded successor files and required workflow-authority cleanup are applied to the clean reliably-prompTED worktree with source and target provenance recorded.",
+        "authorizedScope": "Local placement and verification in reliably-prompTED only. Commit, push, pull request, hosted CI, merge, deployment and production promotion remain separately authorized actions.",
+        "verification": "Run the foundation Node 22 and pnpm 10.33.0 focused checks and verify:web in the target worktree. Attribute the result only to the current uncommitted reliably-prompTED diff.",
+        "exitGate": "Satisfied locally on 2026-08-25 when the owner accepted the fresh Node 22 and pnpm 10.33.0 foundation evidence. Any commit, remote review, hosted CI, merge or production action still requires separate authorization."
+      },
+      {
+        "id": "L0.2",
+        "name": "Immutable ledger persistence and versioned compatibility foundation",
+        "status": "implemented_and_verified_locally_live_integration_not_authorized",
+        "entryGate": "Satisfied on 2026-08-25: ADR-001 and V2 decisions were owner-approved, the owner accepted the fresh local F0 evidence, and then explicitly instructed Codex to proceed with L0.2.",
+        "authorizedScope": "Locally implement immutable ledger and benchmark identity, document and section version seams, source provenance, RLS and RPC boundaries, optimistic concurrency, replay identity and fresh-local-database proof. Live selection, adapters, backfill, application workflows and hosted mutation remain excluded.",
+        "verification": "Use focused schema, migration, RLS, RPC, concurrency and replay tests in the local environment; do not select V2 profiles in live generation or wire application workflows.",
+        "exitGate": "Satisfied locally: 24 migrations applied from scratch and 60 isolated database assertions plus 9 focused shared-contract tests passed. L0.3 remains a separate owner gate."
+      },
+      {
+        "id": "L0.3",
+        "name": "Version-aware compatibility adapters and migration rehearsal",
+        "status": "deferred_not_authorized",
+        "entryGate": "L0.2 persistence and version boundaries pass their focused local acceptance tests.",
+        "authorizedScope": "Implement approved adapters for representative rename, split, merge and unresolved cases; preserve source identities and rehearse idempotent migrations against synthetic local fixtures.",
+        "verification": "Run adapter, migration, approval-conflict, replay, repair and rollback tests individually; unsupported mappings fail closed and no model redistributes historical prose.",
+        "exitGate": "Every representative mapping preserves content, revisions, approvals and provenance under forward and rollback paths."
+      },
+      {
+        "id": "L0.4",
+        "name": "Representative cohort shadow validation",
+        "status": "deferred_not_authorized",
+        "entryGate": "L0.3 adapters and migration rehearsals pass individual local tests.",
+        "authorizedScope": "Compare current contracts with ledger validation for a concise, evidence-rich, structured-list, emotionally sensitive and high-risk representative cohort without blocking users or changing live selection.",
+        "verification": "Use standalone shadow comparisons and synthetic fixtures only; record false positives, missing states and compatibility gaps per template.",
+        "exitGate": "The owner reviews the representative cohort evidence and explicitly authorizes application workflow exercise."
+      },
+      {
+        "id": "L1",
+        "name": "Application workflow exercise and one-cohort runtime shadow",
+        "status": "deferred_explicit_owner_gate",
+        "entryGate": "The owner explicitly authorizes workflow exercise after L0.4 evidence is reviewable.",
+        "authorizedScope": "Exercise generation, clarification, save, reopen, edit, approval, repair, replay and export for one approved cohort while historical reads remain pinned.",
+        "verification": "Run the agreed local application workflow acceptance matrix and inspect actual local export artifacts before any CI, preview, staging or production claim.",
+        "exitGate": "The pilot cohort passes static, functional and workflow gates with rollback evidence and no unresolved high-severity defect."
+      },
+      {
+        "id": "L2",
+        "name": "Cohort expansion and authoritative enforcement",
+        "status": "deferred_explicit_owner_gate",
+        "entryGate": "L1 pilot evidence is approved and the owner authorizes cohort expansion and validator integration.",
+        "authorizedScope": "Expand cohort by cohort across all 86 Enhanced DIPs, then connect the single authoritative ledger validator to runtime and CI without creating a second permanent authority.",
+        "verification": "Each cohort must pass its individual contract tests before workflow tests; CI and runtime enforcement begin only at this gate.",
+        "exitGate": "All active profiles pass the agreed acceptance matrix, persisted cohorts are accounted for and every remaining bypass has an identified consumer and removal plan."
+      },
+      {
+        "id": "L3",
+        "name": "Bypass removal and controlled release",
+        "status": "deferred_protected_actions",
+        "entryGate": "All 86 profiles and affected historical cohorts are proven migrated or permanently version-pinned, and the owner separately authorizes each protected action.",
+        "authorizedScope": "Remove obsolete duplicate prompts, validators and section maps; perform reviewed CI, preview or staging gates; then request separate authorization for commit, push, PR, merge, hosted migration and deployment actions.",
+        "verification": "Prove exact-revision build provenance, hosted configuration, signed-in workflows, persistence, replay and inspected exports before any production-complete claim.",
+        "exitGate": "Controlled production evidence confirms the approved revision without deleting historical aliases still in use."
+      }
+    ]
+  },
+  "templates": [
+    {
+      "templateId": "business-email",
+      "catalogueSectionKeys": [
+        "subject",
+        "body",
+        "action"
+      ],
+      "profileSectionKeys": [
+        "subject_and_greeting",
+        "message",
+        "call_to_action"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "subject_and_greeting",
+        "message",
+        "call_to_action"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "subject"
+          ],
+          "profileKeys": [
+            "subject_and_greeting"
+          ],
+          "proposedCanonicalKeys": [
+            "subject_and_greeting"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both contain the subject and greeting; the profile key makes the combined purpose explicit.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "body"
+          ],
+          "profileKeys": [
+            "message"
+          ],
+          "proposedCanonicalKeys": [
+            "message"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both contain the substantive email message.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "action"
+          ],
+          "profileKeys": [
+            "call_to_action"
+          ],
+          "proposedCanonicalKeys": [
+            "call_to_action"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both state the requested action or next step.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "cover-letter",
+      "catalogueSectionKeys": [
+        "opening",
+        "fit",
+        "motivation",
+        "closing"
+      ],
+      "profileSectionKeys": [
+        "sender_and_date",
+        "recipient_and_salutation",
+        "opening",
+        "evidence_of_fit",
+        "employer_motivation",
+        "closing_and_signature"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "sender_and_date",
+        "recipient_and_salutation",
+        "opening",
+        "evidence_of_fit",
+        "employer_motivation",
+        "closing_and_signature"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "opening"
+          ],
+          "profileKeys": [
+            "sender_and_date",
+            "recipient_and_salutation",
+            "opening"
+          ],
+          "proposedCanonicalKeys": [
+            "sender_and_date",
+            "recipient_and_salutation",
+            "opening"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The catalogue opening aggregates header, recipient, salutation and opening argument.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "fit"
+          ],
+          "profileKeys": [
+            "evidence_of_fit"
+          ],
+          "proposedCanonicalKeys": [
+            "evidence_of_fit"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both connect supported candidate evidence to role requirements.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "motivation"
+          ],
+          "profileKeys": [
+            "employer_motivation"
+          ],
+          "proposedCanonicalKeys": [
+            "employer_motivation"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both explain genuine employer-specific motivation.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "closing"
+          ],
+          "profileKeys": [
+            "closing_and_signature"
+          ],
+          "proposedCanonicalKeys": [
+            "closing_and_signature"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile retains the close but adds an explicit signature identity contract.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        },
+        {
+          "path": "apps/web/src/components/organisms/FindRolesScreen.tsx",
+          "role": "producer",
+          "evidence": "Find a Role starts cover-letter by exact templateId."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "education-cover-letter",
+      "catalogueSectionKeys": [
+        "intro",
+        "suitability",
+        "close"
+      ],
+      "profileSectionKeys": [
+        "recipient_and_application",
+        "opening",
+        "fit_and_evidence",
+        "motivation_and_fit",
+        "closing"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "recipient_and_application",
+        "opening",
+        "fit_and_evidence",
+        "motivation_and_fit",
+        "closing"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "intro"
+          ],
+          "profileKeys": [
+            "recipient_and_application",
+            "opening"
+          ],
+          "proposedCanonicalKeys": [
+            "recipient_and_application",
+            "opening"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The catalogue introduction combines application identity, recipient context and opening.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "suitability"
+          ],
+          "profileKeys": [
+            "fit_and_evidence",
+            "motivation_and_fit"
+          ],
+          "proposedCanonicalKeys": [
+            "fit_and_evidence",
+            "motivation_and_fit"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The catalogue suitability section combines preparation evidence with course or institution fit.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "close"
+          ],
+          "profileKeys": [
+            "closing"
+          ],
+          "proposedCanonicalKeys": [
+            "closing"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both conclude the application and state the next step.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "induction-manual",
+      "catalogueSectionKeys": [
+        "welcome",
+        "how_we_work",
+        "policies",
+        "contacts"
+      ],
+      "profileSectionKeys": [
+        "welcome_and_context",
+        "how_work_is_performed",
+        "policies_and_safety",
+        "systems_contacts_and_first_period"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "welcome_and_context",
+        "how_work_is_performed",
+        "policies_and_safety",
+        "systems_contacts_and_first_period"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "welcome"
+          ],
+          "profileKeys": [
+            "welcome_and_context"
+          ],
+          "proposedCanonicalKeys": [
+            "welcome_and_context"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both orient the new starter and explain context.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "how_we_work"
+          ],
+          "profileKeys": [
+            "how_work_is_performed"
+          ],
+          "proposedCanonicalKeys": [
+            "how_work_is_performed"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both define everyday operating expectations.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "policies"
+          ],
+          "profileKeys": [
+            "policies_and_safety"
+          ],
+          "proposedCanonicalKeys": [
+            "policies_and_safety"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile explicitly adds safety obligations.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "contacts"
+          ],
+          "profileKeys": [
+            "systems_contacts_and_first_period"
+          ],
+          "proposedCanonicalKeys": [
+            "systems_contacts_and_first_period"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile expands contacts into systems, support contacts and first-period guidance.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "interview-prep-questions",
+      "catalogueSectionKeys": [
+        "about_you",
+        "role_specific",
+        "your_questions"
+      ],
+      "profileSectionKeys": [
+        "role_and_evidence_map",
+        "opening_and_motivation_questions",
+        "behavioural_questions",
+        "role_specific_questions",
+        "difficult_question_preparation",
+        "questions_to_ask_interviewer",
+        "final_preparation_checklist"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "role_and_evidence_map",
+        "opening_and_motivation_questions",
+        "behavioural_questions",
+        "role_specific_questions",
+        "difficult_question_preparation",
+        "questions_to_ask_interviewer",
+        "final_preparation_checklist"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "about_you"
+          ],
+          "profileKeys": [
+            "opening_and_motivation_questions",
+            "behavioural_questions",
+            "difficult_question_preparation"
+          ],
+          "proposedCanonicalKeys": [
+            "opening_and_motivation_questions",
+            "behavioural_questions",
+            "difficult_question_preparation"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The personal-question bucket combines motivation, behavioural evidence and difficult-question preparation.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "role_specific"
+          ],
+          "profileKeys": [
+            "role_and_evidence_map",
+            "role_specific_questions",
+            "final_preparation_checklist"
+          ],
+          "proposedCanonicalKeys": [
+            "role_and_evidence_map",
+            "role_specific_questions",
+            "final_preparation_checklist"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The role-specific bucket combines evidence mapping, likely questions and final preparation.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "your_questions"
+          ],
+          "profileKeys": [
+            "questions_to_ask_interviewer"
+          ],
+          "proposedCanonicalKeys": [
+            "questions_to_ask_interviewer"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both contain candidate questions for the interviewer.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        },
+        {
+          "path": "apps/web/src/components/organisms/FindRolesScreen.tsx",
+          "role": "producer",
+          "evidence": "Find a Role starts interview-prep-questions by exact templateId."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "interview-script",
+      "catalogueSectionKeys": [
+        "intro",
+        "stories",
+        "tricky"
+      ],
+      "profileSectionKeys": [
+        "opening_introduction",
+        "why_this_role",
+        "strength_and_capability_answers",
+        "star_evidence_stories",
+        "role_specific_answers",
+        "difficult_question_answers",
+        "candidate_questions",
+        "closing"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "opening_introduction",
+        "why_this_role",
+        "strength_and_capability_answers",
+        "star_evidence_stories",
+        "role_specific_answers",
+        "difficult_question_answers",
+        "candidate_questions",
+        "closing"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "intro"
+          ],
+          "profileKeys": [
+            "opening_introduction",
+            "why_this_role"
+          ],
+          "proposedCanonicalKeys": [
+            "opening_introduction",
+            "why_this_role"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The introduction combines self-introduction and role motivation.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "stories"
+          ],
+          "profileKeys": [
+            "strength_and_capability_answers",
+            "star_evidence_stories",
+            "role_specific_answers"
+          ],
+          "proposedCanonicalKeys": [
+            "strength_and_capability_answers",
+            "star_evidence_stories",
+            "role_specific_answers"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The stories bucket combines capability answers, STAR examples and role-specific answers.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "tricky"
+          ],
+          "profileKeys": [
+            "difficult_question_answers"
+          ],
+          "proposedCanonicalKeys": [
+            "difficult_question_answers"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both prepare supported answers to difficult questions.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [],
+          "profileKeys": [
+            "candidate_questions"
+          ],
+          "proposedCanonicalKeys": [
+            "candidate_questions"
+          ],
+          "classification": "new_canonical_section",
+          "semanticRationale": "The owner approved candidate questions as a standalone canonical section for new ledger versions. The base interview-script contract keeps it optional; only an explicit immutable template variant may require it.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "ownerDecisionStatus": "approved",
+          "approvedAt": "2026-08-25",
+          "newSectionPolicy": {
+            "requiredness": "optional",
+            "historicalContentStrategy": "Preserve every historical aggregate section unchanged and never automatically extract, redistribute or backfill candidate-question content into this new section.",
+            "newWriteStrategy": "Create candidate_questions only under a future immutable ledger version; the base contract omits it cleanly when unused, while an explicit immutable template variant may require it.",
+            "renderingStrategy": "Render the standalone section only when it has a valid non-blank section state; do not render an empty heading or card.",
+            "activationAuthority": "An immutable template version or variant, never ad hoc workflow code or model judgment."
+          }
+        },
+        {
+          "legacyKeys": [],
+          "profileKeys": [
+            "closing"
+          ],
+          "proposedCanonicalKeys": [
+            "closing"
+          ],
+          "classification": "new_canonical_section",
+          "semanticRationale": "The owner approved closing as a standalone optional canonical section for new interview-script ledger versions.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "ownerDecisionStatus": "approved",
+          "approvedAt": "2026-08-25",
+          "newSectionPolicy": {
+            "requiredness": "optional",
+            "historicalContentStrategy": "Preserve historical interview-script sections exactly as stored and never construct, extract or auto-approve a closing from historical aggregate prose.",
+            "newWriteStrategy": "Create closing only under a future immutable ledger version and omit it without an empty heading when supported facts do not justify useful closing wording.",
+            "renderingStrategy": "Render closing as a separate section only when it resolves to a valid non-blank state; generic filler does not satisfy the section contract.",
+            "activationAuthority": "The captured immutable ledger version, never ad hoc workflow code or model judgment."
+          }
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "job-follow-up-email",
+      "catalogueSectionKeys": [
+        "thanks",
+        "value",
+        "next"
+      ],
+      "profileSectionKeys": [
+        "subject_line",
+        "greeting",
+        "event_reference",
+        "continued_interest_and_value",
+        "next_step",
+        "sign_off"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "subject_line",
+        "greeting",
+        "event_reference",
+        "continued_interest_and_value",
+        "next_step",
+        "sign_off"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "thanks"
+          ],
+          "profileKeys": [
+            "subject_line",
+            "greeting",
+            "event_reference"
+          ],
+          "proposedCanonicalKeys": [
+            "subject_line",
+            "greeting",
+            "event_reference"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The thanks section combines header, greeting and event reference.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "value"
+          ],
+          "profileKeys": [
+            "continued_interest_and_value"
+          ],
+          "proposedCanonicalKeys": [
+            "continued_interest_and_value"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both restate interest and relevant value.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "next"
+          ],
+          "profileKeys": [
+            "next_step"
+          ],
+          "proposedCanonicalKeys": [
+            "next_step"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both request or confirm the next step.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [],
+          "profileKeys": [
+            "sign_off"
+          ],
+          "proposedCanonicalKeys": [
+            "sign_off"
+          ],
+          "classification": "new_canonical_section",
+          "semanticRationale": "The owner approved sign-off as a standalone required canonical section for new follow-up-email ledger versions while allowing deterministic adjacent rendering with next_step.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "ownerDecisionStatus": "approved",
+          "approvedAt": "2026-08-25",
+          "newSectionPolicy": {
+            "requiredness": "required",
+            "historicalContentStrategy": "Preserve historical next content unchanged and never parse, remove or duplicate an embedded sign-off into the new standalone section.",
+            "newWriteStrategy": "Store sign_off as a separate required section under a future immutable ledger version; missing sender identity must use the ledger's clarification or permitted placeholder state and must not be invented.",
+            "renderingStrategy": "A renderer may place sign_off directly after next_step for a compact email, but storage, editing, approval, repair, replay and export identity remain separate.",
+            "activationAuthority": "The captured immutable ledger version, never presentation code redefining the stored contract."
+          }
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "job-search-checklist",
+      "catalogueSectionKeys": [
+        "items"
+      ],
+      "profileSectionKeys": [
+        "objective_and_cadence",
+        "setup_and_evidence_preparation",
+        "role_discovery",
+        "role_screening",
+        "tailoring_and_submission",
+        "tracking_and_follow_up",
+        "interview_preparation",
+        "weekly_review"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "objective_and_cadence",
+        "setup_and_evidence_preparation",
+        "role_discovery",
+        "role_screening",
+        "tailoring_and_submission",
+        "tracking_and_follow_up",
+        "interview_preparation",
+        "weekly_review"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "items"
+          ],
+          "profileKeys": [
+            "objective_and_cadence",
+            "setup_and_evidence_preparation",
+            "role_discovery",
+            "role_screening",
+            "tailoring_and_submission",
+            "tracking_and_follow_up",
+            "interview_preparation",
+            "weekly_review"
+          ],
+          "proposedCanonicalKeys": [
+            "objective_and_cadence",
+            "setup_and_evidence_preparation",
+            "role_discovery",
+            "role_screening",
+            "tailoring_and_submission",
+            "tracking_and_follow_up",
+            "interview_preparation",
+            "weekly_review"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The single list aggregates objective, preparation, discovery, screening, submission, tracking, interview and review.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        },
+        {
+          "path": "apps/web/src/components/organisms/FindRolesScreen.tsx",
+          "role": "producer",
+          "evidence": "Find a Role starts job-search-checklist by exact templateId."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "offer-letter",
+      "catalogueSectionKeys": [
+        "offer",
+        "terms",
+        "conditions",
+        "acceptance"
+      ],
+      "profileSectionKeys": [
+        "parties_role_and_offer",
+        "confirmed_key_terms",
+        "conditions",
+        "acceptance"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "parties_role_and_offer",
+        "confirmed_key_terms",
+        "conditions",
+        "acceptance"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "offer"
+          ],
+          "profileKeys": [
+            "parties_role_and_offer"
+          ],
+          "proposedCanonicalKeys": [
+            "parties_role_and_offer"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile adds explicit parties and role identity.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "terms"
+          ],
+          "profileKeys": [
+            "confirmed_key_terms"
+          ],
+          "proposedCanonicalKeys": [
+            "confirmed_key_terms"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both contain confirmed key employment terms.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "conditions"
+          ],
+          "profileKeys": [
+            "conditions"
+          ],
+          "proposedCanonicalKeys": [
+            "conditions"
+          ],
+          "classification": "unchanged",
+          "semanticRationale": "Key and purpose are identical.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": false,
+          "durableMigrationRequired": false,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "acceptance"
+          ],
+          "profileKeys": [
+            "acceptance"
+          ],
+          "proposedCanonicalKeys": [
+            "acceptance"
+          ],
+          "classification": "unchanged",
+          "semanticRationale": "Key and purpose are identical.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": false,
+          "durableMigrationRequired": false,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": []
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "onboarding-checklist",
+      "catalogueSectionKeys": [
+        "items"
+      ],
+      "profileSectionKeys": [
+        "pre_start_tasks",
+        "first_day_tasks",
+        "first_week_tasks",
+        "role_training_and_access",
+        "owner_due_status_and_evidence"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "pre_start_tasks",
+        "first_day_tasks",
+        "first_week_tasks",
+        "role_training_and_access",
+        "owner_due_status_and_evidence"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "items"
+          ],
+          "profileKeys": [
+            "pre_start_tasks",
+            "first_day_tasks",
+            "first_week_tasks",
+            "role_training_and_access",
+            "owner_due_status_and_evidence"
+          ],
+          "proposedCanonicalKeys": [
+            "pre_start_tasks",
+            "first_day_tasks",
+            "first_week_tasks",
+            "role_training_and_access",
+            "owner_due_status_and_evidence"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The checklist aggregates pre-start, first day, first week, training/access and accountable evidence.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "pay-rise-request",
+      "catalogueSectionKeys": [
+        "case",
+        "ask",
+        "script"
+      ],
+      "profileSectionKeys": [
+        "conversation_context",
+        "case_for_review",
+        "compensation_request",
+        "conversation_script",
+        "close_and_next_step"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "conversation_context",
+        "case_for_review",
+        "compensation_request",
+        "conversation_script",
+        "close_and_next_step"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "case"
+          ],
+          "profileKeys": [
+            "conversation_context",
+            "case_for_review"
+          ],
+          "proposedCanonicalKeys": [
+            "conversation_context",
+            "case_for_review"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The case combines review context and supporting evidence.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "ask"
+          ],
+          "profileKeys": [
+            "compensation_request"
+          ],
+          "proposedCanonicalKeys": [
+            "compensation_request"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both state the supported compensation request.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "script"
+          ],
+          "profileKeys": [
+            "conversation_script",
+            "close_and_next_step"
+          ],
+          "proposedCanonicalKeys": [
+            "conversation_script",
+            "close_and_next_step"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The script combines conversation wording and close or next step.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "personal-statement",
+      "catalogueSectionKeys": [
+        "motivation",
+        "background",
+        "goals"
+      ],
+      "profileSectionKeys": [
+        "purpose_and_target",
+        "motivation",
+        "preparation_and_evidence",
+        "program_fit",
+        "future_direction"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "purpose_and_target",
+        "motivation",
+        "preparation_and_evidence",
+        "program_fit",
+        "future_direction"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "motivation"
+          ],
+          "profileKeys": [
+            "purpose_and_target",
+            "motivation"
+          ],
+          "proposedCanonicalKeys": [
+            "purpose_and_target",
+            "motivation"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "Motivation combines application purpose and personal motivation.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "background"
+          ],
+          "profileKeys": [
+            "preparation_and_evidence",
+            "program_fit"
+          ],
+          "proposedCanonicalKeys": [
+            "preparation_and_evidence",
+            "program_fit"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "Background combines preparation evidence and programme fit.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "goals"
+          ],
+          "profileKeys": [
+            "future_direction"
+          ],
+          "proposedCanonicalKeys": [
+            "future_direction"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both describe the supported future direction.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "promotion-case",
+      "catalogueSectionKeys": [
+        "impact",
+        "readiness",
+        "proposal"
+      ],
+      "profileSectionKeys": [
+        "target_promotion",
+        "readiness_evidence",
+        "capability_match",
+        "development_and_gaps",
+        "request_and_next_step"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "target_promotion",
+        "readiness_evidence",
+        "capability_match",
+        "development_and_gaps",
+        "request_and_next_step"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "impact"
+          ],
+          "profileKeys": [
+            "readiness_evidence"
+          ],
+          "proposedCanonicalKeys": [
+            "readiness_evidence"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "Impact is an input to readiness evidence, but the profile requires broader facts.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "readiness"
+          ],
+          "profileKeys": [
+            "development_and_gaps"
+          ],
+          "proposedCanonicalKeys": [
+            "development_and_gaps"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "Readiness can contain development needs, but the profile makes gaps explicit.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "impact",
+            "readiness"
+          ],
+          "profileKeys": [
+            "capability_match"
+          ],
+          "proposedCanonicalKeys": [
+            "capability_match"
+          ],
+          "classification": "many_to_one_merge",
+          "semanticRationale": "Capability match draws from demonstrated impact and current readiness.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": [],
+          "mergeStrategy": {
+            "deterministicOrdering": [
+              "impact",
+              "readiness"
+            ],
+            "headingTreatment": "Preserve source headings as labelled subsections in Impact then Readiness order.",
+            "duplicateContentHandling": "Retain one rendered copy of exact normalised duplicates while recording both source IDs; leave non-identical overlap for review.",
+            "approvalConflictHandling": "Never auto-approve when source states differ; preserve each source state and require explicit approval.",
+            "provenancePreservation": "Record source IDs, keys, revisions, ledger version, ordering and transformation version.",
+            "rollbackAndHistoricalRendering": "Keep source rows immutable and render historical versions unchanged; rollback removes only the projection."
+          }
+        },
+        {
+          "legacyKeys": [
+            "proposal"
+          ],
+          "profileKeys": [
+            "target_promotion",
+            "request_and_next_step"
+          ],
+          "proposedCanonicalKeys": [
+            "target_promotion",
+            "request_and_next_step"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The proposal combines the target promotion with the request and next step.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "reference-request",
+      "catalogueSectionKeys": [
+        "ask",
+        "details"
+      ],
+      "profileSectionKeys": [
+        "recipient_and_relationship",
+        "request_purpose",
+        "helpful_context",
+        "request_and_opt_out",
+        "signoff"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "recipient_and_relationship",
+        "request_purpose",
+        "helpful_context",
+        "request_and_opt_out",
+        "signoff"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "ask"
+          ],
+          "profileKeys": [
+            "recipient_and_relationship",
+            "request_and_opt_out",
+            "signoff"
+          ],
+          "proposedCanonicalKeys": [
+            "recipient_and_relationship",
+            "request_and_opt_out",
+            "signoff"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "The ask combines relationship context, request, opt-out and sign-off.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        },
+        {
+          "legacyKeys": [
+            "details"
+          ],
+          "profileKeys": [
+            "request_purpose",
+            "helpful_context"
+          ],
+          "proposedCanonicalKeys": [
+            "request_purpose",
+            "helpful_context"
+          ],
+          "classification": "one_to_many_split",
+          "semanticRationale": "Details combine reference purpose and supporting context.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalContentStrategy": "Keep the aggregate section, content, order, revision history and approval under its captured version. Never redistribute prose automatically; create child sections only through user-approved conversion, with unknown child content in clarification state."
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "resignation-letter",
+      "catalogueSectionKeys": [
+        "notice",
+        "appreciation",
+        "transition",
+        "close"
+      ],
+      "profileSectionKeys": [
+        "notice",
+        "appreciation",
+        "handover",
+        "close"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "notice",
+        "appreciation",
+        "handover",
+        "close"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "notice"
+          ],
+          "profileKeys": [
+            "notice"
+          ],
+          "proposedCanonicalKeys": [
+            "notice"
+          ],
+          "classification": "unchanged",
+          "semanticRationale": "Key and purpose are unchanged.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": false,
+          "durableMigrationRequired": false,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "appreciation"
+          ],
+          "profileKeys": [
+            "appreciation"
+          ],
+          "proposedCanonicalKeys": [
+            "appreciation"
+          ],
+          "classification": "unchanged",
+          "semanticRationale": "Key and purpose are unchanged.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": false,
+          "durableMigrationRequired": false,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "transition"
+          ],
+          "profileKeys": [
+            "handover"
+          ],
+          "proposedCanonicalKeys": [
+            "handover"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both cover supported transition and handover commitments.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "close"
+          ],
+          "profileKeys": [
+            "close"
+          ],
+          "proposedCanonicalKeys": [
+            "close"
+          ],
+          "classification": "unchanged",
+          "semanticRationale": "Key and purpose are unchanged.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": false,
+          "durableMigrationRequired": false,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": []
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "sop",
+      "catalogueSectionKeys": [
+        "overview",
+        "steps",
+        "roles"
+      ],
+      "profileSectionKeys": [
+        "purpose_scope_prerequisites",
+        "procedure_steps_and_controls",
+        "roles_records_and_review"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "purpose_scope_prerequisites",
+        "procedure_steps_and_controls",
+        "roles_records_and_review"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "overview"
+          ],
+          "profileKeys": [
+            "purpose_scope_prerequisites"
+          ],
+          "proposedCanonicalKeys": [
+            "purpose_scope_prerequisites"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "Overview expands into purpose, scope and prerequisites.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "steps"
+          ],
+          "profileKeys": [
+            "procedure_steps_and_controls"
+          ],
+          "proposedCanonicalKeys": [
+            "procedure_steps_and_controls"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "Procedure adds control points to ordered steps.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "roles"
+          ],
+          "profileKeys": [
+            "roles_records_and_review"
+          ],
+          "proposedCanonicalKeys": [
+            "roles_records_and_review"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "Roles expands into records and review obligations.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "terms-of-employment",
+      "catalogueSectionKeys": [
+        "parties",
+        "pay",
+        "obligations",
+        "ending"
+      ],
+      "profileSectionKeys": [
+        "parties_and_role",
+        "pay_hours_and_location",
+        "duties_policies_and_obligations",
+        "leave_and_ending_employment",
+        "acknowledgement"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "parties_and_role",
+        "pay_hours_and_location",
+        "duties_policies_and_obligations",
+        "leave_and_ending_employment",
+        "acknowledgement"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "parties"
+          ],
+          "profileKeys": [
+            "parties_and_role"
+          ],
+          "proposedCanonicalKeys": [
+            "parties_and_role"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile adds the role to parties.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "pay"
+          ],
+          "profileKeys": [
+            "pay_hours_and_location"
+          ],
+          "proposedCanonicalKeys": [
+            "pay_hours_and_location"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile adds hours and location; historical pay prose cannot supply them.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "obligations"
+          ],
+          "profileKeys": [
+            "duties_policies_and_obligations"
+          ],
+          "proposedCanonicalKeys": [
+            "duties_policies_and_obligations"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile makes duties and policies explicit.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [
+            "ending"
+          ],
+          "profileKeys": [
+            "leave_and_ending_employment"
+          ],
+          "proposedCanonicalKeys": [
+            "leave_and_ending_employment"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile adds leave terms to ending-employment content.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        },
+        {
+          "legacyKeys": [],
+          "profileKeys": [
+            "acknowledgement"
+          ],
+          "proposedCanonicalKeys": [
+            "acknowledgement"
+          ],
+          "classification": "new_canonical_section",
+          "semanticRationale": "The owner approved acknowledgement as a standalone jurisdiction-controlled canonical section: optional in the generic contract and required only by an approved jurisdiction-specific immutable contract.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "ownerDecisionStatus": "approved",
+          "approvedAt": "2026-08-25",
+          "newSectionPolicy": {
+            "requiredness": "jurisdiction_controlled",
+            "historicalContentStrategy": "Preserve historical terms documents unchanged and never insert, infer or auto-approve an acknowledgement retrospectively.",
+            "newWriteStrategy": "Treat acknowledgement as optional in the generic future contract and require it only when an approved jurisdiction-specific immutable ledger contract activates it.",
+            "renderingStrategy": "Omit the section cleanly under the generic contract when it is not activated; when activated, render and export it only after its jurisdiction-specific validation and approval conditions pass.",
+            "activationAuthority": "An approved, dated and versioned jurisdiction-specific contract; never model inference, generic workflow code or assumed legal practice."
+          }
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    },
+    {
+      "templateId": "workplace-policy",
+      "catalogueSectionKeys": [
+        "purpose",
+        "policy",
+        "responsibilities",
+        "breach"
+      ],
+      "profileSectionKeys": [
+        "purpose_and_scope",
+        "policy_statements",
+        "roles_and_responsibilities",
+        "breaches_and_review"
+      ],
+      "proposedCanonicalSectionKeys": [
+        "purpose_and_scope",
+        "policy_statements",
+        "roles_and_responsibilities",
+        "breaches_and_review"
+      ],
+      "mappings": [
+        {
+          "legacyKeys": [
+            "purpose"
+          ],
+          "profileKeys": [
+            "purpose_and_scope"
+          ],
+          "proposedCanonicalKeys": [
+            "purpose_and_scope"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both define why and where the policy applies.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "policy"
+          ],
+          "profileKeys": [
+            "policy_statements"
+          ],
+          "proposedCanonicalKeys": [
+            "policy_statements"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both contain operative statements.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "responsibilities"
+          ],
+          "profileKeys": [
+            "roles_and_responsibilities"
+          ],
+          "proposedCanonicalKeys": [
+            "roles_and_responsibilities"
+          ],
+          "classification": "one_to_one_rename",
+          "semanticRationale": "Both assign roles and responsibilities.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": true,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "high",
+          "unresolvedQuestions": [],
+          "historicalReadStrategy": "Resolve by captured ledger version; retain the catalogue key as a permanent historical read and export alias."
+        },
+        {
+          "legacyKeys": [
+            "breach"
+          ],
+          "profileKeys": [
+            "breaches_and_review"
+          ],
+          "proposedCanonicalKeys": [
+            "breaches_and_review"
+          ],
+          "classification": "semantic_replacement",
+          "semanticRationale": "The profile adds policy review to breach handling.",
+          "sourceEvidence": [
+            "packages/shared/src/templates/templates.data.json",
+            "supabase/functions/_shared/document-intelligence-profiles.ts"
+          ],
+          "preserveHistoricalRead": true,
+          "deterministicMigrationPossible": false,
+          "compatibilityAdapterRequired": true,
+          "durableMigrationRequired": true,
+          "ownerDecisionRequired": true,
+          "confidence": "medium",
+          "unresolvedQuestions": []
+        }
+      ],
+      "consumers": [
+        {
+          "path": "packages/shared/src/templates/index.ts",
+          "role": "producer",
+          "evidence": "Loads catalogue templates and selection using catalogue keys."
+        },
+        {
+          "path": "apps/web/src/lib/document-generation.ts",
+          "role": "producer",
+          "evidence": "Builds keyed generation sections and matches streamed results by key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "producer",
+          "evidence": "Accepts caller-supplied keyed sections and streams results."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "validator",
+          "evidence": "Looks up Enhanced DIP contracts by exact sectionKey."
+        },
+        {
+          "path": "supabase/functions/_shared/document-pipeline.ts",
+          "role": "repair",
+          "evidence": "Scopes repair and placeholder recovery by section key."
+        },
+        {
+          "path": "supabase/functions/generate-document/index.ts",
+          "role": "replay",
+          "evidence": "Carries generation_request_id, but no ledger-version replay boundary exists."
+        },
+        {
+          "path": "supabase/functions/_shared/template-engine.ts",
+          "role": "fallback",
+          "evidence": "Contains catalogue stubs and a generic fallback."
+        },
+        {
+          "path": "apps/web/src/hooks/useDocument.ts",
+          "role": "persistence",
+          "evidence": "Reopens workspaces and persists template and section rows."
+        },
+        {
+          "path": "apps/web/src/lib/api/sections.ts",
+          "role": "persistence",
+          "evidence": "Persists name, order, content, status and history, but not key or ledger version."
+        },
+        {
+          "path": "apps/web/src/hooks/useWorkspace.ts",
+          "role": "workspace",
+          "evidence": "Matches placeholders by exact key and preserves edits and history."
+        },
+        {
+          "path": "apps/web/src/hooks/useLibrary.ts",
+          "role": "library",
+          "evidence": "Loads saved documents by template identity."
+        },
+        {
+          "path": "apps/web/src/hooks/useExport.ts",
+          "role": "export",
+          "evidence": "Sends caller-held ordered sections to export."
+        },
+        {
+          "path": "supabase/functions/render-export/index.ts",
+          "role": "renderer",
+          "evidence": "Renders approved caller-supplied sections without a ledger version."
+        },
+        {
+          "path": "supabase/functions/_shared/document-ledger-adapter.test.ts",
+          "role": "test",
+          "evidence": "Asserts the exact shadow conflict inventory."
+        },
+        {
+          "path": "supabase/migrations/20260608000000_prompted_v1_schema.sql",
+          "role": "fixture",
+          "evidence": "Defines sections without durable key or ledger version."
+        }
+      ],
+      "persistedDataImpact": "Reopen under the captured historical contract. Preserve IDs, names, order, content, required flags, history and approval; do not relabel or split on read.",
+      "replayImpact": "Resolve the captured version, reject unknown mappings, and use optimistic concurrency so old work cannot overwrite newer edits or approvals.",
+      "exportImpact": "Load the exact persisted approved revision and captured version; record revision, version, format and validation.",
+      "workspaceImpact": "Render the captured section contract. Any upgraded projection is separate, reversible and unapproved until accepted.",
+      "compatibilityAdapterProposal": "Use one version-aware ledger-boundary adapter. Historical versions expose catalogue identities; approved future versions may project into profile keys with provenance and fail-closed behaviour.",
+      "rollbackProposal": "Keep historical rows and metadata immutable. Disable the new-write cohort and return to captured historical rendering without deleting aliases.",
+      "unresolvedQuestions": [],
+      "ownerApprovalRequired": true
+    }
+  ]
+}

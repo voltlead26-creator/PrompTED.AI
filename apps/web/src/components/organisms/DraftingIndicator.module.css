@@ -1,0 +1,54 @@
+/* Fixed brand colours (not theme vars): this card always sits on its own
+   warm paper background, so dark-mode token values must not wash it out. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #E9CDB8;
+  border-radius: 14px;
+  background: #FBF3E9;
+}
+.headRow { display: flex; align-items: center; gap: 10px; }
+.pen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--scarlet, #C8442B);
+  color: white;
+  font-size: 1rem;
+  animation: penBob 1.1s ease-in-out infinite;
+}
+.label { margin: 0; color: #2B2521; font-weight: 700; }
+.dots span { opacity: 0; animation: dotFade 1.2s infinite; color: #C8442B; font-weight: 800; }
+.dots span:nth-child(2) { animation-delay: 0.2s; }
+.dots span:nth-child(3) { animation-delay: 0.4s; }
+.lines { display: flex; flex-direction: column; gap: 8px; }
+.line {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #F0E2D2 0%, #FFFFFF 45%, #F0E2D2 90%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.hint { margin: 0; color: #5E544A; font-size: 0.85rem; }
+@keyframes penBob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-3px) rotate(-8deg); }
+}
+@keyframes dotFade {
+  0%, 60%, 100% { opacity: 0; }
+  30% { opacity: 1; }
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pen, .line, .dots span { animation: none; }
+  .dots span { opacity: 1; }
+}

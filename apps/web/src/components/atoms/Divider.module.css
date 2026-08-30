@@ -1,0 +1,33 @@
+.rule {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: var(--space-4) 0;
+}
+
+.vertical {
+  display: inline-block;
+  width: 1px;
+  align-self: stretch;
+  background: var(--border-subtle);
+}
+
+.labelled {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.line {
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.text {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

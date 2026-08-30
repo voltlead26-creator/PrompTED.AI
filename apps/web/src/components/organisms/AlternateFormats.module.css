@@ -1,0 +1,111 @@
+.wrap {
+  position: relative;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.trigger:hover {
+  border-color: var(--accent);
+}
+
+.trigger:focus-visible,
+.card button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 30;
+  width: min(34rem, calc(100vw - 2rem));
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.intro strong {
+  color: var(--text-primary);
+}
+
+.intro span {
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.card {
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+}
+
+.card h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--text-heading-sm);
+}
+
+.card p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  line-height: var(--line-height-body);
+}
+
+.card button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .wrap,
+  .trigger {
+    width: 100%;
+  }
+
+  .trigger {
+    justify-content: center;
+  }
+
+  .panel {
+    position: static;
+    width: 100%;
+    margin-top: var(--space-2);
+  }
+}

@@ -1,0 +1,232 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ---- Tabs ---- */
+
+.tabs {
+  display: flex;
+  border-bottom: 1.5px solid var(--border-default);
+  gap: 0;
+}
+
+.tab {
+  padding: var(--space-3) var(--space-4);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1.5px;
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--text-secondary);
+}
+
+.tab[data-active] {
+  color: var(--coral);
+  border-bottom-color: var(--coral);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- List ---- */
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ---- Card ---- */
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: box-shadow 0.15s;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.cardMain {
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-4);
+  gap: var(--space-3);
+}
+
+.cardLink {
+  flex: 1;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+
+.cardTitle {
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardLink:hover .cardTitle {
+  color: var(--coral);
+}
+
+.cardLink:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cardDate {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+
+.saveBtn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  min-width: 2rem;
+  min-height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s;
+}
+
+.saveBtn:hover,
+.saveBtn[aria-pressed="true"] {
+  color: var(--coral);
+}
+
+.saveBtn:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
+
+/* ---- Sub-documents ---- */
+
+.docList {
+  list-style: none;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  margin: 0;
+  border-top: 1px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.docItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+
+.docMore {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  padding-left: calc(14px + var(--space-2));
+}
+
+/* ---- States ---- */
+
+.loading {
+  padding: var(--space-8) 0;
+  display: flex;
+  justify-content: center;
+}
+
+.error {
+  color: var(--red-soft);
+  font-size: var(--text-body-md);
+  padding: var(--space-4) 0;
+}
+
+.empty {
+  padding: var(--space-8) 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.empty p {
+  color: var(--text-muted);
+  font-size: var(--text-body-md);
+}
+
+.emptyAction {
+  color: var(--coral);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  font-size: var(--text-body-md);
+}
+
+.emptyAction:hover {
+  text-decoration: underline;
+}
+
+/* ---- Load more ---- */
+
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4) 0;
+}
+
+.loadMoreBtn {
+  background: none;
+  border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 2.5rem;
+  transition: border-color 0.15s;
+}
+
+.loadMoreBtn:hover:not(:disabled) {
+  border-color: var(--coral);
+  color: var(--coral);
+}
+
+.loadMoreBtn:disabled {
+  opacity: 0.5;
+}

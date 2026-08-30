@@ -1,0 +1,100 @@
+project_id = "jjsykocqpjlekgsbylkd"
+
+[auth]
+enable_anonymous_sign_ins = false
+
+[functions.openai-responses]
+enabled = false
+verify_jwt = true
+
+[functions.openai-chat]
+enabled = false
+verify_jwt = true
+
+[functions.openai-stream]
+enabled = false
+verify_jwt = true
+
+[functions.live-source]
+enabled = true
+verify_jwt = true
+
+[functions.research]
+enabled = true
+verify_jwt = false
+
+[functions.interpret-intent]
+enabled = true
+verify_jwt = false
+
+[functions.clarify]
+enabled = true
+verify_jwt = false
+
+[functions.recommend]
+enabled = true
+verify_jwt = false
+
+[functions.generate-document]
+enabled = true
+verify_jwt = false
+
+[functions.document-operation]
+enabled = true
+verify_jwt = false
+
+[functions.ingest-upload]
+enabled = true
+verify_jwt = false
+
+[functions.generate-checklist]
+enabled = true
+verify_jwt = false
+
+[functions.generate-artifact]
+enabled = true
+verify_jwt = false
+
+[functions.generate-report]
+enabled = true
+verify_jwt = false
+
+[functions.edit-section]
+enabled = true
+verify_jwt = false
+
+[functions.explain-section]
+enabled = true
+verify_jwt = false
+
+[functions.render-export]
+enabled = true
+verify_jwt = false
+
+[functions.job-match]
+enabled = true
+verify_jwt = false
+
+[functions.calculate-deadline]
+enabled = true
+verify_jwt = true
+
+[functions.government-evidence]
+enabled = true
+verify_jwt = true
+
+[functions.transport-victoria]
+enabled = true
+verify_jwt = true
+
+[functions.proofread-document]
+enabled = true
+verify_jwt = true
+
+[functions.account-delete]
+enabled = true
+verify_jwt = false
+
+[functions."webhooks-revenuecat"]
+enabled = true
+verify_jwt = false

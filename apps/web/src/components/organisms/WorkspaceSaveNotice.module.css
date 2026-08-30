@@ -1,0 +1,38 @@
+/* Status tints below are fixed semantic colours and do not follow the theme,
+   so the ink on them is fixed too. Never pair a fixed tint with a themed
+   text token: in dark mode the token turns pale and the text disappears. */
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line, #E2D7C2);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.notice > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.notice strong { color: #2B2521; }
+.notice span { color: #5E544A; }
+.notice button {
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: #A8351F;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.notice button:focus-visible { outline: 3px solid color-mix(in srgb, var(--scarlet, #C8442B) 25%, transparent); }
+.account { background: #EDF5EA; border-color: #C8DEC3; }
+.guest { background: #FFF3D6; border-color: #E8D29D; }
+.warning { background: #FCE4DE; border-color: #E9B7AA; }
+@media (max-width: 700px) {
+  .notice, .notice > div { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .notice button { width: 100%; }
+}

@@ -1,0 +1,130 @@
+.shell {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-page);
+  padding: var(--space-4);
+}
+
+.card {
+  width: 100%;
+  max-width: 26rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-8) var(--space-6);
+}
+
+/* ---- Auth form internals ---- */
+
+.authForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.heading {
+  font-size: var(--text-heading-xl);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-1);
+}
+
+.sub {
+  font-size: var(--text-body-md);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-2);
+}
+
+.oauthButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0.75rem var(--space-4);
+  border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  min-height: 44px;
+}
+
+.oauthButton:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+}
+
+.oauthButton:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-body-sm);
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
+}
+
+.field {
+  margin-bottom: var(--space-3);
+}
+
+.submit {
+  margin-top: var(--space-2);
+}
+
+.switchLink {
+  text-align: center;
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  margin-top: var(--space-2);
+}
+
+.switchLink a {
+  color: var(--coral);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+
+.switchLink a:hover {
+  text-decoration: underline;
+}
+
+.linkButton {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--scarlet, #C8442B);
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.inlineNotice {
+  background: var(--paper-deep, #EFE5D4);
+  border: 1px solid var(--scarlet, #C8442B);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.88rem;
+}

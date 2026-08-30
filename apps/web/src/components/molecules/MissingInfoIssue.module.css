@@ -1,0 +1,121 @@
+.root {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid #D7A948;
+  border-radius: 999px;
+  background: #FFF8E8;
+  color: #5E4300;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.popover {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 9px;
+  width: min(320px, calc(100vw - 28px));
+  padding: 14px;
+  border: 1px solid var(--line, #D8CCB7);
+  border-radius: 12px;
+  background: var(--card, #FFFDF8);
+  color: var(--ink, #2B2521);
+  box-shadow: 0 12px 30px rgba(43, 37, 33, 0.18);
+}
+
+.popover strong {
+  font-size: 0.92rem;
+}
+
+.popover label {
+  color: var(--ink-soft, #5E544A);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.popover textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--line, #D8CCB7);
+  border-radius: 9px;
+  background: #fff;
+  color: #2B2521;
+  font: inherit;
+  line-height: 1.45;
+  padding: 9px 10px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.actions button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dismiss {
+  border: 1px solid var(--line, #D8CCB7);
+  background: transparent;
+  color: var(--ink, #2B2521);
+}
+
+.submit {
+  border: 0;
+  background: var(--scarlet, #C8442B);
+  color: #fff;
+}
+
+.submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.trigger:focus-visible,
+.popover textarea:focus-visible,
+.actions button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--scarlet, #C8442B) 28%, transparent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 560px) {
+  .trigger span {
+    display: none;
+  }
+
+  .trigger {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .popover {
+    position: fixed;
+    top: auto;
+    right: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom));
+    left: 14px;
+    width: auto;
+  }
+}

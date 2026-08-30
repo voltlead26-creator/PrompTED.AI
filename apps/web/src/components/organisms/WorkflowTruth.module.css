@@ -1,0 +1,35 @@
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 0;
+  color: var(--muted, #6c6259);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.item::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--success, #2f7d51);
+  content: "";
+}
+
+.warning::before {
+  background: var(--warning, #b66a13);
+}
+
+@media (max-width: 720px) {
+  .bar {
+    font-size: 0.7rem;
+  }
+}

@@ -1,0 +1,97 @@
+.pane {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+  background: var(--bg-inset);
+  border-radius: var(--radius-md);
+}
+
+/* The document surface is pinned to fixed light-paper colours \u2014 not
+   theme tokens \u2014 because this preview represents the actual exported
+   page (always white/paper with dark ink), regardless of whether the
+   PrompTED workspace UI around it is in light or dark mode. Only the .pane
+   tray below follows the app theme. */
+.document {
+  max-width: 60ch;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+  background: #FFFFFF;
+  color: #2B2521;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.20);
+  line-height: var(--line-height-document);
+}
+
+.logo {
+  display: block;
+  max-height: 48px;
+  margin-bottom: var(--space-6);
+}
+
+.docTitle {
+  margin: 0 0 var(--space-6);
+  font-size: var(--text-heading-xl);
+  font-weight: var(--weight-extrabold);
+  color: #2B2521;
+}
+
+.lede {
+  margin: 0 0 var(--space-6);
+  font-size: var(--text-body-md);
+  color: #5E544A;
+  font-style: italic;
+}
+
+.section {
+  margin-bottom: var(--space-6);
+}
+
+.heading {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-heading-md);
+  font-weight: var(--weight-bold);
+  color: #2B2521;
+}
+
+.paragraph {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-body-md);
+  color: #2B2521;
+  white-space: pre-wrap;
+}
+
+.placeholder {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: #7A736B;
+}
+
+.richBody {
+  font-size: var(--text-body-md);
+  color: #2B2521;
+}
+
+.richBody :global(h2),
+.richBody :global(h3) {
+  margin: var(--space-4) 0 var(--space-2);
+  font-weight: var(--weight-bold);
+}
+
+.richBody :global(p) {
+  margin: 0 0 var(--space-3);
+}
+
+.richBody :global(ul),
+.richBody :global(ol) {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-6);
+}
+
+.footer {
+  margin-top: var(--space-8);
+  padding-top: var(--space-4);
+  border-top: 1px solid #E2D7C2;
+  font-size: var(--text-caption);
+  color: #7A736B;
+}

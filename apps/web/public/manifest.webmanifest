@@ -1,0 +1,12 @@
+{
+  "name": "PrompTED",
+  "short_name": "PrompTED",
+  "description": "AI for the rest of us — turn any goal into a finished document.",
+  "start_url": "/home",
+  "display": "standalone",
+  "background_color": "#F7F5FB",
+  "theme_color": "#3B1F6B",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+  ]
+}

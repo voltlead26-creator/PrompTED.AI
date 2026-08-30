@@ -1,0 +1,161 @@
+.shell {
+  min-height: calc(100vh - 5rem);
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 3rem);
+  background: var(--color-bg, #f5f7f5);
+}
+
+.card {
+  width: min(46rem, 100%);
+  padding: clamp(1.25rem, 4vw, 2.5rem);
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 1.25rem;
+  background: var(--color-surface, #fff);
+  box-shadow: 0 1.2rem 3.5rem rgb(19 36 29 / 8%);
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--color-text-muted, #526158);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.card h1 {
+  margin: 0;
+  font-size: clamp(1.55rem, 4vw, 2.4rem);
+  line-height: 1.1;
+}
+
+.explanation {
+  margin: 0.9rem 0 1.5rem;
+  color: var(--color-text-muted, #526158);
+  line-height: 1.55;
+}
+
+.fields {
+  display: grid;
+  gap: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.45rem;
+  font-weight: 650;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 0.7rem;
+  background: var(--color-surface, #fff);
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field input:focus-visible,
+.field textarea:focus-visible,
+.actions button:focus-visible {
+  outline: 3px solid var(--color-focus, #245b43);
+  outline-offset: 2px;
+}
+
+.field small,
+.note {
+  color: var(--color-text-muted, #526158);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.5rem;
+}
+
+.primary,
+.secondary {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.primary {
+  border: 1px solid #173f2e;
+  background: #173f2e;
+  color: #fff;
+}
+
+.secondary {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  background: transparent;
+  color: inherit;
+}
+
+.primary:disabled,
+.secondary:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.error {
+  margin: 1rem 0 0;
+  padding: 0.8rem;
+  border-radius: 0.7rem;
+  background: #fff0ed;
+  color: #7b251c;
+}
+
+.questions {
+  margin: 1rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.truth {
+  display: grid;
+  gap: 0.65rem;
+  margin: 1.25rem 0 0;
+}
+
+.truth div {
+  display: grid;
+  grid-template-columns: 6rem minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.truth dt {
+  color: var(--color-text-muted, #526158);
+}
+
+.truth dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 40rem) {
+  .shell {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .card {
+    min-height: 100%;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

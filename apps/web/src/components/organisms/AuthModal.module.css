@@ -1,0 +1,136 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(38, 33, 28, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: var(--z-modal, 400);
+}
+
+.panel {
+  position: relative;
+  width: 100%;
+  max-width: 26rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-8) var(--space-6);
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+
+.close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  background: transparent;
+  font-size: 1.375rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
+
+.heading {
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-1);
+  padding-right: var(--space-6);
+}
+
+.sub {
+  font-size: var(--text-body-md);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4);
+}
+
+.oauthButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0.75rem var(--space-4);
+  border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  min-height: 44px;
+  margin-bottom: var(--space-3);
+}
+
+.oauthButton:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+}
+
+.oauthButton:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-body-sm);
+  margin-bottom: var(--space-3);
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
+}
+
+.field {
+  margin-bottom: var(--space-3);
+}
+
+.switchLink {
+  text-align: center;
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  margin-top: var(--space-4);
+}
+
+.switchBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--coral);
+  font-size: inherit;
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.switchBtn:hover {
+  text-decoration: underline;
+}

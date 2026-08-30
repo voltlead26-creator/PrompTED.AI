@@ -1,0 +1,199 @@
+/* Text size preference — scales the whole rem-based type system from one
+   lever. Set on <html> by TextSizeProvider (apps/web/src/components/providers). */
+:root[data-text-size="large"] {
+  font-size: 112.5%;
+}
+:root[data-text-size="larger"] {
+  font-size: 125%;
+}
+
+:root {
+  /* =====================================================
+     Little Miss Scarlett — PrompTED app colour system
+     Matches the brand identity at littlemissscarlett.co
+
+     Scarlet  #C8442B — primary CTAs, active states, wordmark "TED"
+     Ember    #E0883C — focus rings, TED moments, underline accents
+     Paper    #F7F1E7 — page background (warm parchment)
+     Ink      #2B2521 — body text, nav background
+     Sage     #5E7350 — status chips, success, canonical badges
+  ===================================================== */
+
+  /* Raw palette */
+  --scarlet:        #C8442B;
+  --scarlet-deep:   #A8351F;
+  --scarlet-soft:   rgba(200, 68, 43, 0.09);
+  --ember:          #E0883C;
+  --ember-soft:     rgba(224, 136, 60, 0.14);
+  --paper:          #F7F1E7;
+  --paper-deep:     #EFE5D4;
+  --card:           #FFFDF8;
+  --ink:            #2B2521;
+  --ink-soft:       #5E544A;
+  --ink-muted:      #6F6258;
+  --sage:           #5E7350;
+  --sage-soft:      rgba(94, 115, 80, 0.12);
+  --line:           #E2D7C2;
+  --line-soft:      #EDE6D8;
+  --white:          #FFFFFF;
+
+  /* Legacy aliases — keeps existing components working */
+  --brand-plum:          var(--scarlet);
+  --brand-plum-deep:     var(--scarlet-deep);
+  --brand-plum-soft:     var(--scarlet-soft);
+  --brand-signature:     var(--scarlet);
+  --brand-signature-deep: var(--scarlet-deep);
+  --brand-signature-soft: var(--scarlet-soft);
+  --brand-ink:           var(--ink);
+  --brand-gold:          var(--ember);
+  --brand-gold-soft:     var(--ember-soft);
+  --brand-teal:          var(--sage);
+  --brand-teal-soft:     var(--sage-soft);
+  --coral:               var(--scarlet);
+  --coral-deep:          var(--scarlet-deep);
+
+  /* TED recommendation moments — ember, not scarlet */
+  --ted-moment:     var(--ember);
+  --ted-moment-soft: var(--ember-soft);
+
+  /* Typography */
+  --font-family:    var(--font-body, "DM Sans"), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Single typeface — DM Sans handles display and body weights. No serif display font. */
+  --font-mono:      ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-display:     2.5rem;
+  --text-heading-xl:  1.75rem;
+  --text-heading-lg:  1.375rem;
+  --text-heading-md:  1.1875rem;
+  --text-body-lg:     1.125rem;
+  --text-body-md:     1.0625rem;
+  --text-body-sm:     0.9375rem;
+  --text-label:       0.875rem;
+  --text-caption:     0.8125rem;
+  --weight-regular:   400;
+  --weight-medium:    500;
+  --weight-semibold:  600;
+  --weight-bold:      700;
+  --weight-extrabold: 800;
+  --line-height-body:     1.6;
+  --line-height-heading:  1.08;
+  --line-height-document: 1.8;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* Radii */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-pill: 9999px;
+
+  /* Elevation */
+  --shadow-sm:  0 2px 8px rgba(43, 37, 33, 0.06), 0 18px 40px rgba(43, 37, 33, 0.08);
+  --shadow-md:  0 4px 14px rgba(43, 37, 33, 0.10), 0 30px 60px rgba(43, 37, 33, 0.13);
+  --shadow-lg:  0 12px 36px rgba(43, 37, 33, 0.16);
+
+  /* Interaction */
+  --touch-target:  2.75rem;
+  --focus-ring:    0 0 0 3px rgba(224, 136, 60, 0.50);
+  --tooltip-bg:    var(--ink);
+  --tooltip-text:  var(--paper);
+
+  /* Stable foregrounds for branded and dark surfaces */
+  --text-on-ember:  #2B2521;
+  --text-on-scarlet: #FFFFFF;
+  --text-on-dark:   #F0EBE4;
+
+  /* Section status */
+  --status-draft-bg:        #EDE6D8;
+  --status-draft-text:      #5E544A;
+  --status-draft-border:    #D4C9B0;
+  --status-edited-bg:       rgba(224, 136, 60, 0.12);
+  --status-edited-text:     #7A4500;
+  --status-edited-border:   #E0883C;
+  --status-approved-bg:     rgba(94, 115, 80, 0.12);
+  --status-approved-text:   #3A5228;
+  --status-approved-border: #5E7350;
+  --status-locked-bg:       #EDE6D8;
+  --status-locked-text:     #2B2521;
+  --status-locked-border:   #9C9088;
+
+  /* Semantic roles — light mode */
+  --bg-page:       var(--paper);
+  --bg-card:       var(--card);
+  --bg-hover:      var(--paper-deep);
+  --bg-input:      var(--white);
+  --bg-inset:      var(--paper-deep);
+  --bg-nav:        var(--ink);
+  --text-primary:  var(--ink);
+  --text-secondary: var(--ink-soft);
+  --text-muted:    var(--ink-muted);
+  --text-on-ink:   #FFFFFF;
+  --border-default: var(--line);
+  --border-subtle: var(--line-soft);
+  --accent:        var(--scarlet-deep);
+  --accent-hover:  #8F2C18;
+  --on-accent:     #FFFFFF;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --paper:         #1C1714;
+  --paper-deep:    #252019;
+  --card:          #201D1A;
+  --ink:           #F0EBE4;
+  --ink-soft:      #B8AFA6;
+  --ink-muted:     #A69D94;
+  --line:          #352E28;
+  --line-soft:     #2B2521;
+  --scarlet:       #C94A32;
+  --scarlet-deep:  #E05A40;
+  --scarlet-soft:  rgba(201, 74, 50, 0.16);
+  --ember:         #9A551A;
+  --ember-soft:    rgba(154, 85, 26, 0.18);
+  --sage:          #7A9E65;
+  --sage-soft:     rgba(122, 158, 101, 0.14);
+  --bg-page:       #1C1714;
+  --bg-card:       #201D1A;
+  --bg-hover:      #2B2521;
+  --bg-input:      #17140F;
+  --bg-inset:      #252019;
+  --bg-nav:        #100E0C;
+  --text-primary:  #F0EBE4;
+  --text-secondary: #B8AFA6;
+  --text-muted:    #A69D94;
+  --text-on-ink:   #2B2521;
+  --text-on-dark:  #F0EBE4;
+  --text-on-ember: #F0EBE4;
+  --text-on-scarlet: #FFFFFF;
+  --border-default: #352E28;
+  --border-subtle: #2B2521;
+  --accent:        #E05A40;
+  --accent-hover:  #F07055;
+  --on-accent:     #FFFFFF;
+  --focus-ring:    0 0 0 3px rgba(240, 160, 80, 0.50);
+  --shadow-sm:     0 2px 8px rgba(0, 0, 0, 0.20);
+  --shadow-md:     0 4px 20px rgba(0, 0, 0, 0.30);
+  --shadow-lg:     0 12px 40px rgba(0, 0, 0, 0.40);
+  --status-draft-bg:        #2B2521;
+  --status-draft-text:      #B8AFA6;
+  --status-draft-border:    #3D3530;
+  --status-edited-bg:       rgba(240, 160, 80, 0.12);
+  --status-edited-text:     #F0A050;
+  --status-edited-border:   #9A6020;
+  --status-approved-bg:     rgba(122, 158, 101, 0.12);
+  --status-approved-text:   #9FCE80;
+  --status-approved-border: #4A7A38;
+  --status-locked-bg:       #2B2521;
+  --status-locked-text:     #E0D8CE;
+  --status-locked-border:   #6A6058;
+  color-scheme: dark;
+}

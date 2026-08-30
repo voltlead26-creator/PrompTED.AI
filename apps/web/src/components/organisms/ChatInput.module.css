@@ -1,0 +1,242 @@
+.wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  min-height: 112px;
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 150ms ease;
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  min-height: 72px;
+  font-size: var(--text-body-lg);
+  line-height: var(--line-height-body);
+  max-height: 200px;
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+
+.sendButton {
+  flex: 0 0 auto;
+  align-self: flex-end;
+}
+
+.textarea:focus-visible {
+  /* The outer composer owns the focus treatment. Avoid a smaller box
+     appearing around the textarea inside the chat box. */
+  outline: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.attachCol {
+  display: flex;
+  align-items: center;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    transform 0.05s ease;
+}
+
+.iconButton:active {
+  transform: scale(0.92);
+}
+
+.iconButton:hover {
+  background: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.iconButton:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.attachmentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  color: var(--text-primary);
+  font-size: var(--text-body-sm);
+}
+
+.attachmentName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 16rem;
+}
+
+.removeAttach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.removeAttach:hover {
+  background: var(--border-default);
+  color: var(--text-primary);
+}
+
+.removeAttach:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.attachError {
+  margin: 0;
+  color: var(--red-soft);
+  font-size: var(--text-body-sm);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Visible "+" upload button */
+.uploadButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    transform 0.05s ease;
+}
+
+.uploadButton:active {
+  transform: scale(0.92);
+}
+
+.uploadPlus {
+  display: block;
+  font-size: 1.75rem;
+  font-weight: var(--weight-regular);
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.uploadButton:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.uploadButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.uploadButton:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Microphone active (recording) state */
+.recording {
+  color: var(--accent);
+  background: var(--border-subtle);
+}
+
+.listeningHint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+}
+
+@media (max-width: 640px) {
+  .composer {
+    min-width: 0;
+  }
+
+  .textarea {
+    min-width: 0;
+  }
+
+  /*
+   * Mobile keeps the send button but shrinks it to an icon-only circle
+   * (matching the mic/upload buttons) instead of hiding it — Enter alone
+   * isn't a reliable or discoverable way to submit on a phone keyboard.
+   */
+  .sendButton {
+    min-width: var(--touch-target);
+    padding: 0.6em !important;
+  }
+
+  .sendLabel {
+    display: none;
+  }
+}

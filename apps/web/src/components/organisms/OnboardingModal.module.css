@@ -1,0 +1,115 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(38, 33, 28, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: var(--z-modal, 400);
+}
+
+.panel {
+  width: 100%;
+  max-width: 28rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-8) var(--space-6);
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.tedAvatar {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  background: var(--coral);
+  color: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-label);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.05em;
+  margin: 0 auto;
+}
+
+.heading {
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+  text-align: center;
+  margin: 0;
+}
+
+.body {
+  font-size: var(--text-body-md);
+  color: var(--text-secondary);
+  text-align: center;
+  margin: 0;
+}
+
+.disclosure {
+  background: var(--bg-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.disclosureHeading {
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-3);
+}
+
+.disclosureList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.disclosureList li {
+  font-size: var(--text-body-md);
+  color: var(--text-secondary);
+  padding-left: var(--space-5);
+  position: relative;
+}
+
+.disclosureList li::before {
+  content: "•";
+  position: absolute;
+  left: var(--space-2);
+  color: var(--coral);
+  font-weight: var(--weight-bold);
+}
+
+.privacyLink {
+  font-size: var(--text-body-sm);
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0;
+}
+
+.privacyLink a {
+  color: var(--coral);
+  text-decoration: none;
+}
+
+.privacyLink a:hover {
+  text-decoration: underline;
+}
+
+.cta {
+  margin-top: var(--space-2);
+}

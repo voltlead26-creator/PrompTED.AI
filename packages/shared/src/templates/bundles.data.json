@@ -1,0 +1,65 @@
+[
+  {
+    "id": "22222222-0000-4000-8000-000000000001",
+    "slug": "i-need-a-job",
+    "name": "I need a job",
+    "description": "Everything to find and land your next role.",
+    "domain": "employment",
+    "template_ids": [
+      "11111111-0000-4000-8000-000000000001",
+      "11111111-0000-4000-8000-000000000002",
+      "11111111-0000-4000-8000-000000000003",
+      "11111111-0000-4000-8000-000000000004",
+      "11111111-0000-4000-8000-000000000005",
+      "11111111-0000-4000-8000-000000000006",
+      "11111111-0000-4000-8000-000000000023"
+    ],
+    "checklist_template_id": "11111111-0000-4000-8000-000000000003",
+    "display_order": 0
+  },
+  {
+    "id": "22222222-0000-4000-8000-000000000002",
+    "slug": "onboard-a-new-employee",
+    "name": "Onboard a new employee",
+    "description": "Bring a new hire on board the right way.",
+    "domain": "business",
+    "template_ids": [
+      "11111111-0000-4000-8000-000000000015",
+      "11111111-0000-4000-8000-000000000016",
+      "11111111-0000-4000-8000-000000000017",
+      "11111111-0000-4000-8000-000000000018",
+      "11111111-0000-4000-8000-000000000012"
+    ],
+    "checklist_template_id": "11111111-0000-4000-8000-000000000018",
+    "display_order": 1
+  },
+  {
+    "id": "22222222-0000-4000-8000-000000000003",
+    "slug": "set-up-business-basics",
+    "name": "Set up the basics of my business",
+    "description": "The core documents every small business needs.",
+    "domain": "business",
+    "template_ids": [
+      "11111111-0000-4000-8000-000000000013",
+      "11111111-0000-4000-8000-000000000014",
+      "11111111-0000-4000-8000-000000000019",
+      "11111111-0000-4000-8000-000000000012"
+    ],
+    "checklist_template_id": null,
+    "display_order": 2
+  },
+  {
+    "id": "22222222-0000-4000-8000-000000000004",
+    "slug": "im-applying",
+    "name": "I'm applying",
+    "description": "Put together a standout education application.",
+    "domain": "education",
+    "template_ids": [
+      "11111111-0000-4000-8000-000000000009",
+      "11111111-0000-4000-8000-000000000010",
+      "11111111-0000-4000-8000-000000000011"
+    ],
+    "checklist_template_id": null,
+    "display_order": 3
+  }
+]

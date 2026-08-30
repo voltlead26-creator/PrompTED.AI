@@ -1,0 +1,319 @@
+.editor {
+  display: grid;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.titleWrap {
+  display: grid;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.titleWrap label {
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.titleInput {
+  width: min(44rem, 100%);
+  border: 0;
+  border-bottom: 1px solid var(--border-default);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-bold);
+  padding: var(--space-2) 0;
+}
+
+.saveState {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+}
+
+.progress {
+  display: grid;
+  justify-items: end;
+  color: var(--text-secondary);
+}
+
+.progress strong {
+  color: var(--text-primary);
+  font-size: var(--text-heading-md);
+}
+
+.itemList {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.item {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-page);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.itemMain {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  font-weight: var(--weight-bold);
+}
+
+.checkLabel input {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.itemText {
+  width: 100%;
+  min-height: 4.5rem;
+  resize: vertical;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  padding: var(--space-2);
+}
+
+.itemText:hover,
+.itemText:focus {
+  border-color: var(--border-default);
+  background: var(--bg-card);
+}
+
+.itemActions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.itemActions button,
+.tedBar button,
+.addButton {
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.undoNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+  color: var(--text-secondary);
+}
+
+.undoNotice button {
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+.undoNotice button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.itemActions button {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+}
+
+.itemActions button:hover,
+.tedBar button:hover,
+.addButton:hover {
+  border-color: var(--accent);
+}
+
+.itemActions button:disabled,
+.tedBar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.detailGrid label {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.detailGrid input,
+.detailGrid textarea,
+.teditControl input {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  padding: var(--space-3);
+}
+
+.notesLabel {
+  grid-column: 1 / -1;
+}
+
+.addButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  justify-self: start;
+  padding: 0 var(--space-4);
+  font-weight: var(--weight-semibold);
+}
+
+.tedBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  position: sticky;
+  bottom: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  z-index: 5;
+}
+
+.tedBar > button {
+  padding: 0 var(--space-4);
+  font-weight: var(--weight-semibold);
+}
+
+.teditControl {
+  display: flex;
+  flex: 1 1 22rem;
+  gap: var(--space-2);
+}
+
+.teditControl .primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  padding: 0 var(--space-4);
+  font-weight: var(--weight-bold);
+}
+
+.editStatus,
+.editError {
+  width: 100%;
+  font-size: var(--text-body-sm);
+}
+
+.editStatus {
+  color: var(--text-secondary);
+}
+
+.editError {
+  color: var(--danger, #b42318);
+}
+
+.loading {
+  min-height: 16rem;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 767px) {
+  .editor {
+    padding: var(--space-3);
+  }
+
+  .header,
+  .itemMain,
+  .detailGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .header {
+    display: grid;
+  }
+
+  .progress {
+    justify-items: start;
+  }
+
+  .itemMain {
+    display: grid;
+  }
+
+  .itemActions {
+    justify-content: flex-end;
+  }
+
+  .notesLabel {
+    grid-column: auto;
+  }
+
+  .tedBar {
+    bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  }
+
+  .teditControl {
+    flex-basis: 100%;
+    flex-direction: column;
+  }
+}

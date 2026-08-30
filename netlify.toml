@@ -1,0 +1,37 @@
+[build]
+  base    = "apps/web"
+  command = "pnpm --dir ../.. --filter @prompted/web build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION                    = "22.23.2"
+  PNPM_VERSION                    = "10.33.0"
+  # These are intentionally browser-visible public keys/URLs. Do not mark them
+  # as secret in Netlify; omit them from secret-value scanning if already marked.
+  SECRETS_SCAN_OMIT_KEYS          = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_REVENUECAT_WEB_KEY,NEXT_PUBLIC_SENTRY_DSN,NEXT_PUBLIC_POSTHOG_KEY"
+
+# Stable /api/* paths are owned by the reviewed Next.js catch-all route. It
+# derives its allowlist from supabase/deployment-contract.json and resolves the
+# selected environment from validated public configuration. Do not add a
+# project-pinned Supabase redirect here: it would let a preview silently write
+# to production and would make plain `next dev` behave differently from Netlify.
+
+# Netlify static-response defence in depth. The Next.js API gateway and
+# Supabase Edge responses also emit private/no-store headers.
+
+[[headers]]
+  for = "/api/*"
+
+  [headers.values]
+    Cache-Control = "private, no-store, max-age=0"
+    Pragma        = "no-cache"
+    Vary          = "Authorization, Cookie"
+
+[[headers]]
+  for = "/*"
+
+  [headers.values]
+    X-Frame-Options        = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy        = "strict-origin-when-cross-origin"
+    Permissions-Policy     = "camera=(), microphone=(), geolocation=()"

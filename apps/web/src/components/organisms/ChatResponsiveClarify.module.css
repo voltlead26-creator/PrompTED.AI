@@ -1,0 +1,91 @@
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.bubble {
+  max-width: 85%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-body-md);
+  line-height: var(--line-height-body);
+}
+
+.ted {
+  align-self: flex-start;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--white);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.who {
+  display: block;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-bottom: var(--space-1);
+}
+
+.text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.thinking {
+  display: inline-flex;
+  align-items: center;
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.optionChip {
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-body-sm);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    transform 0.05s ease;
+}
+
+.optionChip:hover {
+  background: var(--accent);
+  color: var(--white);
+}
+
+.optionChip:active {
+  transform: scale(0.95);
+}
+
+.optionChip:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}

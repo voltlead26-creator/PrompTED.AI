@@ -1,0 +1,58 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #E9B7AA;
+  border-radius: 14px;
+  background: #FCE4DE;
+  color: #2B2521;
+}
+/* Fixed ink colours (not theme vars): this panel always sits on the pale
+   pink card, so dark-mode token values made the headings unreadable. */
+.panel h2 { margin: 2px 0 4px; color: #2B2521; font-size: 1rem; }
+.panel p { margin: 0; color: #5E544A; line-height: 1.45; }
+.eyebrow { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #8A2E1D; }
+.list { display: flex; flex-direction: column; gap: 10px; }
+.item {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(138, 46, 29, 0.18);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.55);
+}
+.item strong { color: #2B2521; }
+.item p { color: #5E544A; }
+.item button {
+  min-height: 40px;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--scarlet, #C8442B);
+  background: var(--scarlet, #C8442B);
+  color: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+.item button:disabled { opacity: 0.6; cursor: default; }
+.upgradeLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--scarlet, #C8442B);
+  background: var(--scarlet, #C8442B);
+  color: white;
+  font-weight: 800;
+  text-decoration: none;
+}
+@media (max-width: 700px) {
+  .item { align-items: stretch; flex-direction: column; }
+  .item button, .upgradeLink { width: 100%; }
+}

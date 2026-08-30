@@ -1,0 +1,141 @@
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.planLabel {
+  display: block;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-1);
+}
+
+.planName {
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.renewal {
+  font-size: var(--text-body-sm);
+  color: var(--text-muted);
+  margin: var(--space-1) 0 0;
+}
+
+.upgradeBtn {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--coral);
+  color: var(--white);
+  border: none;
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  min-height: 2.5rem;
+  transition: background 0.15s;
+}
+
+.upgradeBtn:hover {
+  background: var(--coral-deep);
+}
+
+.upgradeBtn:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
+
+.usageSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.usageHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.usageLabel {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+
+.usageCount {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.muted {
+  font-weight: var(--weight-regular);
+  color: var(--text-muted);
+}
+
+.progressTrack {
+  height: 0.5rem;
+  background: var(--bg-page);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--teal);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.progressFill[data-at-cap] {
+  background: var(--coral);
+}
+
+.capWarning {
+  font-size: var(--text-body-sm);
+  color: var(--coral);
+  margin: 0;
+}
+
+.features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-default);
+  padding-top: var(--space-4);
+}
+
+.featureItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+
+.check {
+  color: var(--teal);
+  font-weight: var(--weight-bold);
+  flex-shrink: 0;
+}

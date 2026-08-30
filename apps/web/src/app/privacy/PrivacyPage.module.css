@@ -1,0 +1,94 @@
+.page {
+  min-height: 100dvh;
+  padding: clamp(24px, 5vw, 72px) 20px;
+  background: var(--paper, #f7f1e7);
+  color: var(--ink, #2b2521);
+}
+
+.document {
+  width: min(100%, 780px);
+  margin: 0 auto;
+  padding: clamp(28px, 6vw, 72px);
+  border: 1px solid var(--line, #e2d7c2);
+  background: var(--card, #fffdf8);
+  box-shadow: 0 16px 48px rgba(43, 37, 33, 0.12);
+}
+
+.header {
+  padding-bottom: 28px;
+  border-bottom: 2px solid var(--line, #e2d7c2);
+}
+
+.brand {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 24px;
+  border-radius: 12px;
+  background: var(--scarlet, #c8442b);
+  color: #fff;
+  font-weight: 950;
+  text-decoration: none;
+}
+
+.header > p:first-of-type {
+  margin: 0 0 8px;
+  color: var(--ink-soft, #5e544a);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.04em;
+}
+
+.lead {
+  margin: 18px 0 0;
+  max-width: 62ch;
+  color: var(--ink-soft, #5e544a);
+  font-size: 1.08rem;
+  line-height: 1.65;
+}
+
+.document section {
+  padding-top: 30px;
+}
+
+.document h2 {
+  margin: 0 0 10px;
+  font-size: 1.14rem;
+}
+
+.document section p {
+  margin: 0;
+  line-height: 1.72;
+}
+
+.document section a,
+.footer a {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--scarlet, #b73521);
+  font-weight: 800;
+}
+
+.footer {
+  margin-top: 36px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line, #e2d7c2);
+}
+
+@media (max-width: 600px) {
+  .page {
+    padding: 0;
+  }
+
+  .document {
+    border: 0;
+    box-shadow: none;
+  }
+}

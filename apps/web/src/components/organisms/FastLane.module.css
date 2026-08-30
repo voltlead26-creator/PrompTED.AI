@@ -1,0 +1,85 @@
+.wrap {
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--text-heading-md);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+}
+
+.seeAll {
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-semibold);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.seeAll:hover {
+  text-decoration: underline;
+}
+
+.seeAll:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+  -webkit-overflow-scrolling: touch;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 13rem;
+  max-width: 13rem;
+  padding: var(--space-4);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--text-primary);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.card:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.cardTitle {
+  font-size: var(--text-body-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-height-heading);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardMeta {
+  font-size: var(--text-body-sm);
+  color: var(--text-muted);
+}

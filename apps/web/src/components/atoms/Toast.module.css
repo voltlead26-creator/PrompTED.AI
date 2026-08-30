@@ -1,0 +1,57 @@
+.viewport {
+  position: fixed;
+  bottom: var(--space-6);
+  right: var(--space-6);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: min(24rem, calc(100vw - var(--space-8)));
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-default);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-body-sm);
+  color: var(--text-primary);
+}
+
+.info {
+  border-left-color: var(--text-secondary);
+}
+.success {
+  border-left-color: var(--teal);
+}
+.error {
+  border-left-color: var(--red-soft);
+}
+
+.message {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.dismiss:hover {
+  background: var(--bg-inset);
+  color: var(--text-primary);
+}

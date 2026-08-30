@@ -1,0 +1,164 @@
+/* =====================================================
+   PrompTED — Global base styles
+   Imports design tokens, applies reset, sets body defaults.
+   ===================================================== */
+
+@import "../design-system/tokens.css";
+
+/* ---- Reset ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  /* DM Sans comes from next/font as --font-body; fall back to the token stack */
+  font-family: var(--font-body), var(--font-family);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-size: var(--text-body-md); /* 17px floor */
+  font-weight: var(--weight-regular);
+  line-height: var(--line-height-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: var(--weight-bold);
+  line-height: var(--line-height-heading);
+  color: var(--text-primary);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  /* Removes the browser's residual tap-delay on touch devices (historically
+     up to ~300ms while it waits to see if a second tap is a double-tap-zoom)
+     so presses register immediately instead of feeling laggy. */
+  touch-action: manipulation;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: var(--text-body-md);
+  caret-color: var(--text-primary);
+}
+
+/* Browser autofill paints its own light surface unless both halves are
+   explicitly restored. Keep entered text, caret and fill theme-safe. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text-primary);
+  caret-color: var(--text-primary);
+  box-shadow: 0 0 0 1000px var(--bg-input) inset;
+  transition: background-color 9999s ease-out 0s;
+}
+
+::selection {
+  background: var(--ember);
+  color: var(--text-on-ember);
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* ---- Visible focus for keyboard users (never remove outlines silently) ---- */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- Screen-reader-only utility ---- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Respect reduced-motion preference ---- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --focus-ring: 0 0 0 4px var(--ember);
+  }
+
+  a {
+    text-decoration: underline;
+    text-decoration-thickness: 0.12em;
+    text-underline-offset: 0.15em;
+  }
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+
+  button,
+  input,
+  textarea,
+  select,
+  a {
+    forced-color-adjust: auto;
+  }
+}
+
+/* Removed: a global attribute-substring selector that stripped border,
+   radius, shadow and background from ANY element whose class contained
+   "card" or "panel" (CSS-module hashes included). It silently flattened
+   unrelated components across the app. Flat, open layouts are a per-
+   component decision — style them in their own modules. */
