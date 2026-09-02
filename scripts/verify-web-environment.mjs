@@ -7,7 +7,7 @@ const PUBLIC_BINDING_KEYS = Object.freeze([
 const SYNTHETIC_VERIFICATION_BINDING = Object.freeze({
   NEXT_PUBLIC_APP_ENV: "test",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "public-anon-key-for-build-only",
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_testfixture00000000000000000000",
   NEXT_PUBLIC_REVENUECAT_WEB_KEY: "test_revenuecat_key",
 });
 

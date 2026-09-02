@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
 import { lstat, readdir, readlink, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertWebBuildEnvironmentSafe,
+  validateSupabasePublicAnonKey,
+} from "./check-web-build-environment.mjs";
 
 const PRODUCTION_REF = "refs/heads/main";
 const SITE_ID_PATTERN =
@@ -32,10 +36,13 @@ const NETLIFY_CONTROL_TIMEOUT_MS = 60_000;
 const NETLIFY_BUILD_TIMEOUT_MS = 20 * 60_000;
 const NETLIFY_DEPLOY_TIMEOUT_MS = 10 * 60_000;
 const MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
-const SUPABASE_PUBLISHABLE_KEY_PATTERN = /^sb_publishable_[A-Za-z0-9_-]{16,512}$/;
-const JWT_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
 const MAX_ARTIFACT_FILES = 100_000;
 const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024 * 1024;
+const MAX_FORBIDDEN_ARTIFACT_VALUES = 64;
+const MAX_FORBIDDEN_ARTIFACT_VALUE_BYTES = 64 * 1024;
+const MAX_ARCHIVE_SCAN_BYTES = 1024 * 1024 * 1024;
+const ARCHIVE_SCAN_TIMEOUT_MS = 60_000;
+const NETLIFY_AUTH_STDIN_PRELOAD = new URL("./netlify-cli-auth-stdin.mjs", import.meta.url).href;
 const ARTIFACT_ROOTS = [
   "apps/web/.next",
   "apps/web/.netlify/deploy/v1",
@@ -87,37 +94,9 @@ function canonicalHttpsOrigin(value, label) {
 }
 
 function validateSupabaseAnonKey(value) {
-  const key = requireText(value, "Supabase anonymous key");
-  if (key.length > 4096 || /[\s\u0000-\u001f\u007f]/.test(key)) {
-    throw new Error("The production Supabase anonymous key is malformed.");
-  }
-  if (SUPABASE_PUBLISHABLE_KEY_PATTERN.test(key)) return key;
-
-  const segments = key.split(".");
-  if (
-    segments.length !== 3 ||
-    segments.some((segment) => segment.length === 0 || !JWT_SEGMENT_PATTERN.test(segment))
-  ) {
-    throw new Error("The production Supabase anonymous key is malformed.");
-  }
-
-  let payload;
-  try {
-    payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
-  } catch {
-    throw new Error("The production Supabase anonymous key is malformed.");
-  }
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    payload.ref !== PRODUCTION_SUPABASE_PROJECT_REF ||
-    payload.role !== "anon"
-  ) {
-    throw new Error(
-      "The production Supabase anonymous key is not bound to the reviewed project and anonymous role.",
-    );
-  }
-  return key;
+  return validateSupabasePublicAnonKey(value, {
+    expectedProjectRef: PRODUCTION_SUPABASE_PROJECT_REF,
+  });
 }
 
 function parseJsonOutput(stdout, label) {
@@ -150,20 +129,45 @@ function netlifyProcessOptions(
   extraEnvironment = {},
   timeout = NETLIFY_CONTROL_TIMEOUT_MS,
 ) {
+  const environment = {
+    ...process.env,
+    ...extraEnvironment,
+    NETLIFY_SITE_ID: siteId,
+    PROMPTED_NETLIFY_AUTH_STDIN: "1",
+    NODE_OPTIONS: `--import=${NETLIFY_AUTH_STDIN_PRELOAD}`,
+  };
+  delete environment.NETLIFY_AUTH_TOKEN;
+  return {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    input: authToken,
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: false,
+    timeout,
+    killSignal: "SIGTERM",
+    maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
+    env: environment,
+  };
+}
+
+function netlifyBuildProcessOptions(siteId, extraEnvironment = {}) {
+  const environment = {
+    ...process.env,
+    ...extraEnvironment,
+    NETLIFY_SITE_ID: siteId,
+  };
+  // The offline build needs no Netlify control-plane capability. Keep the
+  // credential only in the later lookup, upload, and promotion processes.
+  delete environment.NETLIFY_AUTH_TOKEN;
   return {
     cwd: process.cwd(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
-    timeout,
+    timeout: NETLIFY_BUILD_TIMEOUT_MS,
     killSignal: "SIGTERM",
     maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
-    env: {
-      ...process.env,
-      ...extraEnvironment,
-      NETLIFY_AUTH_TOKEN: authToken,
-      NETLIFY_SITE_ID: siteId,
-    },
+    env: environment,
   };
 }
 
@@ -211,6 +215,13 @@ export function validateProductionDeployInput(input) {
   const supabaseUrl = requireText(input.supabaseUrl, "Supabase URL");
   const supabaseAnonKey = validateSupabaseAnonKey(input.supabaseAnonKey);
 
+  if (
+    authToken !== input.authToken ||
+    authToken.length > 4096 ||
+    /[\s\u0000-\u001f\u007f]/.test(authToken)
+  ) {
+    throw new Error("Netlify authentication token is malformed.");
+  }
   if (!SITE_ID_PATTERN.test(siteId)) {
     throw new Error("Netlify site ID must be a canonical UUID.");
   }
@@ -345,7 +356,7 @@ export function buildNetlifyDraftDeployArgs(input) {
 
 export function buildNetlifyBuildArgs(input) {
   validateProductionDeployInput(input);
-  return ["build", "--filter", "@prompted/web", "--context", "production"];
+  return ["build", "--filter", "@prompted/web", "--context", "production", "--offline"];
 }
 
 export function buildNetlifyPromoteArgs(input, deployId) {
@@ -567,7 +578,111 @@ async function pathStats(path) {
   }
 }
 
-async function hashArtifactDirectory({ absoluteRoot, rootLabel, hash, totals }) {
+function normaliseForbiddenArtifactValues(forbiddenValues) {
+  if (!Array.isArray(forbiddenValues ?? [])) {
+    throw new Error("Netlify artifact secret-scan input is invalid.");
+  }
+  if ((forbiddenValues ?? []).length > MAX_FORBIDDEN_ARTIFACT_VALUES) {
+    throw new Error("Netlify artifact secret-scan input exceeds its bounded value count.");
+  }
+  return (forbiddenValues ?? []).map((entry) => {
+    const bytes = typeof entry?.value === "string" ? Buffer.from(entry.value, "utf8") : null;
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      !/^[A-Z][A-Z0-9_]{1,127}$/.test(entry.name ?? "") ||
+      !bytes ||
+      bytes.length === 0 ||
+      bytes.length > MAX_FORBIDDEN_ARTIFACT_VALUE_BYTES
+    ) {
+      throw new Error("Netlify artifact secret-scan input is invalid.");
+    }
+    return { name: entry.name, bytes };
+  });
+}
+
+function scanArtifactChunk({ chunk, tail, forbiddenValues, framedPath }) {
+  if (forbiddenValues.length === 0) return Buffer.alloc(0);
+  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  const searchable = tail.length > 0 ? Buffer.concat([tail, bytes]) : bytes;
+  for (const forbidden of forbiddenValues) {
+    if (searchable.indexOf(forbidden.bytes) !== -1) {
+      throw new Error(
+        `Netlify artifact contains confidential build value from ${forbidden.name}: ${framedPath}.`,
+      );
+    }
+  }
+  const maximumTailLength = Math.max(
+    0,
+    ...forbiddenValues.map((forbidden) => forbidden.bytes.length - 1),
+  );
+  if (maximumTailLength === 0) return Buffer.alloc(0);
+  return searchable.subarray(Math.max(0, searchable.length - maximumTailLength));
+}
+
+function scanZipArtifact({ absolutePath, forbiddenValues, framedPath }) {
+  if (forbiddenValues.length === 0) return Promise.resolve();
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn("unzip", ["-p", absolutePath], {
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: ARCHIVE_SCAN_TIMEOUT_MS,
+      killSignal: "SIGTERM",
+    });
+    let settled = false;
+    let scanTail = Buffer.alloc(0);
+    let scannedBytes = 0;
+    let scanFailure = null;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    };
+    child.stdout.on("data", (chunk) => {
+      if (scanFailure) return;
+      try {
+        scannedBytes += chunk.length;
+        if (scannedBytes > MAX_ARCHIVE_SCAN_BYTES) {
+          throw new Error(`Netlify function archive exceeds its scan limit: ${framedPath}.`);
+        }
+        scanTail = scanArtifactChunk({
+          chunk,
+          tail: scanTail,
+          forbiddenValues,
+          framedPath: `${framedPath} (expanded)`,
+        });
+      } catch (error) {
+        scanFailure = error;
+        child.kill("SIGTERM");
+      }
+    });
+    child.stderr.resume();
+    child.on("error", () => {
+      fail(new Error(`Netlify function archive could not be inspected: ${framedPath}.`));
+    });
+    child.on("close", (code, signal) => {
+      if (scanFailure) {
+        fail(scanFailure);
+        return;
+      }
+      if (code !== 0) {
+        const reason = signal ? `signal ${signal}` : `exit status ${String(code)}`;
+        fail(
+          new Error(`Netlify function archive inspection failed with ${reason}: ${framedPath}.`),
+        );
+        return;
+      }
+      if (!settled) {
+        settled = true;
+        resolvePromise();
+      }
+    });
+  });
+}
+
+async function hashArtifactDirectory({ absoluteRoot, rootLabel, hash, totals, forbiddenValues }) {
   const rootStats = await pathStats(absoluteRoot);
   if (!rootStats) return false;
   if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
@@ -633,6 +748,12 @@ async function hashArtifactDirectory({ absoluteRoot, rootLabel, hash, totals }) 
         updateHashFrame(hash, linkTarget);
         updateHashFrame(hash, normaliseArtifactPath(relativeTarget));
         updateHashFrame(hash, targetStats.isDirectory() ? "directory" : "file");
+        scanArtifactChunk({
+          chunk: linkTarget,
+          tail: Buffer.alloc(0),
+          forbiddenValues,
+          framedPath,
+        });
 
         const after = await lstat(absolutePath);
         const afterTarget = await readlink(absolutePath);
@@ -661,8 +782,18 @@ async function hashArtifactDirectory({ absoluteRoot, rootLabel, hash, totals }) 
         updateHashFrame(hash, "file");
         updateHashFrame(hash, framedPath);
         updateHashFrame(hash, stats.size);
+        let scanTail = Buffer.alloc(0);
         for await (const chunk of createReadStream(absolutePath)) {
+          scanTail = scanArtifactChunk({
+            chunk,
+            tail: scanTail,
+            forbiddenValues,
+            framedPath,
+          });
           hash.update(chunk);
+        }
+        if (absolutePath.toLowerCase().endsWith(".zip")) {
+          await scanZipArtifact({ absolutePath, forbiddenValues, framedPath });
         }
         const after = await lstat(absolutePath);
         if (after.size !== stats.size || after.mtimeMs !== stats.mtimeMs) {
@@ -681,11 +812,12 @@ async function hashArtifactDirectory({ absoluteRoot, rootLabel, hash, totals }) 
   return totals.fileCount > filesBefore;
 }
 
-export async function sealNetlifyArtifact(repoRoot = process.cwd()) {
+export async function sealNetlifyArtifact(repoRoot = process.cwd(), options = {}) {
   const root = resolve(repoRoot);
   const hash = createHash("sha256");
   const totals = { fileCount: 0, byteCount: 0 };
   const roots = [];
+  const forbiddenValues = normaliseForbiddenArtifactValues(options.forbiddenValues);
   let hasPublishOutput = false;
   let hasFrameworkOutput = false;
 
@@ -695,6 +827,7 @@ export async function sealNetlifyArtifact(repoRoot = process.cwd()) {
       rootLabel,
       hash,
       totals,
+      forbiddenValues,
     });
     if (!hasFiles) continue;
     roots.push(rootLabel);
@@ -1016,6 +1149,14 @@ export async function deployNetlifyProduction(input, dependencies = {}) {
   const validated = validateProductionDeployInput(input);
   const spawnImpl = dependencies.spawnImpl ?? spawnSync;
   const sealArtifactImpl = dependencies.sealArtifactImpl ?? sealNetlifyArtifact;
+  const assertBuildEnvironmentImpl =
+    dependencies.assertBuildEnvironmentImpl ?? assertWebBuildEnvironmentSafe;
+
+  await assertBuildEnvironmentImpl({
+    repoRoot: process.cwd(),
+    environment: process.env,
+    allowOuterNetlifyToken: true,
+  });
 
   const gitResult = runProcess(
     spawnImpl,
@@ -1045,18 +1186,16 @@ export async function deployNetlifyProduction(input, dependencies = {}) {
     spawnImpl,
     "netlify",
     buildNetlifyBuildArgs(input),
-    netlifyProcessOptions(
-      input.authToken,
-      validated.siteId,
-      {
-        NEXT_PUBLIC_PROMPTED_BUILD_SHA: validated.gitSha,
-      },
-      NETLIFY_BUILD_TIMEOUT_MS,
-    ),
+    netlifyBuildProcessOptions(validated.siteId, {
+      NEXT_PUBLIC_PROMPTED_BUILD_SHA: validated.gitSha,
+    }),
     "Netlify production build",
   );
   assertCleanGitWorktree(spawnImpl, true);
-  const sealedArtifact = await sealArtifactImpl(process.cwd());
+  const artifactScanOptions = {
+    forbiddenValues: [{ name: "NETLIFY_AUTH_TOKEN", value: input.authToken }],
+  };
+  const sealedArtifact = await sealArtifactImpl(process.cwd(), artifactScanOptions);
 
   const draftResult = runProcess(
     spawnImpl,
@@ -1087,7 +1226,7 @@ export async function deployNetlifyProduction(input, dependencies = {}) {
     timeoutMs: dependencies.supabaseAnonPreflightTimeoutMs,
   });
 
-  const recheckedArtifact = await sealArtifactImpl(process.cwd());
+  const recheckedArtifact = await sealArtifactImpl(process.cwd(), artifactScanOptions);
   if (!sameArtifactSeal(sealedArtifact, recheckedArtifact)) {
     throw new Error(
       "The Netlify artifact changed after the draft upload; refusing to promote the candidate.",

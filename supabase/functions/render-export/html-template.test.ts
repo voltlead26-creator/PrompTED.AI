@@ -61,6 +61,54 @@ Deno.test("server export strips resource-loading markup before PDF rendering", (
   assert(html.includes("Cell"), "legitimate table content was removed");
 });
 
+Deno.test("server export strips slash-delimited active attributes before PDF rendering", () => {
+  const html = buildExportHtml("Document", [
+    approvedSection(
+      "<details/open///ontoggle=alert(document.domain)>Visible details</details>" +
+        "<p/style=background:url(https://attacker.example/style)>Visible paragraph</p>" +
+        "<table/background=https://attacker.example/table><tr><td>Visible cell</td></tr></table>" +
+        "<a/href=javascript:alert(document.domain)>Unsafe link text</a>" +
+        "<details/open/\nontoggle=alert(document.domain)>Visible multiline details</details>" +
+        '<p><strong>Safe emphasis</strong> and <a href="https://example.com/path">safe link</a> ' +
+        '<a href=" https://example.com/spaced">spaced safe link</a> ' +
+        "<a href=' mailto:person@example.com'>spaced safe email</a></p>",
+    ),
+  ]);
+
+  for (
+    const forbidden of [
+      "ontoggle",
+      "javascript:",
+      "attacker.example",
+      "background=",
+      "/style=",
+    ]
+  ) {
+    assert(
+      !html.includes(forbidden),
+      `dangerous export token survived: ${forbidden}`,
+    );
+  }
+  for (
+    const preserved of [
+      "Visible details",
+      "Visible paragraph",
+      "Visible cell",
+      "Unsafe link text",
+      "Visible multiline details",
+      "<strong>Safe emphasis</strong>",
+      'href="https://example.com/path"',
+      'href=" https://example.com/spaced"',
+      "href=' mailto:person@example.com'",
+    ]
+  ) {
+    assert(
+      html.includes(preserved),
+      `legitimate export content was removed: ${preserved}`,
+    );
+  }
+});
+
 Deno.test("server export rejects caller-supplied external brand logo URLs", () => {
   const html = buildExportHtml(
     "Document",

@@ -6,10 +6,11 @@ dist/
 **/.expo/
 *.tsbuildinfo
 .env
+.env.*
 **/.env
-.env.local
-.env.*.local
-**/.env.local
+**/.env.*
+!.env.example
+!**/.env.example
 .DS_Store
 **/.DS_Store
 .claude/

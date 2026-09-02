@@ -8,9 +8,11 @@
 [build.environment]
   NODE_VERSION                    = "22.23.2"
   PNPM_VERSION                    = "10.33.0"
-  # These are intentionally browser-visible public keys/URLs. Do not mark them
-  # as secret in Netlify; omit them from secret-value scanning if already marked.
-  SECRETS_SCAN_OMIT_KEYS          = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_REVENUECAT_WEB_KEY,NEXT_PUBLIC_SENTRY_DSN,NEXT_PUBLIC_POSTHOG_KEY"
+  SECRETS_SCAN_ENABLED            = "true"
+  SECRETS_SCAN_OMIT_PATHS         = ""
+  # These are intentionally non-confidential public client values and deployment
+  # identifiers. Keep every credential and database connection value scanned.
+  SECRETS_SCAN_OMIT_KEYS          = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_REVENUECAT_WEB_KEY,NEXT_PUBLIC_SENTRY_DSN,NEXT_PUBLIC_POSTHOG_KEY,NEXT_SUPABASE_PROJECT_ID,NEXT_SUPABASE_URL,NETLIFY_SITE_ID"
 
 # Stable /api/* paths are owned by the reviewed Next.js catch-all route. It
 # derives its allowlist from supabase/deployment-contract.json and resolves the

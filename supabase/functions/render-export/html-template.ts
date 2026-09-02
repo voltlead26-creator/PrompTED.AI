@@ -58,13 +58,13 @@ function stripDangerousHtml(html: string): string {
       /<\/?\s*(img|picture|source|video|audio|track|link|meta|base|form|input|button|textarea|select|option)\b[^>]*>/gi,
       "",
     )
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/[\s/]+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
     .replace(
-      /\s(style|src|srcset|poster|background|ping|action|formaction|xlink:href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,
+      /[\s/]+(style|src|srcset|poster|background|ping|action|formaction|xlink:href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,
       "",
     )
     .replace(
-      /\shref\s*=\s*("|')?\s*(?!https?:|mailto:|tel:|#)[^\s>"']*(?:\1)?/gi,
+      /[\s/]+href\s*=\s*(?:"(?!\s*(?:https?:|mailto:|tel:|#))[^"]*"|'(?!\s*(?:https?:|mailto:|tel:|#))[^']*'|(?!https?:|mailto:|tel:|#)[^\s>"']+)/gi,
       "",
     );
 }
@@ -107,7 +107,8 @@ function safeVerifiedBrandLogoSource(value: string | null): string | null {
   if (value === null) return null;
   return /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(
       value,
-    ) && value.length <= 7_100_000
+    ) &&
+      value.length <= 7_100_000
     ? value
     : null;
 }
@@ -132,9 +133,9 @@ export function approvedOnly(sections: ExportSection[]): ExportSection[] {
 
 /** Names of required sections that are not yet approved. */
 export function unapprovedRequired(sections: ExportSection[]): string[] {
-  return sections
-    .filter((s) => s.is_required && s.status !== "approved")
-    .map((s) => s.name);
+  return sections.filter((s) => s.is_required && s.status !== "approved").map((
+    s,
+  ) => s.name);
 }
 
 export function buildExportHtml(
@@ -166,7 +167,9 @@ export function buildExportHtml(
     .map(
       (s) =>
         `<section class="section"><h2 style="color:${headingColour}">${
-          escapeHtml(s.name)
+          escapeHtml(
+            s.name,
+          )
         }</h2>${renderBody(s.content)}</section>`,
     )
     .join("\n");

@@ -17,6 +17,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import ts from "typescript";
+import { APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS } from "./check-web-build-environment.mjs";
 
 const CONTRACT_PATH = "supabase/deployment-contract.json";
 const CONFIG_TOML_PATH = "supabase/config.toml";
@@ -196,7 +197,15 @@ export function validateNetlifySecretScanConfig(text) {
       .filter(Boolean),
   );
 
-  for (const publicIdentifierKey of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
+  for (const omitKey of omitKeys) {
+    if (!APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS.includes(omitKey)) {
+      failures.push(
+        `netlify.toml must not exempt unreviewed variable "${omitKey}" from secret scanning.`,
+      );
+    }
+  }
+
+  for (const publicIdentifierKey of APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS) {
     if (!omitKeys.has(publicIdentifierKey)) {
       failures.push(
         `netlify.toml must include public identifier key "${publicIdentifierKey}" in ` +
@@ -205,18 +214,16 @@ export function validateNetlifySecretScanConfig(text) {
     }
   }
 
-  if (parseNetlifyBuildEnvironmentValue(text, "SECRETS_SCAN_ENABLED") === "false") {
-    failures.push("netlify.toml must not disable secret scanning with SECRETS_SCAN_ENABLED=false.");
+  if (parseNetlifyBuildEnvironmentValue(text, "SECRETS_SCAN_ENABLED") !== "true") {
+    failures.push('netlify.toml must explicitly keep secret scanning enabled with "true".');
   }
 
   const omitPaths = (parseNetlifyBuildEnvironmentValue(text, "SECRETS_SCAN_OMIT_PATHS") ?? "")
     .split(",")
     .map((path) => path.trim())
     .filter(Boolean);
-  if (omitPaths.some((path) => path.includes(".next") || path.includes(".netlify"))) {
-    failures.push(
-      "netlify.toml must not omit generated Next.js or Netlify output from secret scanning.",
-    );
+  if (omitPaths.length > 0) {
+    failures.push("netlify.toml must not omit any generated path from secret scanning.");
   }
 
   if (/package\s*=\s*["']@netlify\/plugin-nextjs["']/.test(text)) {
@@ -230,9 +237,17 @@ export function validateNetlifySecretScanConfig(text) {
 
 function parseWorkflowEnvironmentValue(workflowBlock, key) {
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return (
-    workflowBlock.match(new RegExp(`^\\s+${escapedKey}:\\s*([^\\n#]+?)\\s*$`, "m"))?.[1] ?? null
-  );
+  const value =
+    workflowBlock.match(new RegExp(`^\\s+${escapedKey}:\\s*([^\\n#]+?)\\s*$`, "m"))?.[1] ?? null;
+  if (
+    value &&
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 function workflowStepContaining(jobBlock, fragment, fromIndex = 0) {
@@ -549,10 +564,14 @@ export function validateProductionWorkflow(workflowText) {
         .map((key) => key.trim())
         .filter(Boolean),
     );
-    for (const publicIdentifierKey of [
-      "NEXT_PUBLIC_SUPABASE_URL",
-      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    ]) {
+    for (const omitKey of omitKeys) {
+      if (!APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS.includes(omitKey)) {
+        failures.push(
+          `Production web deployment must not exempt unreviewed variable "${omitKey}" from secret scanning.`,
+        );
+      }
+    }
+    for (const publicIdentifierKey of APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS) {
       if (!omitKeys.has(publicIdentifierKey)) {
         failures.push(
           `Production web deployment must include "${publicIdentifierKey}" in SECRETS_SCAN_OMIT_KEYS.`,
@@ -560,13 +579,19 @@ export function validateProductionWorkflow(workflowText) {
       }
     }
 
+    if (parseWorkflowEnvironmentValue(webJob, "SECRETS_SCAN_ENABLED") !== "true") {
+      failures.push(
+        "Production web deployment must explicitly keep Netlify secret scanning enabled.",
+      );
+    }
+
     const omitPaths = (parseWorkflowEnvironmentValue(webJob, "SECRETS_SCAN_OMIT_PATHS") ?? "")
       .split(",")
       .map((path) => path.trim())
       .filter(Boolean);
-    if (omitPaths.some((path) => path.includes(".next") || path.includes(".netlify"))) {
+    if (omitPaths.length > 0) {
       failures.push(
-        "Production web deployment must not omit generated Next.js or Netlify output from secret scanning.",
+        "Production web deployment must not omit any generated path from secret scanning.",
       );
     }
   }

@@ -178,9 +178,36 @@ describe("buildExportHtml", () => {
     expect(html).toContain("Unsafe link");
   });
 
+  it("preserves quoted links only when their scheme is explicitly allowed", () => {
+    const html = buildExportHtml({
+      title: "T",
+      sections: [
+        section({
+          content:
+            '<p><a href="https://example.com/path">Web</a> ' +
+            '<a href=" https://example.com/spaced">Spaced web</a> ' +
+            "<a href=' mailto:person@example.com'>Spaced email</a> " +
+            '<a href="mailto:person@example.com">Email</a> ' +
+            '<a href="tel:+61000000000">Phone</a> ' +
+            '<a href="#details">Details</a> ' +
+            '<a href="javascript:alert(1)">Unsafe</a></p>',
+          status: "approved",
+        }),
+      ],
+    });
+
+    expect(html).toContain('href="https://example.com/path"');
+    expect(html).toContain('href=" https://example.com/spaced"');
+    expect(html).toContain("href=' mailto:person@example.com'");
+    expect(html).toContain('href="mailto:person@example.com"');
+    expect(html).toContain('href="tel:+61000000000"');
+    expect(html).toContain('href="#details"');
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("Unsafe");
+  });
+
   it("applies brand kit colour, logo, and footer", () => {
-    const logoUrl =
-      `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/logo.png`;
+    const logoUrl = `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/logo.png`;
     const html = buildExportHtml({
       title: "Doc",
       sections: [section({ name: "Intro", content: "hi", status: "approved" })],
@@ -198,8 +225,7 @@ describe("buildExportHtml", () => {
   });
 
   it("accepts an exact immutable versioned brand logo path", () => {
-    const logoUrl =
-      `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/logos/${LOGO_OPERATION_ID}.webp`;
+    const logoUrl = `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/logos/${LOGO_OPERATION_ID}.webp`;
     const html = buildExportHtml({
       title: "Doc",
       sections: [section({ content: "hi" })],

@@ -78,7 +78,10 @@ function stripDangerousHtml(html: string): string {
       /[\s/]+(style|src|srcset|poster|background|ping|action|formaction|xlink:href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,
       "",
     )
-    .replace(/[\s/]+href\s*=\s*("|')?\s*(?!https?:|mailto:|tel:|#)[^\s>"']*(?:\1)?/gi, "");
+    .replace(
+      /[\s/]+href\s*=\s*(?:"(?!\s*(?:https?:|mailto:|tel:|#))[^"]*"|'(?!\s*(?:https?:|mailto:|tel:|#))[^']*'|(?!https?:|mailto:|tel:|#)[^\s>"']+)/gi,
+      "",
+    );
 }
 
 function safeHeadingColour(value: string | null | undefined): string {
@@ -155,11 +158,7 @@ export function buildExportHtml(input: ExportDocumentInput): string {
   const brand = input.brandKit;
   const headingColour = safeHeadingColour(brand?.primary_colour);
 
-  const logoUrl = safeBrandLogoUrl(
-    brand?.logo_url,
-    input.trustedAssetOrigin,
-    brand?.business_id,
-  );
+  const logoUrl = safeBrandLogoUrl(brand?.logo_url, input.trustedAssetOrigin, brand?.business_id);
   const logo = logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="" />` : "";
   const footer = brand?.footer_text
     ? `<footer class="footer">${escapeHtml(brand.footer_text)}</footer>`

@@ -15,7 +15,7 @@ test("an unconfigured local release gate receives one synthetic non-production b
     {
       appEnvironment: "test",
       supabaseUrl: "https://example.supabase.co",
-      supabaseAnonKey: "public-anon-key-for-build-only",
+      supabaseAnonKey: "sb_publishable_testfixture00000000000000000000",
       revenueCatKey: "test_revenuecat_key",
     },
   );

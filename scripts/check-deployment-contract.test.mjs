@@ -22,7 +22,9 @@ const SAFE_NETLIFY_SECRET_SCAN_CONFIG = `
 [build.environment]
   NODE_VERSION = "22.23.2"
   PNPM_VERSION = "10.33.0"
-  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY"
+  SECRETS_SCAN_ENABLED = "true"
+  SECRETS_SCAN_OMIT_PATHS = ""
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_REVENUECAT_WEB_KEY,NEXT_PUBLIC_SENTRY_DSN,NEXT_PUBLIC_POSTHOG_KEY,NEXT_SUPABASE_PROJECT_ID,NEXT_SUPABASE_URL,NETLIFY_SITE_ID"
 `;
 
 const SAFE_WEB_API_GATEWAY = `
@@ -314,11 +316,22 @@ test("active functions cannot consume the dormant raw provider façade", () => {
   );
 });
 
-test("requires browser-visible Supabase values in the root Netlify omit-key list", () => {
-  const unsafe = SAFE_NETLIFY_SECRET_SCAN_CONFIG.replace(",NEXT_PUBLIC_SUPABASE_ANON_KEY", "");
+test("requires every reviewed public identifier from the Netlify failure surface", () => {
+  for (const publicIdentifier of [
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "NEXT_SUPABASE_PROJECT_ID",
+    "NEXT_SUPABASE_URL",
+    "NETLIFY_SITE_ID",
+  ]) {
+    const unsafe = SAFE_NETLIFY_SECRET_SCAN_CONFIG.replace(new RegExp(`,?${publicIdentifier}`), "");
 
-  const failures = validateNetlifySecretScanConfig(unsafe);
-  assert.ok(failures.some((failure) => failure.includes("NEXT_PUBLIC_SUPABASE_ANON_KEY")));
+    const failures = validateNetlifySecretScanConfig(unsafe);
+    assert.ok(
+      failures.some((failure) => failure.includes(publicIdentifier)),
+      `Expected ${publicIdentifier} to be required`,
+    );
+  }
 });
 
 test("pins the required Node and pnpm releases in Netlify", () => {
@@ -333,15 +346,26 @@ test("pins the required Node and pnpm releases in Netlify", () => {
 });
 
 test("keeps Netlify secret scanning enabled and generated-function output covered", () => {
-  const unsafe =
-    SAFE_NETLIFY_SECRET_SCAN_CONFIG.replace(
-      "[build.environment]",
-      '[build.environment]\n  SECRETS_SCAN_ENABLED = "false"',
-    ) + '\n  SECRETS_SCAN_OMIT_PATHS = ".netlify/**"\n';
+  const unsafe = SAFE_NETLIFY_SECRET_SCAN_CONFIG.replace(
+    'SECRETS_SCAN_ENABLED = "true"',
+    'SECRETS_SCAN_ENABLED = "false"',
+  ).replace('SECRETS_SCAN_OMIT_PATHS = ""', 'SECRETS_SCAN_OMIT_PATHS = ".netlify/**"');
 
   const failures = validateNetlifySecretScanConfig(unsafe);
-  assert.ok(failures.some((failure) => failure.includes("must not disable secret scanning")));
-  assert.ok(failures.some((failure) => failure.includes("generated Next.js or Netlify output")));
+  assert.ok(
+    failures.some((failure) => failure.includes("explicitly keep secret scanning enabled")),
+  );
+  assert.ok(failures.some((failure) => failure.includes("must not omit any generated path")));
+});
+
+test("allows secret-scan omissions only for reviewed public identifiers", () => {
+  const unsafe = SAFE_NETLIFY_SECRET_SCAN_CONFIG.replace(
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_SUPABASE_DATABASE_URL",
+  );
+
+  const failures = validateNetlifySecretScanConfig(unsafe);
+  assert.ok(failures.some((failure) => failure.includes("NEXT_PUBLIC_SUPABASE_DATABASE_URL")));
 });
 
 test("does not pin the retired legacy Next.js plugin in netlify.toml", () => {
@@ -948,7 +972,9 @@ jobs:
       - run: node scripts/deploy-netlify-production.mjs --site-id "$NETLIFY_SITE_ID" --git-sha "$GITHUB_SHA" --url "https://ted.littlemissscarlett.co"
         env:
           NEXT_PUBLIC_APP_ENV: production
-          SECRETS_SCAN_OMIT_KEYS: NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY
+          SECRETS_SCAN_ENABLED: "true"
+          SECRETS_SCAN_OMIT_PATHS: ""
+          SECRETS_SCAN_OMIT_KEYS: NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_REVENUECAT_WEB_KEY,NEXT_PUBLIC_SENTRY_DSN,NEXT_PUBLIC_POSTHOG_KEY,NEXT_SUPABASE_PROJECT_ID,NEXT_SUPABASE_URL,NETLIFY_SITE_ID
 `;
 
 test("production release verification precedes every mutation", () => {
@@ -1294,18 +1320,25 @@ test("production workflow requires least privilege and non-cancelling serializat
 
 test("production web deployment pins the current CLI and preserves narrow secret scanning", () => {
   const unsafe = SAFE_PRODUCTION_WORKFLOW.replace("netlify-cli@27.3.0", "netlify-cli@17")
-    .replace(",NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
+    .replace(",NETLIFY_SITE_ID", "")
     .replace("          NEXT_PUBLIC_APP_ENV: production\n", "")
+    .replace('          SECRETS_SCAN_ENABLED: "true"', '          SECRETS_SCAN_ENABLED: "false"')
     .replace(
-      "          SECRETS_SCAN_OMIT_KEYS:",
-      "          SECRETS_SCAN_OMIT_PATHS: .netlify/**\n          SECRETS_SCAN_OMIT_KEYS:",
+      '          SECRETS_SCAN_OMIT_PATHS: ""',
+      '          SECRETS_SCAN_OMIT_PATHS: ".netlify/**"',
+    )
+    .replace(
+      "SECRETS_SCAN_OMIT_KEYS: NEXT_PUBLIC_SUPABASE_URL",
+      "SECRETS_SCAN_OMIT_KEYS: NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_DATABASE_URL",
     );
 
   const failures = validateProductionWorkflow(unsafe);
   assert.ok(failures.some((failure) => failure.includes("netlify-cli@27.3.0")));
-  assert.ok(failures.some((failure) => failure.includes("NEXT_PUBLIC_SUPABASE_ANON_KEY")));
+  assert.ok(failures.some((failure) => failure.includes("NETLIFY_SITE_ID")));
   assert.ok(failures.some((failure) => failure.includes("NEXT_PUBLIC_APP_ENV")));
-  assert.ok(failures.some((failure) => failure.includes("generated Next.js or Netlify output")));
+  assert.ok(failures.some((failure) => failure.includes("secret scanning enabled")));
+  assert.ok(failures.some((failure) => failure.includes("must not omit any generated path")));
+  assert.ok(failures.some((failure) => failure.includes("NEXT_PUBLIC_SUPABASE_DATABASE_URL")));
 });
 
 test("production mutation jobs require the protected environment and shell-free web launcher", () => {

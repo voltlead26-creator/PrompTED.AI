@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node ../../scripts/check-web-build-environment.mjs && next build",
     "start": "next start",
     "type-check": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx --max-warnings 0",

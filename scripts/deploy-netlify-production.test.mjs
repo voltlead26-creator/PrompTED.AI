@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -371,6 +372,7 @@ test("Netlify arguments are shell-safe and promote the one uploaded draft", () =
     "@prompted/web",
     "--context",
     "production",
+    "--offline",
   ]);
   assert.deepEqual(buildNetlifyPromoteArgs(SAFE_INPUT, DEPLOY_ID), [
     "api",
@@ -498,7 +500,37 @@ test("artifact seal deterministically covers publish and Netlify function output
       recursive: true,
     });
     await writeFile(join(root, "apps/web/.next/server/app.js"), "publish-v1");
-    await writeFile(join(root, "apps/web/.netlify/functions/server.zip"), "function-v1");
+    await writeFile(join(root, "apps/web/.netlify/functions/server.mjs"), "function-v1");
+
+    const confidentialValue = "netlify-private-canary-must-not-ship";
+    await writeFile(
+      join(root, "apps/web/.next/server/private-canary.js"),
+      `export default ${JSON.stringify(confidentialValue)};`,
+    );
+    await assert.rejects(
+      sealNetlifyArtifact(root, {
+        forbiddenValues: [{ name: "NETLIFY_AUTH_TOKEN", value: confidentialValue }],
+      }),
+      (error) => {
+        assert.match(error.message, /NETLIFY_AUTH_TOKEN/);
+        assert.equal(error.message.includes(confidentialValue), false);
+        return true;
+      },
+    );
+    await rm(join(root, "apps/web/.next/server/private-canary.js"));
+
+    const boundaryValue = "boundary-spanning-private-canary";
+    await writeFile(
+      join(root, "apps/web/.next/server/boundary-canary.js"),
+      "a".repeat(65_530) + boundaryValue,
+    );
+    await assert.rejects(
+      sealNetlifyArtifact(root, {
+        forbiddenValues: [{ name: "NETLIFY_AUTH_TOKEN", value: boundaryValue }],
+      }),
+      /NETLIFY_AUTH_TOKEN/,
+    );
+    await rm(join(root, "apps/web/.next/server/boundary-canary.js"));
 
     const first = await sealNetlifyArtifact(root);
     const unchanged = await sealNetlifyArtifact(root);
@@ -509,7 +541,7 @@ test("artifact seal deterministically covers publish and Netlify function output
     assert.notEqual(mutated.digest, first.digest);
 
     await writeFile(join(root, "apps/web/.next/server/app.js"), "publish-v1");
-    await writeFile(join(root, "apps/web/.netlify/functions/server.zip"), "function-v2");
+    await writeFile(join(root, "apps/web/.netlify/functions/server.mjs"), "function-v2");
     const functionMutation = await sealNetlifyArtifact(root);
     assert.notEqual(functionMutation.digest, first.digest);
 
@@ -555,6 +587,43 @@ test("artifact seal deterministically covers publish and Netlify function output
   }
 });
 
+test("artifact seal inspects expanded function archives without exposing a matched value", async () => {
+  const root = await mkdtemp(join(tmpdir(), "prompted-netlify-archive-seal-"));
+  try {
+    const functionRoot = join(root, "apps/web/.netlify/functions");
+    const sourceRoot = join(root, "archive-source");
+    await mkdir(join(root, "apps/web/.next/server"), { recursive: true });
+    await mkdir(functionRoot, { recursive: true });
+    await mkdir(sourceRoot, { recursive: true });
+    await writeFile(join(root, "apps/web/.next/server/app.js"), "publish-v1");
+    const confidentialValue = "compressed-private-canary-must-not-ship";
+    await writeFile(
+      join(sourceRoot, "handler.mjs"),
+      `export default ${JSON.stringify(confidentialValue)};`,
+    );
+    const archivePath = join(functionRoot, "server.zip");
+    const zipResult = spawnSync("zip", ["-q", archivePath, "handler.mjs"], {
+      cwd: sourceRoot,
+      shell: false,
+      stdio: "ignore",
+    });
+    assert.equal(zipResult.status, 0, "zip is required to construct the archive security fixture");
+
+    await assert.rejects(
+      sealNetlifyArtifact(root, {
+        forbiddenValues: [{ name: "NETLIFY_AUTH_TOKEN", value: confidentialValue }],
+      }),
+      (error) => {
+        assert.match(error.message, /NETLIFY_AUTH_TOKEN/);
+        assert.equal(error.message.includes(confidentialValue), false);
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("hostile input fails before any process starts", async () => {
   let starts = 0;
   await assert.rejects(
@@ -571,12 +640,31 @@ test("hostile input fails before any process starts", async () => {
   assert.equal(starts, 0);
 });
 
+test("an unsafe web-build environment fails before any process starts", async () => {
+  let starts = 0;
+  await assert.rejects(
+    deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl(options) {
+        assert.equal(options.allowOuterNetlifyToken, true);
+        throw new Error("Web build environment security check failed.");
+      },
+      spawnImpl() {
+        starts += 1;
+        return { status: 0 };
+      },
+    }),
+    /Web build environment security check failed/,
+  );
+  assert.equal(starts, 0);
+});
+
 test("production deployment uploads once, smokes the draft, promotes its exact ID, and attests publication", async () => {
   const calls = [];
   const requests = [];
   const releaseEvents = [];
   const fetchForSmoke = smokeFetch(requests);
   let sealCalls = 0;
+  const sealOptions = [];
   let siteLookupCalls = 0;
   const result = await deployNetlifyProduction(SAFE_INPUT, {
     spawnImpl(command, args, options) {
@@ -611,8 +699,9 @@ test("production deployment uploads once, smokes the draft, promotes its exact I
       }
       return fetchForSmoke(url, options);
     },
-    sealArtifactImpl: async () => {
+    sealArtifactImpl: async (_repoRoot, options) => {
       sealCalls += 1;
+      sealOptions.push(options);
       releaseEvents.push(`artifact-seal-${sealCalls}`);
       return SEALED_ARTIFACT;
     },
@@ -622,6 +711,12 @@ test("production deployment uploads once, smokes the draft, promotes its exact I
 
   assert.equal(calls.length, 9);
   assert.equal(sealCalls, 2);
+  assert.equal(sealOptions.length, 2);
+  for (const options of sealOptions) {
+    assert.deepEqual(options.forbiddenValues, [
+      { name: "NETLIFY_AUTH_TOKEN", value: SAFE_INPUT.authToken },
+    ]);
+  }
   assert.equal(siteLookupCalls, 3);
   assert.deepEqual(
     calls.map(({ command, args }) => [command, ...args.slice(0, 2)]),
@@ -664,6 +759,17 @@ test("production deployment uploads once, smokes the draft, promotes its exact I
     false,
   );
   assert.equal(calls[3].options.env.NEXT_PUBLIC_PROMPTED_BUILD_SHA, SAFE_INPUT.gitSha);
+  assert.equal(calls[3].options.env.NETLIFY_AUTH_TOKEN, undefined);
+  const netlifyControlCalls = calls.filter(
+    ({ command, args }) => command === "netlify" && args[0] !== "build",
+  );
+  assert.ok(netlifyControlCalls.length > 0);
+  for (const { args, options } of netlifyControlCalls) {
+    assert.equal(args.includes(SAFE_INPUT.authToken), false);
+    assert.equal(options.env.NETLIFY_AUTH_TOKEN, undefined);
+    assert.equal(options.input, SAFE_INPUT.authToken);
+    assert.match(options.env.NODE_OPTIONS, /netlify-cli-auth-stdin\.mjs/);
+  }
 
   const protectedRequests = requests.filter(({ url }) => url.includes("document-operation"));
   assert.deepEqual(
@@ -789,6 +895,38 @@ test("a site/origin mismatch stops before a deploy starts", async () => {
     calls.some(({ args }) => args[0] === "deploy"),
     false,
   );
+});
+
+test("Netlify CLI authentication crosses stdin without remaining in the child environment", () => {
+  const preloadUrl = new URL("./netlify-cli-auth-stdin.mjs", import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `const index = process.argv.indexOf("--auth"); console.log(JSON.stringify({ authenticated: index >= 0 && Boolean(process.argv[index + 1]), envCredential: Boolean(process.env.NETLIFY_AUTH_TOKEN), preloadInherited: Boolean(process.env.NODE_OPTIONS), markerInherited: Boolean(process.env.PROMPTED_NETLIFY_AUTH_STDIN) }));`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        NETLIFY_AUTH_TOKEN: "synthetic-env-value-that-must-be-removed",
+        NODE_OPTIONS: `--import=${preloadUrl}`,
+        PROMPTED_NETLIFY_AUTH_STDIN: "1",
+      },
+      input: SAFE_INPUT.authToken,
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    authenticated: true,
+    envCredential: false,
+    preloadInherited: false,
+    markerInherited: false,
+  });
+  assert.equal(result.stdout.includes(SAFE_INPUT.authToken), false);
 });
 
 test("a build or plugin source mutation stops before the draft upload", async () => {

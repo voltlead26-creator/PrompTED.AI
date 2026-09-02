@@ -3,7 +3,10 @@ import {
   jsonResponse,
   rejectForbiddenOrigin,
 } from "../_shared/cors.ts";
-import { calculateBusinessDeadline } from "../_shared/public-holidays.ts";
+import {
+  assertBusinessDays,
+  calculateBusinessDeadline,
+} from "../_shared/public-holidays.ts";
 
 interface DeadlineRequest {
   startDate?: unknown;
@@ -28,6 +31,8 @@ function parseRequest(body: unknown): {
   if (!Number.isInteger(input.businessDays)) {
     throw new Error("businessDays must be an integer.");
   }
+  const businessDays = Number(input.businessDays);
+  assertBusinessDays(businessDays);
   const countryCode = typeof input.countryCode === "string"
     ? input.countryCode.trim().toUpperCase()
     : "AU";
@@ -37,7 +42,7 @@ function parseRequest(body: unknown): {
 
   return {
     startDate: input.startDate,
-    businessDays: Number(input.businessDays),
+    businessDays,
     countryCode,
     subdivisionCode,
   };
