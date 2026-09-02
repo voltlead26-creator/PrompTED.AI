@@ -46,6 +46,7 @@ Deno.test("sectionFallbackPlaceholder folds specific missing facts into the plac
     key: "experience",
     ready: false,
     missing_information: ["Employer name", "Dates of employment"],
+    missing_information_keys: ["employer_name", "employment_dates"],
   };
   const result = sectionFallbackPlaceholder(brief, null, section, readiness);
 
@@ -70,6 +71,7 @@ Deno.test("sectionFallbackPlaceholder is deterministic for the same inputs, so i
     key: "experience",
     ready: false,
     missing_information: ["Employer name"],
+    missing_information_keys: ["employer_name"],
   };
   const first = sectionFallbackPlaceholder(brief, null, section, readiness);
   const second = sectionFallbackPlaceholder(brief, null, section, readiness);

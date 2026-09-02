@@ -1,20 +1,12 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import {
+  preflightUploadMetadata,
+  UPLOAD_ACCEPT_ATTRIBUTE,
+} from "@prompted/shared/ingest-upload";
 
-/** Accepted upload types supported by the Edge Function text extractor. */
-export const ACCEPTED_MIME_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-] as const;
-
-export const ACCEPT_ATTRIBUTE =
-  ".pdf,.docx,.txt,.md,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv";
-
-export const MAX_FILE_BYTES = 8 * 1024 * 1024; // Matches ingest-upload MAX_BYTES.
+export const ACCEPT_ATTRIBUTE = UPLOAD_ACCEPT_ATTRIBUTE;
 
 export interface Attachment {
   file: File;
@@ -31,12 +23,6 @@ export interface UseFileAttachment {
   clear: () => void;
 }
 
-function isAccepted(type: string, name: string): boolean {
-  if ((ACCEPTED_MIME_TYPES as readonly string[]).includes(type)) return true;
-  const lower = name.toLowerCase();
-  return [".pdf", ".docx", ".txt", ".md", ".csv"].some((ext) => lower.endsWith(ext));
-}
-
 /**
  * useFileAttachment - single-file picker state for the Home composer.
  * Validates type and size, surfacing plain non-technical error messages.
@@ -47,12 +33,13 @@ export function useFileAttachment(): UseFileAttachment {
   const [error, setError] = useState<string | null>(null);
 
   const attach = useCallback((file: File): boolean => {
-    if (!isAccepted(file.type, file.name)) {
-      setError("TED can read PDF, DOCX, TXT, Markdown or CSV files. Save this file in one of those formats and try again.");
-      return false;
-    }
-    if (file.size > MAX_FILE_BYTES) {
-      setError("That file is a bit too big. Files need to be 8MB or smaller.");
+    const result = preflightUploadMetadata({
+      fileName: file.name,
+      mimeType: file.type,
+      byteLength: file.size,
+    });
+    if (!result.ok) {
+      setError(result.message);
       return false;
     }
     setError(null);

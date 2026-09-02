@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { isTedActionStepPayload, type TedArtifactBlock } from "@prompted/shared/artifacts";
+import {
+  isTedActionStepPayload,
+  type PersistedTedArtifactBlock,
+} from "@prompted/shared/artifacts";
 import type { EditAction } from "@prompted/shared/api-client";
 import { useArtifact } from "@/hooks/useArtifact";
 import { useEditWithTED } from "@/hooks/useEditWithTED";
@@ -23,7 +26,15 @@ interface PendingChange {
 }
 
 export function ArtifactActionScreen({ outcomeId }: { outcomeId: string }) {
-  const { artifact, loading, savingBlockId, toggleBlock, updateBlockPayload } = useArtifact(outcomeId);
+  const {
+    artifact,
+    loading,
+    savingBlockId,
+    loadError,
+    saveError,
+    toggleBlock,
+    updateBlockPayload,
+  } = useArtifact(outcomeId);
   const editor = useEditWithTED();
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [showTEdit, setShowTEdit] = useState(false);
@@ -78,7 +89,7 @@ export function ArtifactActionScreen({ outcomeId }: { outcomeId: string }) {
     window.setTimeout(() => void requestEdit(action, instruction), 0);
   }
 
-  function renderStep(block: TedArtifactBlock) {
+  function renderStep(block: PersistedTedArtifactBlock) {
     if (!isTedActionStepPayload(block.payload)) return null;
     const step = block.payload;
     const selected = block.id === selectedBlock?.id;
@@ -88,7 +99,8 @@ export function ArtifactActionScreen({ outcomeId }: { outcomeId: string }) {
         <StatusCheckbox
           checked={completed}
           label={`${completed ? "Mark incomplete" : "Mark complete"}: ${step.title}`}
-          onToggle={() => void toggleBlock(block)}
+          onToggle={() => void toggleBlock(block).catch(() => undefined)}
+          disabled={savingBlockId === block.id}
         />
         <button
           type="button"
@@ -147,8 +159,12 @@ export function ArtifactActionScreen({ outcomeId }: { outcomeId: string }) {
           onDiscard={() => setPending(null)}
           onRetry={retryChange}
           onApply={() => void applyChange()}
+          busy={savingBlockId === pending.blockId}
         />
       )}
+
+      {loadError ? <p className={styles.saving} role="alert">{loadError}</p> : null}
+      {saveError ? <p className={styles.saving} role="alert">{saveError}</p> : null}
 
       <div className={styles.contextBar} role="toolbar" aria-label="Edit selected action step">
         <button type="button" onClick={() => void requestEdit("expand")} disabled={!selectedBlock || editor.streaming || Boolean(pending)}>

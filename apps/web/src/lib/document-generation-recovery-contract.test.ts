@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Section } from "@prompted/shared/browser";
 import type { WorkspaceDocumentState } from "./workspace-store";
+import { testOwnerDispatchLease } from "@/test/owner-dispatch-lease";
 import { validateFinishedSection } from "./output-integrity";
 
 const { generateDocumentStream } = vi.hoisted(() => ({
@@ -98,6 +99,8 @@ async function runCase(params: {
 
   await streamInitialDraft({
     outcomeId: "outcome-five-run",
+    requestContext: testOwnerDispatchLease("user-1"),
+    generationRequestId: "recovery-contract-request",
     state: params.initial,
     pending: {
       situation: params.initial.situation,

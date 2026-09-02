@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
   renderTedPlaceholdersForEditor,
@@ -16,7 +16,8 @@ import { Badge, type BadgeStatus } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
 import { useAutosave } from "@/hooks/useAutosave";
 import { useExplainWithTED } from "@/hooks/useExplainWithTED";
-import { useEditWithTED } from "@/hooks/useEditWithTED";
+import { type PersistedEditIdentity, useEditWithTED } from "@/hooks/useEditWithTED";
+import type { LegacySectionApplyResult } from "@/lib/api/sections";
 import { sanitiseSectionContent } from "@/lib/sanitise";
 import { ExplainWithTED } from "./ExplainWithTED";
 import { EditWithTED } from "./EditWithTED";
@@ -27,6 +28,9 @@ interface SectionEditorProps {
   section: Section | null;
   domain?: string;
   onEdit: (id: string, content: string) => void;
+  /** Merge a confirmed DB Apply response as authoritative truth without
+   * scheduling a second generic document/section save. */
+  onPersistedLegacyApply?: (result: LegacySectionApplyResult) => void;
   onApprove: (id: string) => void;
   onUnapprove: (id: string) => void;
   onToggleLock: (id: string) => void;
@@ -35,6 +39,9 @@ interface SectionEditorProps {
   onPlaceholderSelect?: (placeholderId: string) => void;
   /** Captured documents approve one exact document revision, never a local section flag. */
   revisionApproval?: boolean;
+  /** Authoritative document binding from the persisted workspace truth. Never
+   * infer this security boundary from a display/template section key. */
+  ledgerBindingStatus?: "legacy_unversioned" | "captured";
 }
 
 interface ToolbarButton {
@@ -50,18 +57,66 @@ interface PendingTedChange {
   range: { from: number; to: number } | null;
   action: EditAction;
   instruction?: string;
+  persisted: PersistedEditIdentity | null;
+  recoverableApply: boolean;
+  recovered: boolean;
+}
+
+interface RevisionedSection extends Section {
+  revision?: number;
+  section_key?: string | null;
+  ledger_binding_status?: "legacy_unversioned" | "captured";
 }
 
 const TOOLBAR: ToolbarButton[] = [
-  { label: "Bold", icon: "bold", isActive: (editor) => editor.isActive("bold"), run: (editor) => editor.chain().focus().toggleBold().run() },
-  { label: "Italic", icon: "italic", isActive: (editor) => editor.isActive("italic"), run: (editor) => editor.chain().focus().toggleItalic().run() },
-  { label: "Heading 2", icon: "h-2", isActive: (editor) => editor.isActive("heading", { level: 2 }), run: (editor) => editor.chain().focus().toggleHeading({ level: 2 }).run() },
-  { label: "Heading 3", icon: "h-3", isActive: (editor) => editor.isActive("heading", { level: 3 }), run: (editor) => editor.chain().focus().toggleHeading({ level: 3 }).run() },
-  { label: "Bullet list", icon: "list", isActive: (editor) => editor.isActive("bulletList"), run: (editor) => editor.chain().focus().toggleBulletList().run() },
-  { label: "Numbered list", icon: "list-numbers", isActive: (editor) => editor.isActive("orderedList"), run: (editor) => editor.chain().focus().toggleOrderedList().run() },
+  {
+    label: "Bold",
+    icon: "bold",
+    isActive: (editor) => editor.isActive("bold"),
+    run: (editor) => editor.chain().focus().toggleBold().run(),
+  },
+  {
+    label: "Italic",
+    icon: "italic",
+    isActive: (editor) => editor.isActive("italic"),
+    run: (editor) => editor.chain().focus().toggleItalic().run(),
+  },
+  {
+    label: "Heading 2",
+    icon: "h-2",
+    isActive: (editor) => editor.isActive("heading", { level: 2 }),
+    run: (editor) => editor.chain().focus().toggleHeading({ level: 2 }).run(),
+  },
+  {
+    label: "Heading 3",
+    icon: "h-3",
+    isActive: (editor) => editor.isActive("heading", { level: 3 }),
+    run: (editor) => editor.chain().focus().toggleHeading({ level: 3 }).run(),
+  },
+  {
+    label: "Bullet list",
+    icon: "list",
+    isActive: (editor) => editor.isActive("bulletList"),
+    run: (editor) => editor.chain().focus().toggleBulletList().run(),
+  },
+  {
+    label: "Numbered list",
+    icon: "list-numbers",
+    isActive: (editor) => editor.isActive("orderedList"),
+    run: (editor) => editor.chain().focus().toggleOrderedList().run(),
+  },
 ];
 
 const TED_PLACEHOLDER_TOKEN = "{{TED_PLACEHOLDER:";
+const LEGACY_RECOVERY_INITIAL_DELAY_MS = 750;
+const LEGACY_RECOVERY_MAX_DELAY_MS = 30_000;
+
+function legacyRecoveryDelayMs(attempt: number): number {
+  return Math.min(
+    LEGACY_RECOVERY_INITIAL_DELAY_MS * 2 ** Math.min(attempt, 6),
+    LEGACY_RECOVERY_MAX_DELAY_MS,
+  );
+}
 
 export function wouldEraseTedPlaceholder(value: string, currentContent: string): boolean {
   return currentContent.includes(TED_PLACEHOLDER_TOKEN) && isVisiblyEmpty(value);
@@ -86,6 +141,7 @@ export function SectionEditor({
   section,
   domain,
   onEdit,
+  onPersistedLegacyApply,
   onApprove,
   onUnapprove,
   onToggleLock,
@@ -93,12 +149,24 @@ export function SectionEditor({
   documentMode = false,
   onPlaceholderSelect,
   revisionApproval = false,
+  ledgerBindingStatus,
 }: SectionEditorProps) {
   const [showTEdit, setShowTEdit] = useState(false);
   const [showExplainPanel, setShowExplainPanel] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
-  const [selection, setSelection] = useState<{ from: number; to: number; text: string } | null>(null);
+  const [selection, setSelection] = useState<{ from: number; to: number; text: string } | null>(
+    null,
+  );
   const [pendingTedChange, setPendingTedChange] = useState<PendingTedChange | null>(null);
+  const [proposalNotice, setProposalNotice] = useState<string | null>(null);
+  const [confirmedRevision, setConfirmedRevision] = useState<{
+    sectionId: string;
+    revision: number;
+    content: string;
+  } | null>(null);
+  const [legacyRecoveryState, setLegacyRecoveryState] = useState<"checking" | "reconciling" | null>(
+    null,
+  );
   const [html, setHtml] = useState(section?.content ?? "");
   const ai = useEditWithTED();
   const explain = useExplainWithTED();
@@ -147,21 +215,144 @@ export function SectionEditor({
     },
   });
 
+  const revisionedSection = section as RevisionedSection | null;
+  const sectionId = section?.id;
+  const sectionContent = section?.content;
+  const sectionRevision = revisionedSection?.revision;
+  const recoverLegacyEdit = ai.recover;
+  const authoritativeLedgerBinding =
+    ledgerBindingStatus ?? revisionedSection?.ledger_binding_status;
+  const capturedSection = authoritativeLedgerBinding === "captured";
+  const confirmedSectionRevision =
+    confirmedRevision && confirmedRevision.sectionId === sectionId
+      ? confirmedRevision.revision
+      : null;
+  const persistedSectionRevision =
+    Math.max(
+      Number.isInteger(sectionRevision) ? Number(sectionRevision) : 0,
+      confirmedSectionRevision ?? 0,
+    ) || undefined;
+  const revisionBoundLegacy = Boolean(
+    sectionId &&
+    authoritativeLedgerBinding === "legacy_unversioned" &&
+    !capturedSection &&
+    Number.isInteger(persistedSectionRevision) &&
+    Number(persistedSectionRevision) > 0,
+  );
+
   useEffect(() => {
-    if (!editor || !section) return;
-    if (editor.getHTML() !== section.content) {
-      editor.commands.setContent(
-        renderTedPlaceholdersForEditor(section.content || "<p></p>"),
-        { emitUpdate: false },
-      );
+    setConfirmedRevision((current) => {
+      if (!current) return null;
+      if (current.sectionId !== sectionId) return null;
+      if (Number.isInteger(sectionRevision) && Number(sectionRevision) >= current.revision) {
+        return null;
+      }
+      return current;
+    });
+  }, [sectionContent, sectionId, sectionRevision]);
+
+  useEffect(() => {
+    if (!editor || !sectionId) return;
+    if (editor.getHTML() !== sectionContent) {
+      editor.commands.setContent(renderTedPlaceholdersForEditor(sectionContent || "<p></p>"), {
+        emitUpdate: false,
+      });
     }
-    setHtml(section.content);
+    setHtml(sectionContent ?? "");
     setSelection(null);
     setHasSelection(false);
     setPendingTedChange(null);
+    setProposalNotice(null);
     setShowTEdit(false);
     setShowExplainPanel(false);
-  }, [section, editor]);
+  }, [editor, sectionContent, sectionId, sectionRevision]);
+
+  useEffect(() => {
+    if (!sectionId || !revisionBoundLegacy) {
+      setLegacyRecoveryState(null);
+      return;
+    }
+    if (pendingTedChange || ai.streaming) return;
+    let active = true;
+    let timer: number | null = null;
+    let pollAttempt = 0;
+    setLegacyRecoveryState("checking");
+    const poll = async (): Promise<void> => {
+      const recovered = await recoverLegacyEdit(sectionId);
+      if (!active) return;
+      if (!recovered) {
+        setLegacyRecoveryState(null);
+        return;
+      }
+      if (recovered.state === "accepted" || recovered.state === "provider_dispatched") {
+        setLegacyRecoveryState("reconciling");
+        setProposalNotice(
+          recovered.state === "accepted"
+            ? "TED accepted this saved edit and is reconciling its durable progress. No second attempt will start."
+            : "TED already dispatched this saved edit and is reconciling the result. No second attempt will start.",
+        );
+        const delay = legacyRecoveryDelayMs(pollAttempt);
+        pollAttempt += 1;
+        timer = window.setTimeout(() => void poll(), delay);
+        return;
+      }
+      setLegacyRecoveryState(null);
+      if (recovered.state !== "ready") {
+        switch (recovered.state) {
+          case "stale":
+            setProposalNotice(
+              "This section changed after TED prepared the saved suggestion. The stale suggestion was not restored or applied.",
+            );
+            break;
+          case "cancelled":
+            setProposalNotice(
+              "TED confirmed that the edit was cancelled. Your saved wording was not changed; you may start a new attempt.",
+            );
+            break;
+          case "terminal_failure":
+            setProposalNotice(
+              "TED confirmed that the edit ended without changing your saved wording. You may start a new attempt.",
+            );
+            break;
+          case "reconciliation_required":
+            setProposalNotice(
+              "TED could not confirm the provider outcome, but your saved wording was not changed. Start a new edit with a new attempt.",
+            );
+            break;
+          default:
+            setProposalNotice(null);
+        }
+        return;
+      }
+      const identity: PersistedEditIdentity = {
+        operationId: recovered.operation_id,
+        acceptedSectionRevision: recovered.accepted_section_revision,
+        resultSha256: recovered.result_sha256,
+        appliedCandidateContent: recovered.applied_candidate_content,
+        appliedCandidateSha256: recovered.applied_candidate_sha256,
+        requestFingerprint: null,
+      };
+      setPendingTedChange({
+        suggested: recovered.suggested_content,
+        changes: recovered.changes,
+        range: null,
+        action: recovered.action,
+        persisted: identity,
+        recoverableApply: recovered.recoverable,
+        recovered: true,
+      });
+      setProposalNotice(
+        recovered.scope === "selection"
+          ? "Recovered TED's selection edit as the exact saved full-section result. Applying it still requires your confirmation."
+          : "Recovered TED's saved suggestion. Applying it still requires your confirmation.",
+      );
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [ai.streaming, pendingTedChange, recoverLegacyEdit, revisionBoundLegacy, sectionId]);
 
   const locked = section?.status === "locked";
   useEffect(() => {
@@ -180,9 +371,38 @@ export function SectionEditor({
   });
 
   const runAiEdit = useCallback(
-    async (action: EditAction, instruction?: string) => {
-      if (!editor || !section || pendingTedChange || ai.streaming) return;
-      const fullText = editor.getText();
+    async (action: EditAction, instruction?: string, ignoreReviewedSuggestion = false) => {
+      if (
+        !editor ||
+        !section ||
+        (pendingTedChange && !ignoreReviewedSuggestion) ||
+        ai.streaming ||
+        legacyRecoveryState !== null
+      )
+        return;
+      if (
+        !authoritativeLedgerBinding ||
+        (authoritativeLedgerBinding === "legacy_unversioned" && !revisionBoundLegacy)
+      ) {
+        setProposalNotice(
+          "TED needs the latest saved revision before it can edit this section safely. Wait for saving to finish or reload the workspace, then try again.",
+        );
+        return;
+      }
+      const currentContent = sanitiseSectionContent(
+        serialiseTedPlaceholdersFromEditor(editor.getHTML()),
+      );
+      if (revisionBoundLegacy && currentContent !== sanitiseSectionContent(section.content)) {
+        setProposalNotice(
+          "Save the current wording before asking TED to edit it, so the suggestion is bound to the exact saved revision.",
+        );
+        onEdit(section.id, currentContent);
+        return;
+      }
+      // The service reloads the provider input from Postgres. Sending the
+      // byte-exact stored body here is solely for its accepted SHA-256 binding;
+      // an editor/sanitiser-normalised equivalent must not create a false stale.
+      const fullText = revisionBoundLegacy ? section.content : editor.getText();
       const selectedText = selection?.text?.trim() ?? "";
       const result = await ai.run({
         action,
@@ -190,8 +410,22 @@ export function SectionEditor({
         selection: selectedText || undefined,
         instruction,
         domain,
+        persistence: revisionBoundLegacy
+          ? {
+              userId: section.user_id,
+              documentId: section.document_id,
+              sectionId: section.id,
+              expectedSectionRevision: Number(persistedSectionRevision),
+            }
+          : undefined,
       });
       if (!result?.content.trim()) return;
+      if (revisionBoundLegacy && !result.persisted) {
+        setProposalNotice(
+          "TED returned wording without a valid durable revision binding. Nothing was applied; retry only after TED reconciles the saved operation.",
+        );
+        return;
+      }
       const range = selection ? { from: selection.from, to: selection.to } : null;
       setPendingTedChange({
         suggested: result.content.trim(),
@@ -199,7 +433,11 @@ export function SectionEditor({
         range,
         action,
         instruction,
+        persisted: result.persisted,
+        recoverableApply: true,
+        recovered: false,
       });
+      setProposalNotice(null);
       setShowTEdit(false);
       // Bring the segment TED just edited into view in the real document
       // above, rather than only showing it duplicated inside the review
@@ -208,34 +446,79 @@ export function SectionEditor({
         editor.chain().setTextSelection(range).scrollIntoView().run();
       }
     },
-    [editor, section, pendingTedChange, ai, selection, domain],
+    [
+      editor,
+      section,
+      pendingTedChange,
+      ai,
+      selection,
+      domain,
+      onEdit,
+      authoritativeLedgerBinding,
+      persistedSectionRevision,
+      revisionBoundLegacy,
+      legacyRecoveryState,
+    ],
   );
 
-  const applyTedChange = useCallback(() => {
+  const applyTedChange = useCallback(async () => {
     if (!editor || !section || !pendingTedChange) return;
-    if (pendingTedChange.range) {
-      editor.chain().focus().insertContentAt(pendingTedChange.range, pendingTedChange.suggested).run();
-    } else {
-      const asHtml = pendingTedChange.suggested
-        .split(/\n{2,}/)
-        .map((paragraph) => `<p>${paragraph.replace(/\n/g, "<br>")}</p>`)
-        .join("");
-      editor.commands.setContent(asHtml);
+    if (!pendingTedChange.recoverableApply) {
+      setProposalNotice(
+        "This recovered suggestion cannot be applied safely because its exact accepted wording or selection is no longer current.",
+      );
+      return;
     }
-    const next = sanitiseSectionContent(
-      serialiseTedPlaceholdersFromEditor(editor.getHTML()),
-    );
-    setHtml(next);
-    onEdit(section.id, next);
+    if (pendingTedChange.persisted) {
+      const applied = await ai.applyPersisted(pendingTedChange.persisted);
+      if (!applied) return;
+      setConfirmedRevision({
+        sectionId: section.id,
+        revision: applied.section_revision,
+        content: applied.section_content,
+      });
+      onPersistedLegacyApply?.(applied);
+      editor.commands.setContent(renderTedPlaceholdersForEditor(applied.section_content), {
+        emitUpdate: false,
+      });
+      setHtml(applied.section_content);
+    } else {
+      if (pendingTedChange.range) {
+        editor.chain().insertContentAt(pendingTedChange.range, pendingTedChange.suggested).run();
+      } else {
+        const asHtml = pendingTedChange.suggested
+          .split(/\n{2,}/)
+          .map((paragraph) => `<p>${paragraph.replace(/\n/g, "<br>")}</p>`)
+          .join("");
+        editor.commands.setContent(asHtml, { emitUpdate: false });
+      }
+      const next = sanitiseSectionContent(serialiseTedPlaceholdersFromEditor(editor.getHTML()));
+      setHtml(next);
+      onEdit(section.id, next);
+    }
     setPendingTedChange(null);
-  }, [editor, section, pendingTedChange, onEdit]);
+    setProposalNotice(null);
+  }, [ai, editor, section, pendingTedChange, onEdit, onPersistedLegacyApply]);
 
-  const retryTedChange = useCallback(() => {
+  const discardTedChange = useCallback(async () => {
+    if (!pendingTedChange) return;
+    if (pendingTedChange.persisted && !(await ai.discardPersisted(pendingTedChange.persisted))) {
+      return;
+    }
+    setPendingTedChange(null);
+    setProposalNotice(null);
+  }, [ai, pendingTedChange]);
+
+  const retryTedChange = useCallback(async () => {
     if (!pendingTedChange) return;
     const { action, instruction } = pendingTedChange;
+    if (pendingTedChange.persisted && !(await ai.discardPersisted(pendingTedChange.persisted))) {
+      return;
+    }
     setPendingTedChange(null);
-    window.setTimeout(() => void runAiEdit(action, instruction), 0);
-  }, [pendingTedChange, runAiEdit]);
+    setProposalNotice(null);
+    window.setTimeout(() => void runAiEdit(action, instruction, true), 0);
+  }, [ai, pendingTedChange, runAiEdit]);
 
   const runAiExplain = useCallback(
     async (question?: string) => {
@@ -252,11 +535,15 @@ export function SectionEditor({
   );
 
   if (!section) {
-    return <div className={styles.empty}><p>Select a section to start editing.</p></div>;
+    return (
+      <div className={styles.empty}>
+        <p>Select a section to start editing.</p>
+      </div>
+    );
   }
 
   const approved = section.status === "approved";
-  const busy = ai.streaming || Boolean(pendingTedChange);
+  const busy = ai.streaming || Boolean(pendingTedChange) || legacyRecoveryState !== null;
 
   return (
     <div className={`${styles.pane}${documentMode ? ` ${styles.documentMode}` : ""}`}>
@@ -270,15 +557,20 @@ export function SectionEditor({
             <EditorContent editor={editor} className={styles.editor} />
           </div>
 
+          {!pendingTedChange && proposalNotice && <p role="alert">{proposalNotice}</p>}
+
           {pendingTedChange && (
-            <TedChangeReview
-              suggested={pendingTedChange.suggested}
-              changes={pendingTedChange.changes}
-              explanation={editExplanation(pendingTedChange.action)}
-              onDiscard={() => setPendingTedChange(null)}
-              onRetry={retryTedChange}
-              onApply={applyTedChange}
-            />
+            <>
+              {(proposalNotice || ai.error) && <p role="alert">{proposalNotice || ai.error}</p>}
+              <TedChangeReview
+                suggested={pendingTedChange.suggested}
+                changes={pendingTedChange.changes}
+                explanation={editExplanation(pendingTedChange.action)}
+                onDiscard={() => void discardTedChange()}
+                onRetry={() => void retryTedChange()}
+                onApply={() => void applyTedChange()}
+              />
+            </>
           )}
 
           <div className={styles.contextBar} role="toolbar" aria-label="Edit selected content">
@@ -305,7 +597,7 @@ export function SectionEditor({
             <button
               type="button"
               className={`${styles.contextAction} ${styles.contextPrimary}`}
-              disabled={locked || Boolean(pendingTedChange)}
+              disabled={locked || busy}
               aria-expanded={showTEdit}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
@@ -318,14 +610,18 @@ export function SectionEditor({
             </button>
 
             <details className={styles.moreMenu}>
-              <summary aria-label="More section options"><Icon name="dots" size={18} /></summary>
+              <summary aria-label="More section options">
+                <Icon name="dots" size={18} />
+              </summary>
               <div className={styles.morePanel}>
                 <div className={styles.formatting} role="toolbar" aria-label="Formatting">
                   {TOOLBAR.map((button) => (
                     <button
                       key={button.label}
                       type="button"
-                      className={`${styles.toolBtn} ${editor && button.isActive(editor) ? styles.toolActive : ""}`}
+                      className={`${styles.toolBtn} ${
+                        editor && button.isActive(editor) ? styles.toolActive : ""
+                      }`}
                       aria-label={button.label}
                       aria-pressed={editor ? button.isActive(editor) : false}
                       disabled={!editor || busy || locked}
@@ -335,13 +631,32 @@ export function SectionEditor({
                     </button>
                   ))}
                 </div>
-                <button type="button" onClick={onOpenHistory}><Icon name="history" size={16} />History</button>
-                <button type="button" onClick={() => onToggleLock(section.id)}><Icon name={locked ? "lock-open" : "lock"} size={16} />{locked ? "Unlock section" : "Lock section"}</button>
-                <button type="button" onClick={() => { setShowExplainPanel(true); setShowTEdit(false); }}><Icon name="book" size={16} />Explain this</button>
+                <button type="button" onClick={onOpenHistory}>
+                  <Icon name="history" size={16} />
+                  History
+                </button>
+                <button type="button" onClick={() => onToggleLock(section.id)}>
+                  <Icon name={locked ? "lock-open" : "lock"} size={16} />
+                  {locked ? "Unlock section" : "Lock section"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExplainPanel(true);
+                    setShowTEdit(false);
+                  }}
+                >
+                  <Icon name="book" size={16} />
+                  Explain this
+                </button>
                 {approved && revisionApproval ? (
-                  <span role="status">Editing this wording creates a new revision that needs approval.</span>
+                  <span role="status">
+                    Editing this wording creates a new revision that needs approval.
+                  </span>
                 ) : approved ? (
-                  <button type="button" onClick={() => onUnapprove(section.id)}>Mark as draft</button>
+                  <button type="button" onClick={() => onUnapprove(section.id)}>
+                    Mark as draft
+                  </button>
                 ) : (
                   <button type="button" onClick={() => onApprove(section.id)} disabled={locked}>
                     {revisionApproval ? "Approve current revision" : "Approve section"}
@@ -357,14 +672,24 @@ export function SectionEditor({
             <div className={styles.aiSidebarHead}>
               <div>
                 <span className={styles.aiSidebarTitle}>tEdit</span>
-                <p>{hasSelection ? "TED will edit the selected wording." : "TED will edit this section."}</p>
+                <p>
+                  {hasSelection
+                    ? "TED will edit the selected wording."
+                    : "TED will edit this section."}
+                </p>
               </div>
-              <button type="button" className={styles.aiClose} onClick={() => setShowTEdit(false)} aria-label="Close tEdit">
+              <button
+                type="button"
+                className={styles.aiClose}
+                onClick={() => setShowTEdit(false)}
+                aria-label="Close tEdit"
+              >
                 <Icon name="x" size={18} />
               </button>
             </div>
             <EditWithTED
               streaming={ai.streaming}
+              reconciling={legacyRecoveryState !== null}
               hasSelection={hasSelection}
               error={ai.error}
               onRun={runAiEdit}
@@ -377,7 +702,12 @@ export function SectionEditor({
           <aside className={styles.aiSidebar} aria-label="Explain this">
             <div className={styles.aiSidebarHead}>
               <span className={styles.aiSidebarTitle}>Explain this</span>
-              <button type="button" className={styles.aiClose} onClick={() => setShowExplainPanel(false)} aria-label="Close explanation">
+              <button
+                type="button"
+                className={styles.aiClose}
+                onClick={() => setShowExplainPanel(false)}
+                aria-label="Close explanation"
+              >
                 <Icon name="x" size={18} />
               </button>
             </div>

@@ -10,12 +10,17 @@
 // =====================================================
 
 import { handleOptions, jsonResponse } from "../_shared/cors.ts";
-import { guardRequest, AuthError } from "../_shared/auth-guard.ts";
+import { AuthError, guardRequest } from "../_shared/auth-guard.ts";
 import { routeRequest, USER_SAFE_ERROR } from "../_shared/provider-router.ts";
-import { parseModelJson } from "../_shared/orchestration.ts";
+import {
+  proofreadOutputSchema,
+  validateProofreadOutput,
+} from "../_shared/model-output-contracts.ts";
 
 interface ProofreadBody {
-  sections?: Array<{ id?: string; key?: string; label?: string; content?: string }>;
+  sections?: Array<
+    { id?: string; key?: string; label?: string; content?: string }
+  >;
   domain?: string;
 }
 
@@ -29,10 +34,16 @@ interface RawItem {
 function cleanItem(raw: unknown, sectionContent: string) {
   if (typeof raw !== "object" || raw === null) return null;
   const item = raw as RawItem;
-  const title = typeof item.title === "string" ? item.title.slice(0, 120).trim() : "";
+  const title = typeof item.title === "string"
+    ? item.title.slice(0, 120).trim()
+    : "";
   const why = typeof item.why === "string" ? item.why.slice(0, 240).trim() : "";
-  const original = typeof item.original_snippet === "string" ? item.original_snippet.slice(0, 600) : "";
-  const revised = typeof item.revised_snippet === "string" ? item.revised_snippet.slice(0, 600) : "";
+  const original = typeof item.original_snippet === "string"
+    ? item.original_snippet.slice(0, 600)
+    : "";
+  const revised = typeof item.revised_snippet === "string"
+    ? item.revised_snippet.slice(0, 600)
+    : "";
   if (!title || !original || !revised) return null;
   // Only ship items whose original snippet is genuinely present, so the
   // client's approve action is a safe verbatim replacement.
@@ -47,14 +58,20 @@ Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: { message: "Method not allowed" } }, 405, origin);
+    return jsonResponse(
+      { error: { message: "Method not allowed" } },
+      405,
+      origin,
+    );
   }
 
   let auth;
   try {
     auth = await guardRequest(req, { enforceCap: false });
   } catch (err) {
-    if (err instanceof AuthError) return jsonResponse(err.payload, err.status, origin);
+    if (err instanceof AuthError) {
+      return jsonResponse(err.payload, err.status, origin);
+    }
     return jsonResponse(USER_SAFE_ERROR, 500, origin);
   }
 
@@ -67,11 +84,15 @@ Deno.serve(async (req) => {
         label: String(s.label ?? "").slice(0, 140),
         content: String(s.content ?? "").slice(0, 12000),
       }))
-      .filter((s) => s.label && s.content.trim())
+      .filter((s) => (s.key || s.id) && s.label && s.content.trim())
       .slice(0, 24);
 
     if (sections.length === 0) {
-      return jsonResponse({ error: { message: "sections are required" } }, 400, origin);
+      return jsonResponse(
+        { error: { message: "sections are required" } },
+        400,
+        origin,
+      );
     }
 
     const systemPrompt = [
@@ -90,19 +111,24 @@ Deno.serve(async (req) => {
     const userContent = sections
       .map((s) => `SECTION key=${s.key || s.id} label=${s.label}\n${s.content}`)
       .join("\n\n---\n\n");
+    const sectionKeys = [
+      ...new Set(sections.map((section) => section.key || section.id)),
+    ];
 
     const res = await routeRequest({
-      task: "recommend",
+      task: "proofread",
+      logicalStageKey: "proofread-document.primary",
+      outputSchema: proofreadOutputSchema(sectionKeys),
       systemPrompt,
       messages: [{ role: "user", content: userContent }],
       maxTokens: 2800,
       signal: req.signal,
     });
 
-    const parsed = parseModelJson(res.text) as {
-      sections?: Array<{ key?: string; corrections?: unknown[]; improvements?: unknown[] }>;
-    } | null;
-    if (!parsed || !Array.isArray(parsed.sections)) {
+    let parsed: ReturnType<typeof validateProofreadOutput>;
+    try {
+      parsed = validateProofreadOutput(res.structured, sectionKeys);
+    } catch {
       return jsonResponse(USER_SAFE_ERROR, 502, origin);
     }
 
@@ -115,12 +141,22 @@ Deno.serve(async (req) => {
       const improvements = (entry.improvements ?? [])
         .map((raw) => cleanItem(raw, src.content)).filter(Boolean);
       if (corrections.length === 0 && improvements.length === 0) return [];
-      return [{ id: src.id, key: src.key, label: src.label, corrections, improvements }];
+      return [{
+        id: src.id,
+        key: src.key,
+        label: src.label,
+        corrections,
+        improvements,
+      }];
     });
 
     return jsonResponse({ sections: out }, 200, origin);
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown";
-    return jsonResponse(USER_SAFE_ERROR, /abort|timeout/i.test(message) ? 504 : 500, origin);
+    return jsonResponse(
+      USER_SAFE_ERROR,
+      /abort|timeout/i.test(message) ? 504 : 500,
+      origin,
+    );
   }
 });

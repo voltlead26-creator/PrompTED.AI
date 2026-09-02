@@ -244,13 +244,16 @@ from l02_test_state;
 
 select set_config('request.jwt.claim.sub', (select user_id::text from l02_test_state), true);
 set local role authenticated;
-select lives_ok(
-  format(
-    'insert into public.ted_artifact_blocks(artifact_id,user_id,kind,stable_key,heading,payload,parent_block_id,order_index) values (%L::uuid,%L::uuid,%L,%L,%L,%L::jsonb,%L::uuid,%s)',
-    artifact_id, user_id, 'section', 'nested_test', 'Nested test',
-    '{"content":"Nested legacy content"}', block_id, 2
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'insert into public.ted_artifact_blocks(artifact_id,user_id,kind,stable_key,heading,payload,parent_block_id,order_index) values (%L::uuid,%L::uuid,%L,%L,%L,%L::jsonb,%L::uuid,%s)',
+      artifact_id, user_id, 'section', 'nested_test', 'Nested test',
+      '{"content":"Nested legacy content"}', block_id, 2
+    ),
+    '%permission denied for table ted_artifact_blocks%'
   ),
-  'authenticated same-artifact parent insertion does not recurse through RLS'
+  'authenticated callers cannot bypass artifact commands with direct nested-block INSERT'
 )
 from l02_test_state;
 reset role;
@@ -458,7 +461,7 @@ select ok(
       'select public.save_ted_artifact_block_revision(%L::uuid,%s,%s,%L::jsonb,%L)',
       block_id, 3, 2, '{"content":"Stale overwrite"}', 'final'
     ),
-    'STALE_WRITE_CONFLICT'
+    'ARTIFACT_BLOCK_REPLAY_CONFLICT'
   ),
   'stale save cannot overwrite a newer revision'
 )
@@ -479,7 +482,6 @@ select is(
   'approval records the exact approved block revision'
 )
 from l02_test_state;
-
 set local role authenticated;
 select ok(
   pg_temp.raises_matching(
@@ -487,9 +489,9 @@ select ok(
       'update public.ted_artifact_blocks set payload = %L::jsonb where id = %L::uuid',
       '{"content":"Bypass attempt"}', block_id
     ),
-    'REVISION_RPC_REQUIRED:ted_artifact_blocks:%'
+    '%permission denied for table ted_artifact_blocks%'
   ),
-  'direct authenticated mutation reaches the revision guard without RLS recursion'
+  'authenticated block UPDATE is denied before the captured revision trigger'
 )
 from l02_test_state;
 reset role;

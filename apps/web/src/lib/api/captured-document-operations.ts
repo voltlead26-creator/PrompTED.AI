@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/client";
+import type { OwnerDispatchLease } from "@/lib/browser-principal-state";
+import { withOwnerSupabase } from "@/lib/supabase/owner-client";
 
 export class CapturedDocumentMutationError extends Error {
   constructor(
@@ -25,9 +26,11 @@ function isRetryable(code: string): boolean {
 async function rpc<T>(
   name: string,
   args: Record<string, unknown>,
+  lease: OwnerDispatchLease,
 ): Promise<T> {
-  const supabase = createClient();
-  const { data, error } = await supabase.rpc(name, args);
+  const { data, error } = await withOwnerSupabase(lease, async (supabase) =>
+    await supabase.rpc(name, args),
+  );
   if (error || !data) {
     const code = publicCode(error);
     throw new CapturedDocumentMutationError(code, isRetryable(code));
@@ -55,7 +58,7 @@ export function editCapturedDocumentSection(input: {
   expectedSectionRevision: number;
   content: string;
   sectionState: "final" | "interactive_placeholder" | "neutral_fallback" | "omitted_optional";
-}): Promise<CapturedSectionEditResult> {
+}, lease: OwnerDispatchLease): Promise<CapturedSectionEditResult> {
   return rpc("edit_captured_document_section", {
     p_operation_id: input.operationId,
     p_expected_operation_revision: input.expectedOperationRevision,
@@ -65,7 +68,7 @@ export function editCapturedDocumentSection(input: {
     p_expected_section_revision: input.expectedSectionRevision,
     p_content: input.content,
     p_section_state: input.sectionState,
-  });
+  }, lease);
 }
 
 export interface CapturedApprovalResult {
@@ -83,13 +86,13 @@ export function approveCapturedDocumentRevision(input: {
   expectedOperationRevision: number;
   documentId: string;
   expectedDocumentRevision: number;
-}): Promise<CapturedApprovalResult> {
+}, lease: OwnerDispatchLease): Promise<CapturedApprovalResult> {
   return rpc("approve_captured_document_revision", {
     p_operation_id: input.operationId,
     p_expected_operation_revision: input.expectedOperationRevision,
     p_document_id: input.documentId,
     p_expected_document_revision: input.expectedDocumentRevision,
-  });
+  }, lease);
 }
 
 export interface CapturedExportRequestResult {
@@ -110,7 +113,7 @@ export function requestCapturedDocumentExport(input: {
   approvedDocumentRevision: number;
   format: "docx" | "pdf" | "xlsx" | "html_preview";
   idempotencyKey: string;
-}): Promise<CapturedExportRequestResult> {
+}, lease: OwnerDispatchLease): Promise<CapturedExportRequestResult> {
   return rpc("request_captured_document_export", {
     p_operation_id: input.operationId,
     p_expected_operation_revision: input.expectedOperationRevision,
@@ -118,5 +121,5 @@ export function requestCapturedDocumentExport(input: {
     p_approved_document_revision: input.approvedDocumentRevision,
     p_format: input.format,
     p_export_idempotency_key: input.idempotencyKey,
-  });
+  }, lease);
 }

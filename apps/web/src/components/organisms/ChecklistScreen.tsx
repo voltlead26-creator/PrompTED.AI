@@ -17,9 +17,10 @@ function daysUntil(dateStr: string): number {
 interface ChecklistItemRowProps {
   item: ChecklistItem;
   onToggle: () => void;
+  disabled: boolean;
 }
 
-function ChecklistItemRow({ item, onToggle }: ChecklistItemRowProps) {
+function ChecklistItemRow({ item, onToggle, disabled }: ChecklistItemRowProps) {
   const days = item.due_date ? daysUntil(item.due_date) : null;
 
   return (
@@ -30,6 +31,7 @@ function ChecklistItemRow({ item, onToggle }: ChecklistItemRowProps) {
         aria-checked={item.done}
         className={styles.checkbox}
         onClick={onToggle}
+        disabled={disabled}
         aria-label={item.done ? `Mark "${item.text}" as not done` : `Mark "${item.text}" as done`}
       >
         {item.done ? (
@@ -69,12 +71,34 @@ interface ChecklistScreenProps {
 }
 
 export function ChecklistScreen({ outcomeId }: ChecklistScreenProps) {
-  const { items, loading, toggleDone, done, total, progress } = useChecklist(outcomeId);
+  const {
+    items,
+    loading,
+    error,
+    saveError,
+    retry,
+    toggleDone,
+    isSavingItem,
+    savingItemIds,
+    done,
+    total,
+    progress,
+  } =
+    useChecklist(outcomeId);
 
   if (loading) {
     return (
       <div className={styles.loading}>
         <Spinner label="Loading checklist…" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className={styles.empty} role="alert">
+        <p>{error}</p>
+        <button type="button" onClick={() => void retry()}>Try again</button>
       </div>
     );
   }
@@ -101,12 +125,18 @@ export function ChecklistScreen({ outcomeId }: ChecklistScreenProps) {
         label={`${Math.round(progress * 100)}% complete`}
       />
 
+      {saveError ? <p role="status" aria-live="polite">{saveError}</p> : null}
+      {savingItemIds.length > 0 ? (
+        <span className={styles.count} role="status" aria-live="polite">Saving change…</span>
+      ) : null}
+
       <ul className={styles.list} aria-label="Checklist items">
         {items.map((item) => (
           <ChecklistItemRow
             key={item.id}
             item={item}
-            onToggle={() => toggleDone(item.id)}
+            onToggle={() => void toggleDone(item.id)}
+            disabled={isSavingItem(item.id)}
           />
         ))}
       </ul>

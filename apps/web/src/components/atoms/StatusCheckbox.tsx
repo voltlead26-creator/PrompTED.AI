@@ -5,6 +5,7 @@ interface StatusCheckboxProps {
   label: string;
   onToggle: () => void;
   className?: string;
+  disabled?: boolean;
 }
 
 export function StatusCheckbox({
@@ -12,6 +13,7 @@ export function StatusCheckbox({
   label,
   onToggle,
   className,
+  disabled = false,
 }: StatusCheckboxProps) {
   return (
     <button
@@ -21,6 +23,7 @@ export function StatusCheckbox({
       aria-label={label}
       className={`${styles.checkbox}${checked ? ` ${styles.checked}` : ""}${className ? ` ${className}` : ""}`}
       onClick={onToggle}
+      disabled={disabled}
     >
       <span aria-hidden="true">{checked ? "✓" : ""}</span>
     </button>

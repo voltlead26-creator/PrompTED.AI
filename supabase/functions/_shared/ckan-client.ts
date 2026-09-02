@@ -1,5 +1,14 @@
 export type GovernmentCatalogue = "australia" | "victoria";
 
+export class CkanDispatchError extends Error {
+  constructor(
+    message: string,
+    readonly dispatchCertain: boolean,
+  ) {
+    super(message);
+  }
+}
+
 const CATALOGUES: Record<GovernmentCatalogue, {
   apiBase: string;
   datasetBase: string;
@@ -67,6 +76,23 @@ function parseCatalogue(value: string): GovernmentCatalogue {
   return value;
 }
 
+function boundedText(value: string | undefined, maximum: number): string {
+  return String(value ?? "").normalize("NFKC").trim().slice(0, maximum);
+}
+
+function safeHttpUrl(value: string | undefined): string | null {
+  if (!value || value.length > 2_000) return null;
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+        !parsed.username && !parsed.password
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function buildCkanSearchUrl(
   catalogueInput: string,
   query: string,
@@ -95,26 +121,35 @@ export function normaliseCkanDatasets(
     throw new Error("Government catalogue returned an invalid response.");
   }
   const config = CATALOGUES[catalogue];
-  return body.result.results.map((dataset) => {
-    const slug = dataset.name || dataset.id || "unknown";
+  return body.result.results.slice(0, 25).map((dataset) => {
+    const slug = boundedText(dataset.name || dataset.id || "unknown", 300);
     return {
-      id: dataset.id || slug,
-      title: dataset.title || slug,
-      description: dataset.notes || "",
-      publisher: dataset.organization?.title || "Unknown government publisher",
-      licence: dataset.license_title || "Licence not stated",
-      modifiedAt: dataset.metadata_modified || null,
+      id: boundedText(dataset.id || slug, 300),
+      title: boundedText(dataset.title || slug, 300),
+      description: boundedText(dataset.notes, 2_000),
+      publisher: boundedText(
+        dataset.organization?.title || "Unknown government publisher",
+        300,
+      ),
+      licence: boundedText(dataset.license_title || "Licence not stated", 200),
+      modifiedAt: boundedText(dataset.metadata_modified, 80) || null,
       catalogue,
       catalogueLabel: config.label,
       catalogueUrl: `${config.datasetBase}/${encodeURIComponent(slug)}`,
       resources: (dataset.resources ?? [])
-        .filter((resource) => typeof resource.url === "string" && resource.url.length > 0)
+        .map((resource) => ({ resource, url: safeHttpUrl(resource.url) }))
+        .filter((entry): entry is { resource: CkanResource; url: string } =>
+          entry.url !== null
+        )
         .slice(0, 10)
-        .map((resource) => ({
-          id: resource.id ?? null,
-          name: resource.name || resource.format || "Resource",
-          format: resource.format || "Unknown",
-          url: resource.url as string,
+        .map(({ resource, url }) => ({
+          id: boundedText(resource.id, 300) || null,
+          name: boundedText(
+            resource.name || resource.format || "Resource",
+            200,
+          ),
+          format: boundedText(resource.format || "Unknown", 50),
+          url,
           datastoreActive: resource.datastore_active === true,
         })),
     };
@@ -127,18 +162,41 @@ export async function searchGovernmentCatalogue(input: {
   limit?: number;
   fetchImpl?: typeof fetch;
 }): Promise<GovernmentDatasetSummary[]> {
-  const url = buildCkanSearchUrl(input.catalogue, input.query, input.limit ?? 10);
+  const url = buildCkanSearchUrl(
+    input.catalogue,
+    input.query,
+    input.limit ?? 10,
+  );
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await (input.fetchImpl ?? fetch)(url, {
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`Government catalogue returned HTTP ${response.status}.`);
+    let response: Response;
+    try {
+      response = await (input.fetchImpl ?? fetch)(url, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+    } catch {
+      throw new CkanDispatchError(
+        "Government catalogue request outcome is uncertain.",
+        false,
+      );
     }
-    return normaliseCkanDatasets(input.catalogue, await response.json());
+    if (!response.ok) {
+      throw new CkanDispatchError(
+        `Government catalogue returned HTTP ${response.status}.`,
+        true,
+      );
+    }
+    try {
+      return normaliseCkanDatasets(input.catalogue, await response.json());
+    } catch (error) {
+      if (error instanceof CkanDispatchError) throw error;
+      throw new CkanDispatchError(
+        "Government catalogue returned an invalid response.",
+        true,
+      );
+    }
   } finally {
     clearTimeout(timeout);
   }

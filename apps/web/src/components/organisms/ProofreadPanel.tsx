@@ -14,6 +14,11 @@ import {
   type ProofreadSectionResult,
 } from "@prompted/shared/api-client";
 import type { Section } from "@prompted/shared/browser";
+import { useAuth } from "@/components/providers";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+} from "@/lib/browser-principal-state";
 import styles from "./ProofreadPanel.module.css";
 
 interface ProofreadPanelProps {
@@ -49,6 +54,7 @@ export const ProofreadPanel = forwardRef<ProofreadPanelHandle, ProofreadPanelPro
   activeSectionId,
   autoScan = false,
 }, ref) {
+  const { user } = useAuth();
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<ProofreadSectionResult[] | null>(null);
@@ -64,21 +70,29 @@ export const ProofreadPanel = forwardRef<ProofreadPanelHandle, ProofreadPanelPro
   );
 
   const scan = useCallback(async () => {
+    if (!user?.id) {
+      setError("Sign in again before asking TED to proofread this document.");
+      return;
+    }
+    const requestContext = captureOwnerDispatch(user.id);
     setScanning(true);
     setError(null);
     try {
       const payload = sections
         .filter((s) => (s.content ?? "").trim())
         .map((s) => ({ id: s.id, key: s.key, label: s.name, content: s.content }));
-      const res = await proofreadDocument({ sections: payload, domain });
+      const res = await proofreadDocument({ sections: payload, domain }, requestContext);
+      requestContext.assertCurrent();
       pushResults(res.sections);
       setTab(res.sections[0]?.id ?? null);
     } catch {
-      setError("TED couldn't finish the proofread. Try again in a moment.");
+      if (ownerDispatchIsCurrent(requestContext)) {
+        setError("TED couldn't finish the proofread. Try again in a moment.");
+      }
     } finally {
-      setScanning(false);
+      if (ownerDispatchIsCurrent(requestContext)) setScanning(false);
     }
-  }, [sections, domain, pushResults]);
+  }, [sections, domain, pushResults, user?.id]);
 
   useImperativeHandle(ref, () => ({ scan: () => void scan() }));
 

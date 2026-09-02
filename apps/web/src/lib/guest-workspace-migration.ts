@@ -1,49 +1,30 @@
 import type { Section } from "@prompted/shared/browser";
 import { commitGuestWorkspaceImport } from "@/lib/api/import-workspace";
-import type { PendingOutcome, StoredWorkspace } from "@/lib/workspace-store";
-
-const WORKSPACE_PREFIX = "prompted:workspace:";
-const PENDING_PREFIX = "prompted:pending:";
-const MIGRATED_PREFIX = "prompted:guest-migrated:";
+import type { OwnerDispatchLease } from "@/lib/browser-principal-state";
+import {
+  claimGuestWorkspaceForMigration,
+  completeGuestWorkspaceMigration,
+  listGuestWorkspaceOutcomeIdsForMigration,
+  markGuestWorkspaceMigrationImported,
+  type PendingOutcome,
+  type StoredWorkspace,
+} from "@/lib/workspace-store";
 
 export interface GuestMigrationResult {
   migrated: number;
   skipped: number;
   failed: number;
   failedOutcomeIds: string[];
+  cleanupFailed: number;
+  cleanupFailedOutcomeIds: string[];
 }
 
-function safeParse<T>(value: string | null): T | null {
-  if (!value) return null;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return null;
-  }
-}
-
-function listGuestWorkspaces(): StoredWorkspace[] {
-  if (typeof window === "undefined") return [];
-  const results: StoredWorkspace[] = [];
-  for (let index = 0; index < sessionStorage.length; index += 1) {
-    const key = sessionStorage.key(index);
-    if (!key?.startsWith(WORKSPACE_PREFIX)) continue;
-    const workspace = safeParse<StoredWorkspace>(sessionStorage.getItem(key));
-    if (workspace?.outcomeId && workspace.documentId) results.push(workspace);
-  }
-  return results;
-}
-
-function migrationMarker(userId: string, outcomeId: string): string {
-  return `${MIGRATED_PREFIX}${userId}:${outcomeId}`;
-}
-
-function pendingFor(outcomeId: string): PendingOutcome | null {
-  return safeParse<PendingOutcome>(sessionStorage.getItem(`${PENDING_PREFIX}${outcomeId}`));
-}
-
-async function migrateOne(userId: string, workspace: StoredWorkspace): Promise<void> {
-  const pending = pendingFor(workspace.outcomeId);
+async function migrateOne(
+  userId: string,
+  workspace: StoredWorkspace,
+  pending: PendingOutcome | null,
+  lease: OwnerDispatchLease,
+): Promise<void> {
   const situation = pending?.situation || workspace.situation || `Continue ${workspace.title}`;
   const templateId = pending?.templateId || workspace.templateId || "imported_document";
   const { getTemplate } = await import("@prompted/shared/catalogue");
@@ -70,43 +51,67 @@ async function migrateOne(userId: string, workspace: StoredWorkspace): Promise<v
     document_id: workspace.documentId,
     user_id: userId,
   }));
-  await commitGuestWorkspaceImport({
-    idempotencyKey: `guest-workspace:${workspace.outcomeId}:${workspace.documentId}`,
-    outcomeId: workspace.outcomeId,
-    documentId: workspace.documentId,
-    title: workspace.title,
-    situationText: situation,
-    recommendationPayload,
-    templateId: templateUuid,
-    documentStatus: workspace.status === "archived" ? "archived" : "draft",
-    sections,
-  });
+  lease.assertCurrent();
+  await commitGuestWorkspaceImport(
+    {
+      idempotencyKey: `guest-workspace:${workspace.outcomeId}:${workspace.documentId}`,
+      outcomeId: workspace.outcomeId,
+      documentId: workspace.documentId,
+      title: workspace.title,
+      situationText: situation,
+      recommendationPayload,
+      templateId: templateUuid,
+      documentStatus: workspace.status === "archived" ? "archived" : "draft",
+      sections,
+    },
+    lease,
+  );
 }
 
-export async function migrateGuestWorkspaces(userId: string): Promise<GuestMigrationResult> {
+export async function migrateGuestWorkspaces(
+  userId: string,
+  lease: OwnerDispatchLease,
+): Promise<GuestMigrationResult> {
+  if (userId.trim().toLowerCase() !== lease.expectedUserId) {
+    throw new Error("GUEST_MIGRATION_OWNER_CONTEXT_MISMATCH");
+  }
+  lease.assertCurrent();
   const result: GuestMigrationResult = {
     migrated: 0,
     skipped: 0,
     failed: 0,
     failedOutcomeIds: [],
+    cleanupFailed: 0,
+    cleanupFailedOutcomeIds: [],
   };
 
-  for (const workspace of listGuestWorkspaces()) {
-    const marker = migrationMarker(userId, workspace.outcomeId);
-    if (sessionStorage.getItem(marker) === "done") {
+  for (const outcomeId of listGuestWorkspaceOutcomeIdsForMigration(userId)) {
+    lease.assertCurrent();
+    const candidate = claimGuestWorkspaceForMigration(userId, outcomeId);
+    if (!candidate) {
       result.skipped += 1;
       continue;
     }
 
     try {
-      await migrateOne(userId, workspace);
-      sessionStorage.setItem(marker, "done");
-      result.migrated += 1;
+      if (!candidate.imported) {
+        await migrateOne(userId, candidate.workspace, candidate.pending, lease);
+        lease.assertCurrent();
+        result.migrated += 1;
+        markGuestWorkspaceMigrationImported(userId, outcomeId);
+      }
+      lease.assertCurrent();
+      if (!completeGuestWorkspaceMigration(userId, outcomeId)) {
+        result.cleanupFailed += 1;
+        result.cleanupFailedOutcomeIds.push(outcomeId);
+      }
     } catch {
+      lease.assertCurrent();
       result.failed += 1;
-      result.failedOutcomeIds.push(workspace.outcomeId);
+      result.failedOutcomeIds.push(outcomeId);
     }
   }
 
+  lease.assertCurrent();
   return result;
 }

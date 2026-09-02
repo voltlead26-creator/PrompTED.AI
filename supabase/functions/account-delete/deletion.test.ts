@@ -29,6 +29,12 @@ interface GatewayFixture {
   removeErrorAt?: string;
   auditError?: unknown;
   deleteErrors?: unknown[];
+  fence?: QueryResult<{
+    outcome: "ready" | "blocked";
+    active_uploads?: number;
+    active_storage_dispatches?: number;
+    active_external_egress?: number;
+  }>;
 }
 
 function gateway(fixture: GatewayFixture = {}) {
@@ -45,6 +51,10 @@ function gateway(fixture: GatewayFixture = {}) {
   let membershipLookup = 0;
 
   const implementation: AccountDeletionGateway = {
+    async beginDeletionFence(requestedUserId) {
+      calls.push(`fence:${requestedUserId}`);
+      return fixture.fence ?? ok({ outcome: "ready" });
+    },
     async loadOwnedBusinesses(requestedUserId) {
       calls.push(`businesses:${requestedUserId}`);
       const result = fixture.ownedBusinessSequence?.[businessLookup] ??
@@ -88,7 +98,7 @@ function gateway(fixture: GatewayFixture = {}) {
       }
       return { error: null };
     },
-    async upsertDeletionAudit(record) {
+    async insertDeletionAuditIdempotently(record) {
       calls.push("audit");
       auditIds.push(record.id);
       return { error: fixture.auditError ?? null };
@@ -203,6 +213,10 @@ Deno.test("deletion removes every owned brand object and only the authenticated 
         { id: "resume", name: "resume.pdf" },
         { id: null, name: "nested" },
       ],
+      [`captured-exports:${userId}`]: [{
+        id: "captured-export",
+        name: "approved.pdf",
+      }],
       [`original-documents:${userId}/nested`]: [{
         id: "letter",
         name: "letter.docx",
@@ -218,11 +232,12 @@ Deno.test("deletion removes every owned brand object and only the authenticated 
 
   assertEquals(result.ok, true);
   assertState(result, "complete");
-  assertEquals(result.deletion.storage_objects_removed, 5);
+  assertEquals(result.deletion.storage_objects_removed, 6);
   assertEquals(fixture.removed.sort(), [
     `assets:brand-kits/${businessId}/logo.png`,
     `assets:brand-kits/${businessId}/logo.svg`,
     `assets:brand-kits/${businessId}/orphan.webp`,
+    `captured-exports:${userId}/approved.pdf`,
     `original-documents:${userId}/nested/letter.docx`,
     `original-documents:${userId}/resume.pdf`,
   ]);
@@ -235,6 +250,24 @@ Deno.test("deletion removes every owned brand object and only the authenticated 
     false,
   );
   assertEquals(fixture.calls.at(-1), `delete:${userId}`);
+});
+
+Deno.test("a durable deletion fence blocks while a Storage dispatch is active", async () => {
+  const fixture = gateway({
+    fence: ok({
+      outcome: "blocked",
+      active_uploads: 1,
+      active_storage_dispatches: 1,
+      active_external_egress: 1,
+    }),
+  });
+  const result = await deleteAccountData(userId, fixture.implementation);
+  assert(!result.ok);
+  assertEquals(result.code, "ACTIVE_STORAGE_OPERATION");
+  assertEquals(result.status, 409);
+  assertEquals(result.retryable, true);
+  assertEquals(fixture.calls.some((call) => call.startsWith("list:")), false);
+  assertEquals(fixture.calls.includes(`delete:${userId}`), false);
 });
 
 Deno.test("a remove error stops the cascade and reports an indeterminate deletion state", async () => {

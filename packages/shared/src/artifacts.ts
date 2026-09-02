@@ -34,6 +34,14 @@ export function isActiveTedArtifactKind(
 export type TedArtifactStatus = "draft" | "ready" | "needs_review" | "approved" | "archived";
 export type TedBlockKind = "section" | "action" | "recommendation" | "finding" | "reference";
 export type TedApprovalStatus = "draft" | "approved" | "locked";
+export type TedLedgerBindingStatus = "legacy_unversioned" | "captured";
+export type TedArtifactSectionState =
+  | "final"
+  | "needs_clarification"
+  | "interactive_placeholder"
+  | "neutral_fallback"
+  | "omitted_optional"
+  | "failed_validation";
 
 export interface TedSupportingReference {
   label: string;
@@ -107,6 +115,37 @@ export interface TedArtifact {
   blocks: TedArtifactBlock[];
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Database-owned fields are separate from the provider generation contract.
+ * A generated artifact is intentionally valid before it has persistence
+ * identity, while an editable artifact must carry every revision and ledger
+ * field needed by the owner-scoped mutation commands.
+ */
+export interface PersistedTedArtifactBlock extends TedArtifactBlock {
+  user_id: string;
+  ledger_binding_status: TedLedgerBindingStatus;
+  ledger_section_key: string | null;
+  ledger_version: string | null;
+  is_required: boolean | null;
+  section_state: TedArtifactSectionState | null;
+  approved_revision: number | null;
+  source_block_id: string | null;
+  source_section_key: string | null;
+  transformation_version: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersistedTedArtifact extends TedArtifact {
+  ledger_binding_status: TedLedgerBindingStatus;
+  ledger_template_id: string | null;
+  ledger_version: string | null;
+  benchmark_version: string | null;
+  generation_snapshot_id: string | null;
+  approved_revision: number | null;
+  blocks: PersistedTedArtifactBlock[];
 }
 
 export type TedPipelineStage =

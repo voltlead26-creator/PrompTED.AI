@@ -3,7 +3,7 @@ import type { Section } from "@prompted/shared";
 export type ImportConfidence = "high" | "medium" | "low";
 
 export interface ImportFidelityReport {
-  sourceType: "pdf" | "docx" | "text" | "unknown";
+  sourceType: "pdf" | "docx" | "xlsx" | "text" | "unknown";
   warnings: string[];
   confidenceBySectionId: Record<string, ImportConfidence>;
   evidenceBySectionId: Record<string, string[]>;
@@ -13,6 +13,7 @@ function sourceTypeFor(fileName: string, mimeType: string): ImportFidelityReport
   const lower = fileName.toLowerCase();
   if (mimeType.includes("pdf") || lower.endsWith(".pdf")) return "pdf";
   if (mimeType.includes("wordprocessingml") || lower.endsWith(".docx")) return "docx";
+  if (mimeType.includes("spreadsheetml") || lower.endsWith(".xlsx")) return "xlsx";
   if (mimeType.startsWith("text/") || /\.(txt|md|csv)$/i.test(lower)) return "text";
   return "unknown";
 }
@@ -74,6 +75,9 @@ export function assessImportFidelity(params: {
   }
   if (sourceType === "docx") {
     warnings.push("Word headings and paragraphs are generally clearer, but tables, text boxes and floating elements still need review.");
+  }
+  if (sourceType === "xlsx") {
+    warnings.push("Excel cell values and sheet names were extracted, but formulas, merged cells, column widths and visual formatting need review.");
   }
   if (sourceType === "text") {
     warnings.push("Plain-text imports do not contain original visual formatting.");

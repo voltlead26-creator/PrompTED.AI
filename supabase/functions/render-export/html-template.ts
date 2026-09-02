@@ -15,9 +15,20 @@ export interface ExportSection {
 }
 
 export interface BrandKit {
-  logo_url?: string | null;
-  primary_colour?: string | null;
-  footer_text?: string | null;
+  id: string;
+  business_id: string;
+  logo_url: string | null;
+  primary_colour: string;
+  secondary_colour: string | null;
+  footer_text: string | null;
+  revision: number;
+  logo_operation_id: string | null;
+  logo_storage_path: string | null;
+  logo_content_sha256: string | null;
+  logo_media_type: "image/png" | "image/jpeg" | "image/webp" | null;
+  logo_byte_length: number | null;
+  logo_status: "ready" | "legacy_unverified" | "reconciliation_required";
+  updated_at: string;
 }
 
 function escapeHtml(value: string): string {
@@ -65,23 +76,40 @@ function safeHeadingColour(value: string | null | undefined): string {
 function safeBrandLogoUrl(
   value: string | null | undefined,
   trustedAssetOrigin: string | undefined,
+  businessId: string | null | undefined,
 ): string | null {
-  if (!value || !trustedAssetOrigin) return null;
+  if (!value || !trustedAssetOrigin || !businessId) return null;
   try {
     const candidate = new URL(value);
     const trusted = new URL(trustedAssetOrigin);
-    if (candidate.origin !== trusted.origin) return null;
     if (
-      !candidate.pathname.startsWith(
-        "/storage/v1/object/public/assets/brand-kits/",
-      )
+      candidate.origin !== trusted.origin ||
+      candidate.username !== "" ||
+      candidate.password !== "" ||
+      candidate.search !== "" ||
+      candidate.hash !== ""
     ) {
+      return null;
+    }
+    const match = candidate.pathname.match(
+      /^\/storage\/v1\/object\/public\/assets\/brand-kits\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:logo\.(?:png|jpg|webp)|logos\/[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:png|jpg|webp))$/i,
+    );
+    if (!match || match[1]?.toLowerCase() !== businessId.toLowerCase()) {
       return null;
     }
     return candidate.href;
   } catch {
     return null;
   }
+}
+
+function safeVerifiedBrandLogoSource(value: string | null): string | null {
+  if (value === null) return null;
+  return /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(
+      value,
+    ) && value.length <= 7_100_000
+    ? value
+    : null;
 }
 
 function renderBody(content: string): string {
@@ -115,10 +143,17 @@ export function buildExportHtml(
   brandKit?: BrandKit | null,
   lede?: string,
   trustedAssetOrigin?: string,
+  verifiedBrandLogoSource?: string | null,
 ): string {
   const approved = approvedOnly(sections);
   const headingColour = safeHeadingColour(brandKit?.primary_colour);
-  const logoUrl = safeBrandLogoUrl(brandKit?.logo_url, trustedAssetOrigin);
+  const logoUrl = verifiedBrandLogoSource === undefined
+    ? safeBrandLogoUrl(
+      brandKit?.logo_url,
+      trustedAssetOrigin,
+      brandKit?.business_id,
+    )
+    : safeVerifiedBrandLogoSource(verifiedBrandLogoSource);
   const logo = logoUrl
     ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="" />`
     : "";

@@ -1,19 +1,30 @@
 "use client";
 
 import { useCallback } from "react";
-import { ApiError, clarify, interpretIntent, type ClarifyTurn } from "@prompted/shared/api-client";
+import {
+  ApiError,
+  clarify,
+  interpretIntent,
+  type ApiRequestContext,
+  type ClarifyTurn,
+} from "@prompted/shared/api-client";
 import { requireInitialClarification, type IntentResult } from "@prompted/shared/orchestration";
 import { ensureApiConfigured } from "@/lib/api";
+import { withOwnerDispatchSignal } from "@/lib/browser-principal-state";
 
 export interface InterpretIntentApi {
-  start: (situationText: string, extractedText?: string) => Promise<IntentResult>;
+  start: (
+    situationText: string,
+    extractedText: string | undefined,
+    requestContext: ApiRequestContext,
+  ) => Promise<IntentResult>;
   continue: (params: {
     situation: string;
     domain?: IntentResult["domain"];
     history: ClarifyTurn[];
     answer: string;
     extractedText?: string;
-  }) => Promise<IntentResult>;
+  }, requestContext: ApiRequestContext) => Promise<IntentResult>;
 }
 
 const INTENT_TIMEOUT_MS = 25_000;
@@ -78,7 +89,11 @@ async function normaliseIntent(result: IntentResult, context: string): Promise<I
 }
 
 export function useInterpretIntent(): InterpretIntentApi {
-  const start = useCallback(async (situationText: string, extractedText?: string) => {
+  const start = useCallback(async (
+    situationText: string,
+    extractedText: string | undefined,
+    requestContext: ApiRequestContext,
+  ) => {
     ensureApiConfigured();
     const result = await withIntentTimeout(
       (signal) =>
@@ -87,7 +102,7 @@ export function useInterpretIntent(): InterpretIntentApi {
             situation_text: situationText,
             extracted_text: extractedText,
           },
-          signal,
+          withOwnerDispatchSignal(requestContext, signal),
         ),
       () =>
         fallbackIntentAfterTimeout({
@@ -95,8 +110,11 @@ export function useInterpretIntent(): InterpretIntentApi {
           phase: "start",
         }),
     );
+    requestContext.assertCurrent();
     const context = [situationText, extractedText].filter(Boolean).join("\n\n");
-    return requireInitialClarification(await normaliseIntent(result, context), situationText);
+    const normalised = await normaliseIntent(result, context);
+    requestContext.assertCurrent();
+    return requireInitialClarification(normalised, situationText);
   }, []);
 
   const cont = useCallback(
@@ -106,7 +124,7 @@ export function useInterpretIntent(): InterpretIntentApi {
       history: ClarifyTurn[];
       answer: string;
       extractedText?: string;
-    }) => {
+    }, requestContext: ApiRequestContext) => {
       ensureApiConfigured();
       const result = await withIntentTimeout(
         (signal) =>
@@ -118,7 +136,7 @@ export function useInterpretIntent(): InterpretIntentApi {
               answer: params.answer,
               extracted_text: params.extractedText,
             },
-            signal,
+            withOwnerDispatchSignal(requestContext, signal),
           ),
         () =>
           fallbackIntentAfterTimeout({
@@ -128,6 +146,7 @@ export function useInterpretIntent(): InterpretIntentApi {
             phase: "continue",
           }),
       );
+      requestContext.assertCurrent();
       const context = [
         params.situation,
         params.answer,
@@ -135,7 +154,9 @@ export function useInterpretIntent(): InterpretIntentApi {
       ]
         .filter(Boolean)
         .join("\n\n");
-      return await normaliseIntent(result, context);
+      const normalised = await normaliseIntent(result, context);
+      requestContext.assertCurrent();
+      return normalised;
     },
     [],
   );

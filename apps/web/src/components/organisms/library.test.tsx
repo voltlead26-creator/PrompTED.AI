@@ -13,7 +13,13 @@ vi.mock("@/hooks/useChecklist", () => ({
   useChecklist: () => ({
     items: mockItems,
     loading: false,
+    error: null,
+    saveError: null,
+    retry: vi.fn(),
     toggleDone: vi.fn(),
+    updateText: vi.fn(),
+    isSavingItem: () => false,
+    savingItemIds: [],
     done: 1,
     total: 3,
     progress: 1 / 3,

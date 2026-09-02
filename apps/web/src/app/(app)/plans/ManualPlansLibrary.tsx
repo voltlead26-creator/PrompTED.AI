@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { listGuestManualPlans, type ManualPlanState } from "./manual-plan-store";
+import { useEffect, useMemo, useState } from "react";
+import { listManualPlans, type ManualPlanState } from "./manual-plan-store";
+import { currentDeviceDataScope } from "@/lib/owner-bound-device-store";
 import styles from "./PlansHub.module.css";
 
-export function ManualPlansLibrary() {
+export function ManualPlansLibrary({ ownerUserId }: { ownerUserId?: string | null }) {
+  const deviceScope = useMemo(() => currentDeviceDataScope(ownerUserId), [ownerUserId]);
   const [plans, setPlans] = useState<ManualPlanState[]>([]);
 
   useEffect(() => {
-    setPlans(listGuestManualPlans());
-  }, []);
+    setPlans(listManualPlans(deviceScope));
+  }, [deviceScope]);
 
   if (!plans.length) return null;
 

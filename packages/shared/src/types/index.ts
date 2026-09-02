@@ -130,6 +130,8 @@ export interface Outcome {
   recommendation_payload: RecommendationPayload | null;
   status: OutcomeStatus;
   is_saved: boolean;
+  /** Monotonic CAS token for the conversation-owned payload fields. */
+  conversation_revision?: number;
   created_at: ISODateString;
   updated_at: ISODateString;
 }
@@ -224,6 +226,12 @@ export interface ChecklistItem {
   updated_at: ISODateString;
 }
 
+/** Database-backed checklist revision identity. Guest/device items deliberately
+ * remain plain ChecklistItem values until they are imported into Supabase. */
+export interface PersistedChecklistItem extends ChecklistItem {
+  mutation_token: UUID;
+}
+
 export interface BrandKit {
   id: UUID;
   business_id: UUID;
@@ -231,6 +239,13 @@ export interface BrandKit {
   primary_colour: string;
   secondary_colour: string | null;
   footer_text: string | null;
+  revision: number;
+  logo_operation_id: UUID | null;
+  logo_storage_path: string | null;
+  logo_content_sha256: string | null;
+  logo_media_type: "image/png" | "image/jpeg" | "image/webp" | null;
+  logo_byte_length: number | null;
+  logo_status: "ready" | "legacy_unverified" | "reconciliation_required";
   updated_at: ISODateString;
 }
 

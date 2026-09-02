@@ -3,13 +3,17 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  useTransition,
   type ChangeEvent,
 } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import {
   ingestUpload,
+  type CapturedDocumentOperationStatus,
   type DocumentExportFormat,
   type ProofreadSectionResult,
 } from "@prompted/shared/api-client";
@@ -18,6 +22,7 @@ import {
   type FirstCapturedTemplateId,
 } from "@prompted/shared/document-operation";
 import { suggestedUploadsForDocument } from "@prompted/shared/suggested-uploads";
+import { preflightUploadMetadata } from "@prompted/shared/ingest-upload";
 import { isVisiblyEmpty } from "@prompted/shared/visible-content";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useToast } from "@/components/atoms/Toast";
@@ -35,14 +40,19 @@ import { useExport } from "@/hooks/useExport";
 import { useDeferredTour } from "@/hooks/useDeferredTour";
 import { ACCEPT_ATTRIBUTE } from "@/hooks/useFileAttachment";
 import { ensureApiConfigured } from "@/lib/api";
+import { captureOwnerDispatch, ownerDispatchIsCurrent } from "@/lib/browser-principal-state";
+import { attachOutcomeUpload } from "@/lib/api/outcomes";
 import { signInHref } from "@/lib/auth-return";
 import {
+  currentWorkspaceCacheScope,
   loadPendingOutcome,
   loadWorkspace,
   savePendingOutcome,
+  type PendingOutcome,
 } from "@/lib/workspace-store";
 import styles from "./WorkspaceScreen.module.css";
-import type { WorkspaceInitialState } from "@/lib/workspace-initial-state";
+import type { InitialWorkspaceIntake, WorkspaceInitialState } from "@/lib/workspace-initial-state";
+import { isWorkspaceSectionContentLoaded } from "@/lib/workspace-initial-state";
 
 const GuidedTour = dynamic(
   () => import("@/components/organisms/GuidedTour").then((module) => module.GuidedTour),
@@ -70,9 +80,7 @@ const UploadAnalysisPanel = dynamic(
 
 const CapturedAdmission = dynamic(
   () =>
-    import("@/components/organisms/CapturedAdmission").then(
-      (module) => module.CapturedAdmission,
-    ),
+    import("@/components/organisms/CapturedAdmission").then((module) => module.CapturedAdmission),
   {
     ssr: false,
     loading: () => <p role="status">Loading the verified document contract…</p>,
@@ -86,78 +94,274 @@ interface WorkspaceScreenProps {
 
 type Phase = "deciding" | "gate" | "build";
 
+function capturedOperationFromInitialState(
+  initialState?: WorkspaceInitialState | null,
+): CapturedDocumentOperationStatus | null {
+  const workspace = initialState?.workspace;
+  const truth = initialState?.truth;
+  if (
+    !workspace ||
+    !truth ||
+    truth.ledgerBindingStatus !== "captured" ||
+    !truth.operationId ||
+    truth.operationRevision === null ||
+    !truth.operationStatus ||
+    truth.operationStatus === "ready_for_review"
+  ) {
+    return null;
+  }
+
+  return {
+    operation_id: truth.operationId,
+    document_id: truth.documentId ?? workspace.documentId,
+    operation_revision: truth.operationRevision,
+    status: truth.operationStatus,
+    retryable: truth.operationStatus === "retryable_failure",
+    message: truth.operationMessage,
+    safe_next_action: truth.safeNextAction,
+  };
+}
+
 export function WorkspaceScreen({ outcomeId, initialState }: WorkspaceScreenProps) {
-  const [phase, setPhase] = useState<Phase>(() =>
-    initialState?.workspace ? "build" : "deciding",
-  );
+  const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const [phase, setPhase] = useState<Phase>(() => (initialState?.workspace ? "build" : "deciding"));
   const [uploads, setUploads] = useState<string[]>([]);
   const [docName, setDocName] = useState("your document");
   const [uploadedNames, setUploadedNames] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [admissionChecked, setAdmissionChecked] = useState(
-    Boolean(initialState?.workspace),
+  const [admissionChecked, setAdmissionChecked] = useState(Boolean(initialState?.workspace));
+  const [capturedTemplateId, setCapturedTemplateId] = useState<FirstCapturedTemplateId | null>(
+    null,
   );
-  const [capturedTemplateId, setCapturedTemplateId] =
-    useState<FirstCapturedTemplateId | null>(null);
   const [legacyFallback, setLegacyFallback] = useState(false);
+  const [durableIntakeOverride, setDurableIntakeOverride] = useState<InitialWorkspaceIntake | null>(
+    null,
+  );
+  const [retryingInitialState, startInitialStateRetry] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
+  const initialStateUnavailable = initialState?.truth.persistence === "unavailable";
+  const persistedCapturedTemplateId = initialState?.workspace
+    ? resolveFirstCapturedTemplateId(initialState.workspace.templateId)
+    : null;
+  const persistedCapturedOperation = capturedOperationFromInitialState(initialState);
+  const initialOwnerId = initialState?.truth.ownerUserId ?? null;
+  const ownerMismatch = Boolean(
+    initialState?.truth.authenticated &&
+    (!initialOwnerId || !user?.id || user.id !== initialOwnerId),
+  );
+  const cacheScope = useMemo(
+    () =>
+      user?.id
+        ? currentWorkspaceCacheScope(user.id)
+        : initialState?.truth.authenticated
+          ? null
+          : currentWorkspaceCacheScope(),
+    [initialState?.truth.authenticated, user?.id],
+  );
 
   useEffect(() => {
+    if (!authLoading && ownerMismatch) router.refresh();
+  }, [authLoading, ownerMismatch, router]);
+
+  useEffect(() => {
+    if (authLoading || ownerMismatch || initialStateUnavailable) return;
     if (initialState?.workspace) {
       setAdmissionChecked(true);
       return;
     }
-    const pending = loadPendingOutcome(outcomeId);
-    const cached = loadWorkspace(outcomeId);
+    const intake = initialState?.intake;
+    const pending: PendingOutcome | null = intake
+      ? {
+          situation: intake.situation,
+          templateName: intake.templateName,
+          templateId: intake.templateId ?? undefined,
+          conversationContext: intake.conversationContext,
+          uploadContext: intake.uploadContext,
+          uploadId: intake.uploadId ?? undefined,
+        }
+      : cacheScope
+        ? loadPendingOutcome(cacheScope, outcomeId)
+        : null;
+    const cached =
+      initialState?.truth.authenticated || !cacheScope
+        ? null
+        : loadWorkspace(cacheScope, outcomeId);
     const alreadyGenerated = Boolean(cached?.generated);
     const hint = `${pending?.templateName ?? ""} ${pending?.templateId ?? ""} ${pending?.situation ?? ""}`;
-    const suggested = pending && !alreadyGenerated ? suggestedUploadsForDocument(hint) : [];
+    const resolvedCapturedTemplate = resolveFirstCapturedTemplateId(pending?.templateId);
+    const suggested =
+      pending && !pending.uploadId && !alreadyGenerated && !resolvedCapturedTemplate
+        ? suggestedUploadsForDocument(hint)
+        : [];
     setDocName(pending?.templateName || "your document");
     setUploads(suggested);
-    setCapturedTemplateId(resolveFirstCapturedTemplateId(pending?.templateId));
+    setCapturedTemplateId(resolvedCapturedTemplate);
     setAdmissionChecked(true);
     setPhase(suggested.length > 0 ? "gate" : "build");
-  }, [initialState?.workspace, outcomeId]);
+  }, [
+    authLoading,
+    cacheScope,
+    initialState?.intake,
+    initialState?.truth.authenticated,
+    initialState?.workspace,
+    initialStateUnavailable,
+    outcomeId,
+    ownerMismatch,
+  ]);
 
   const pickFile = useCallback(() => fileRef.current?.click(), []);
 
-  const onFile = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setBusy(true);
-    setError(null);
-    try {
-      ensureApiConfigured();
-      const pending = loadPendingOutcome(outcomeId);
-      const result = await ingestUpload(file, pending?.situation ?? "");
-      const merged = [pending?.uploadContext ?? "", result.extracted_text]
-        .filter((value) => value && value.trim())
-        .join("\n\n");
-      if (pending) savePendingOutcome(outcomeId, { ...pending, uploadContext: merged });
-      setUploadedNames((names) => [...names, file.name]);
-    } catch {
-      setError("That file didn't upload. Try another, or continue without it.");
-    } finally {
-      setBusy(false);
-    }
-  }, [outcomeId]);
+  const onFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      const preflight = preflightUploadMetadata({
+        fileName: file.name,
+        mimeType: file.type,
+        byteLength: file.size,
+      });
+      if (!preflight.ok) {
+        setError(preflight.message);
+        return;
+      }
+      if (!user?.id) {
+        setError("Sign in again before attaching a source document.");
+        return;
+      }
+      const requestContext = captureOwnerDispatch(user.id);
+      setBusy(true);
+      setError(null);
+      try {
+        ensureApiConfigured();
+        if (!cacheScope) throw new Error("WORKSPACE_CACHE_OWNER_UNAVAILABLE");
+        const pending = initialState?.intake
+          ? {
+              situation: initialState.intake.situation,
+              templateName: initialState.intake.templateName,
+              templateId: initialState.intake.templateId ?? undefined,
+              conversationContext: initialState.intake.conversationContext,
+              uploadContext: initialState.intake.uploadContext,
+              uploadId: initialState.intake.uploadId ?? undefined,
+            }
+          : loadPendingOutcome(cacheScope, outcomeId);
+        const result = await ingestUpload(file, pending?.situation ?? "", requestContext);
+        requestContext.assertCurrent();
+        if (user.id) {
+          const attached = await attachOutcomeUpload(outcomeId, result.upload_id, requestContext);
+          requestContext.assertCurrent();
+          setDurableIntakeOverride({
+            outcomeId: attached.outcomeId,
+            situation: attached.situation,
+            templateName: attached.templateName,
+            templateId: attached.templateId,
+            conversationContext: attached.conversationContext,
+            uploadContext: attached.uploadContext,
+            uploadId: attached.uploadId,
+          });
+          requestContext.assertCurrent();
+          router.refresh();
+        } else if (pending) {
+          const merged = result.extracted_text.trim();
+          savePendingOutcome(cacheScope, outcomeId, {
+            ...pending,
+            uploadContext: merged,
+            uploadId: result.upload_id,
+          });
+        }
+        setUploadedNames([file.name]);
+      } catch {
+        if (ownerDispatchIsCurrent(requestContext)) {
+          setError("That file didn't upload. Try another, or continue without it.");
+        }
+      } finally {
+        if (ownerDispatchIsCurrent(requestContext)) setBusy(false);
+      }
+    },
+    [cacheScope, initialState?.intake, outcomeId, router, user?.id],
+  );
+
+  const effectiveInitialState = useMemo<WorkspaceInitialState | null | undefined>(
+    () =>
+      durableIntakeOverride && initialState
+        ? { ...initialState, intake: durableIntakeOverride }
+        : initialState,
+    [durableIntakeOverride, initialState],
+  );
+
+  if (authLoading && initialState?.truth.authenticated) {
+    return (
+      <div className={styles.loading}>
+        <Spinner label="Confirming your workspace session" size="md" />
+      </div>
+    );
+  }
+
+  if (ownerMismatch) {
+    return (
+      <div className={styles.loading}>
+        <Spinner label="Refreshing for the signed-in account" size="md" />
+      </div>
+    );
+  }
+
+  if (initialStateUnavailable) {
+    return (
+      <div className={styles.screen}>
+        <header className={styles.head}>
+          <div className={styles.brandLockup}>
+            <p className={styles.subtitle}>PrompTED workspace</p>
+          </div>
+        </header>
+        <div className={styles.body}>
+          <div className={styles.loading}>
+            <section aria-labelledby="workspace-unavailable-title">
+              <h1 id="workspace-unavailable-title">
+                Your saved workspace is temporarily unavailable
+              </h1>
+              <p role="status" aria-live="polite">
+                {retryingInitialState
+                  ? "PrompTED is checking your saved workspace again…"
+                  : "PrompTED couldn’t confirm the latest saved version. This page has not loaded a device copy or started new work."}
+              </p>
+              <button
+                type="button"
+                className={styles.globalPrimary}
+                disabled={retryingInitialState}
+                onClick={() => {
+                  startInitialStateRetry(() => router.refresh());
+                }}
+              >
+                {retryingInitialState ? "Checking again…" : "Try again"}
+              </button>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (phase === "deciding") {
-    return <div className={styles.loading}><Spinner label="Loading your workspace" size="md" /></div>;
+    return (
+      <div className={styles.loading}>
+        <Spinner label="Loading your workspace" size="md" />
+      </div>
+    );
   }
 
   if (!admissionChecked) {
-    return <div className={styles.loading}><Spinner label="Checking document contract" size="md" /></div>;
+    return (
+      <div className={styles.loading}>
+        <Spinner label="Checking document contract" size="md" />
+      </div>
+    );
   }
 
   if (phase === "gate") {
     return (
-      <OptionalPanelBoundary
-        label="Upload suggestions"
-        onClose={() => setPhase("build")}
-      >
+      <OptionalPanelBoundary label="Upload suggestions" onClose={() => setPhase("build")}>
         <UploadAnalysisPanel
           documentName={docName}
           uploads={uploads}
@@ -181,9 +385,50 @@ export function WorkspaceScreen({ outcomeId, initialState }: WorkspaceScreenProp
     );
   }
 
-  if (!initialState?.workspace && capturedTemplateId && !legacyFallback) {
+  if (
+    !user?.id &&
+    !legacyFallback &&
+    ((initialState?.workspace && persistedCapturedTemplateId && persistedCapturedOperation) ||
+      (!initialState?.workspace && capturedTemplateId))
+  ) {
+    return (
+      <div className={styles.loading}>
+        <ContextIssue
+          title="Sign in to create this document"
+          message="PrompTED binds confirmed facts and every generated revision to one account before TED starts."
+          actionLabel="Sign in"
+          href={signInHref(`/outcomes/${outcomeId}`)}
+        />
+      </div>
+    );
+  }
+
+  if (
+    user?.id &&
+    !legacyFallback &&
+    initialState?.workspace &&
+    persistedCapturedTemplateId &&
+    persistedCapturedOperation
+  ) {
     return (
       <CapturedAdmission
+        key={`${user.id}:${outcomeId}:${persistedCapturedTemplateId}:${persistedCapturedOperation.operation_id}:${persistedCapturedOperation.document_id}:${persistedCapturedOperation.operation_revision}`}
+        ownerUserId={user.id}
+        outcomeId={outcomeId}
+        templateId={persistedCapturedTemplateId}
+        title={initialState.workspace.title}
+        initialOperation={persistedCapturedOperation}
+        onLegacyFallback={() => undefined}
+        onOpenPersistedWorkspace={() => setLegacyFallback(true)}
+      />
+    );
+  }
+
+  if (user?.id && !initialState?.workspace && capturedTemplateId && !legacyFallback) {
+    return (
+      <CapturedAdmission
+        key={`${user.id}:${outcomeId}:${capturedTemplateId}:new`}
+        ownerUserId={user.id}
         outcomeId={outcomeId}
         templateId={capturedTemplateId}
         title={docName}
@@ -192,7 +437,7 @@ export function WorkspaceScreen({ outcomeId, initialState }: WorkspaceScreenProp
     );
   }
 
-  return <WorkspaceLoaded outcomeId={outcomeId} initialState={initialState} />;
+  return <WorkspaceLoaded outcomeId={outcomeId} initialState={effectiveInitialState} />;
 }
 
 function WorkspaceLoaded({
@@ -208,11 +453,24 @@ function WorkspaceLoaded({
   const exporter = useExport();
   const [, setProofreadResults] = useState<ProofreadSectionResult[] | null>(null);
   const [proofreadStarted, setProofreadStarted] = useState(false);
+  const [lastCapturedExportDelivery, setLastCapturedExportDelivery] = useState<{
+    exportId: string;
+    operationId: string;
+    documentRevision: number;
+  } | null>(null);
   const showTour = useDeferredTour("workspace-v2");
   const proofreadRef = useRef<ProofreadPanelHandle>(null);
 
   async function handleExport(format: DocumentExportFormat) {
-    if (!workspace.canExport) return;
+    if (!workspace.documentId || workspace.syncStatus !== "saved") {
+      showToast({
+        tone: "info",
+        message: "Save and approve the exact current revision before exporting.",
+      });
+      return;
+    }
+    const approvedRevision = workspace.currentRevision;
+    if (!workspace.canExport || !user?.id || approvedRevision === null) return;
 
     let placeholderAcknowledged = false;
     if (workspace.placeholderExportDecision.status === "acknowledgement_required") {
@@ -223,14 +481,13 @@ function WorkspaceLoaded({
     } else if (workspace.placeholderExportDecision.status === "warn") {
       showToast({
         tone: "info",
-        message:
-          `Exporting with ${workspace.placeholderExportDecision.total} unresolved optional detail(s) visible.`,
+        message: `Exporting with ${workspace.placeholderExportDecision.total} unresolved optional detail(s) visible.`,
       });
     }
 
     let capturedExport:
-      | { exportId: string; operationId: string; expectedOperationRevision: number }
-      | undefined;
+      { exportId: string; operationId: string; expectedOperationRevision: number } | undefined;
+    const requestContext = captureOwnerDispatch(user.id);
     if (workspace.captured) {
       if (format !== "pdf") {
         showToast({
@@ -240,7 +497,7 @@ function WorkspaceLoaded({
         return;
       }
       try {
-        const request = await workspace.requestCapturedExport("pdf");
+        const request = await workspace.requestCapturedExport("pdf", requestContext);
         if (!request) {
           showToast({
             tone: "info",
@@ -254,42 +511,96 @@ function WorkspaceLoaded({
           expectedOperationRevision: request.operation_revision,
         };
       } catch {
-        showToast({
-          tone: "info",
-          message: "The revision-bound export request could not be recorded yet.",
-        });
+        if (ownerDispatchIsCurrent(requestContext)) {
+          showToast({
+            tone: "info",
+            message: "The revision-bound export request could not be recorded yet.",
+          });
+        }
         return;
       }
     }
 
-    const ok = await exporter.run({
-      documentId: workspace.documentId ?? undefined,
-      title: workspace.title,
-      format,
-      sections: workspace.sections,
-      lede: workspace.situation,
-      unresolvedPlaceholders: workspace.unresolvedPlaceholders,
-      placeholderAcknowledged,
-      capturedExport,
-    });
-    if (ok) {
-      if (!workspace.captured) workspace.markExported();
+    const delivery = await exporter.run(
+      {
+        documentId: workspace.documentId,
+        title: workspace.title,
+        format,
+        sections: workspace.sections,
+        unresolvedPlaceholders: workspace.unresolvedPlaceholders,
+        placeholderAcknowledged,
+        capturedExport,
+      },
+      requestContext,
+    );
+    if (delivery && ownerDispatchIsCurrent(requestContext)) {
+      if (workspace.captured && capturedExport) {
+        if (
+          delivery.capturedExportId !== capturedExport.exportId ||
+          !workspace.rememberCapturedExportDelivery("pdf", capturedExport.exportId)
+        ) {
+          showToast({
+            tone: "info",
+            message:
+              "The browser received an artifact, but its durable export receipt was not retained.",
+          });
+          return;
+        }
+        setLastCapturedExportDelivery({
+          exportId: capturedExport.exportId,
+          operationId: capturedExport.operationId,
+          documentRevision: approvedRevision,
+        });
+      } else {
+        workspace.markExported();
+      }
       showToast({
         tone: "success",
-        message: workspace.captured
-          ? "Your inspected, revision-bound PDF is ready."
-          : "Your document is ready.",
+        message: "Sent to your browser. Check your Downloads folder.",
       });
     }
   }
 
+  async function handleCreateUpdatedCapturedExport() {
+    const delivery = lastCapturedExportDelivery;
+    if (
+      !delivery ||
+      delivery.operationId !== workspace.operationId ||
+      delivery.documentRevision !== workspace.currentRevision ||
+      !workspace.createUpdatedCapturedExport("pdf", delivery.exportId)
+    ) {
+      showToast({
+        tone: "info",
+        message: "The current export receipt changed. Export the approved revision again.",
+      });
+      setLastCapturedExportDelivery(null);
+      return;
+    }
+    setLastCapturedExportDelivery(null);
+    await handleExport("pdf");
+  }
+
+  const hasCurrentCapturedDelivery = Boolean(
+    lastCapturedExportDelivery &&
+    lastCapturedExportDelivery.operationId === workspace.operationId &&
+    lastCapturedExportDelivery.documentRevision === workspace.currentRevision,
+  );
+
   if (workspace.loading) {
-    return <div className={styles.loading}><Spinner label="Loading your workspace" size="md" /></div>;
+    return (
+      <div className={styles.loading}>
+        <Spinner label="Loading your workspace" size="md" />
+      </div>
+    );
   }
 
   const authIssue = workspace.generationIssues.find((issue) => issue.sectionId === AUTH_SECTION_ID);
-  const paywallIssue = workspace.generationIssues.find((issue) => issue.sectionId === PAYWALL_SECTION_ID);
-  const activeIssue = workspace.generationIssues.find((issue) => issue.sectionId === workspace.activeSectionId);
+  const paywallIssue = workspace.generationIssues.find(
+    (issue) => issue.sectionId === PAYWALL_SECTION_ID,
+  );
+  const activeIssue = workspace.generationIssues.find(
+    (issue) => issue.sectionId === workspace.activeSectionId,
+  );
   const activeMissingInfo =
     workspace.missingInfoQuestions.find(
       (question) => question.placeholderId === workspace.selectedPlaceholderId,
@@ -298,11 +609,12 @@ function WorkspaceLoaded({
       (question) => question.sectionId === workspace.activeSectionId,
     ) ??
     workspace.missingInfoQuestions[0];
-  const saveLabel = workspace.syncStatus === "saving"
-    ? "Saving…"
-    : workspace.syncStatus === "saved"
-      ? "Saved"
-      : "Save";
+  const saveLabel =
+    workspace.syncStatus === "saving"
+      ? "Saving…"
+      : workspace.syncStatus === "saved"
+        ? "Saved"
+        : "Save";
 
   async function approveAll() {
     if (workspace.captured) {
@@ -316,8 +628,13 @@ function WorkspaceLoaded({
       return;
     }
     const skipped: string[] = [];
+    const notLoaded: string[] = [];
     for (const section of workspace.sections) {
       if (section.status === "approved") continue;
+      if (!isWorkspaceSectionContentLoaded(section)) {
+        notLoaded.push(section.name);
+        continue;
+      }
       if (isVisiblyEmpty(section.content)) {
         skipped.push(section.name);
         continue;
@@ -325,10 +642,19 @@ function WorkspaceLoaded({
       workspace.section.approve(section.id);
     }
     showToast({
-      tone: skipped.length ? "info" : "success",
-      message: skipped.length
-        ? `Approved completed sections. Still needs wording: ${skipped.join(", ")}.`
-        : "All sections approved.",
+      tone: skipped.length || notLoaded.length ? "info" : "success",
+      message:
+        skipped.length || notLoaded.length
+          ? [
+              "Approved the sections currently ready for review.",
+              skipped.length ? `Still needs wording: ${skipped.join(", ")}.` : "",
+              notLoaded.length
+                ? `Saved sections still need to be opened and reviewed: ${notLoaded.join(", ")}.`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : "All sections approved.",
     });
   }
 
@@ -455,15 +781,16 @@ function WorkspaceLoaded({
 
       <DraftingIndicator
         active={workspace.drafting}
-        label={workspace.regeneratingSectionId ? "TED is redrafting this section" : "TED is drafting your document"}
+        label={
+          workspace.regeneratingSectionId
+            ? "TED is redrafting this section"
+            : "TED is drafting your document"
+        }
       />
 
       <div className={`${styles.body}${proofreadStarted ? ` ${styles.bodyWithProofread}` : ""}`}>
         {proofreadStarted && (
-          <OptionalPanelBoundary
-            label="Proofread tools"
-            onClose={() => setProofreadStarted(false)}
-          >
+          <OptionalPanelBoundary label="Proofread tools" onClose={() => setProofreadStarted(false)}>
             <ProofreadPanel
               ref={proofreadRef}
               sections={workspace.sections}
@@ -481,6 +808,10 @@ function WorkspaceLoaded({
             exportError={exporter.error}
             onExport={handleExport}
             allowedFormats={workspace.captured ? ["pdf"] : undefined}
+            capturedExportDelivered={hasCurrentCapturedDelivery}
+            onCreateUpdatedExport={
+              workspace.captured ? handleCreateUpdatedCapturedExport : undefined
+            }
           />
         </div>
       </div>

@@ -10,6 +10,11 @@ import {
 import { clarifyShouldContinue, type IntentResult } from "@prompted/shared/orchestration";
 import type { ConversationMessage } from "@prompted/shared/browser";
 import type { ClarifyMessage } from "@/components/organisms/ChatResponsiveClarify";
+import { useAuth } from "@/components/providers";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+} from "@/lib/browser-principal-state";
 import { useInterpretIntent } from "./useInterpretIntent";
 
 export interface UseRecommendation {
@@ -26,6 +31,8 @@ export interface UseRecommendation {
     summary?: string;
     extractedText: string;
   }) => void;
+  /** Replace the extracted body after user confirmation without duplicating source text. */
+  replaceUploadContext: (extractedText: string) => void;
   /** Clear any upload-derived context when the user abandons that upload. */
   clearUploadContext: () => void;
   /** Upload-derived context only, kept separate from the conversation transcript. */
@@ -35,7 +42,7 @@ export interface UseRecommendation {
   /** Combined context TED should carry into document generation. */
   getDocumentContext: () => string;
   /** Submit a user turn. `displayText` is what's shown in the thread. */
-  submit: (typed: string, displayText?: string, extractedText?: string) => Promise<void>;
+  submit: (typed: string, displayText?: string, extractedText?: string) => Promise<boolean>;
   /** Apply an edited "understood" situation — re-runs clarification. */
   adjustUnderstanding: (next: string) => void;
   /** Rehydrate a saved thread so the chat can be continued where it left off. */
@@ -126,6 +133,7 @@ function formatJobMatch(result: JobMatchResult): string {
  */
 export function useRecommendation(onError?: (message: string) => void): UseRecommendation {
   const api = useInterpretIntent();
+  const { user } = useAuth();
   const [messages, setMessages] = useState<ClarifyMessage[]>([]);
   const [thinking, setThinking] = useState(false);
   const [result, setResult] = useState<IntentResult | null>(null);
@@ -134,6 +142,9 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
   const situationRef = useRef<string>("");
   const uploadContextRef = useRef<string>("");
   const uploadIdRef = useRef<string | undefined>(undefined);
+  const uploadFileNameRef = useRef<string>("");
+  const uploadSummaryRef = useRef<string>("");
+  const uploadTextRef = useRef<string>("");
   const historyRef = useRef<ClarifyTurn[]>([]);
 
   const addMessage = useCallback(
@@ -157,14 +168,18 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
     }) => {
       const cleanExtracted = extractedText.trim();
       const cleanSummary = summary?.trim() ?? "";
+      const cleanFileName = fileName?.trim() ?? "";
       const contextParts = [
-        fileName ? `Uploaded file: ${fileName}` : "",
+        cleanFileName ? `Uploaded file: ${cleanFileName}` : "",
         cleanSummary ? `TED read: ${cleanSummary}` : "",
         cleanExtracted ? `Uploaded document text:\n${cleanExtracted}` : "",
       ].filter(Boolean);
 
       uploadContextRef.current = contextParts.join("\n\n");
       uploadIdRef.current = uploadId?.trim() || undefined;
+      uploadFileNameRef.current = cleanFileName;
+      uploadSummaryRef.current = cleanSummary;
+      uploadTextRef.current = cleanExtracted;
 
       if (cleanSummary || cleanExtracted) {
         addMessage(
@@ -178,9 +193,24 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
     [addMessage],
   );
 
+  const replaceUploadContext = useCallback((extractedText: string) => {
+    const cleanExtracted = extractedText.trim();
+    uploadTextRef.current = cleanExtracted;
+    uploadContextRef.current = [
+      uploadFileNameRef.current ? `Uploaded file: ${uploadFileNameRef.current}` : "",
+      uploadSummaryRef.current ? `TED read: ${uploadSummaryRef.current}` : "",
+      cleanExtracted ? `Uploaded document text:\n${cleanExtracted}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }, []);
+
   const clearUploadContext = useCallback(() => {
     uploadContextRef.current = "";
     uploadIdRef.current = undefined;
+    uploadFileNameRef.current = "";
+    uploadSummaryRef.current = "";
+    uploadTextRef.current = "";
   }, []);
 
   const getUploadContext = useCallback(() => uploadContextRef.current, []);
@@ -212,18 +242,19 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
   const submit = useCallback(
     async (typed: string, displayText?: string, extractedText?: string) => {
       const trimmed = typed.trim();
-      if (!trimmed && !displayText) return;
+      if (!trimmed && !displayText) return false;
+      if (!user?.id) return false;
+      const requestContext = captureOwnerDispatch(user.id);
 
       addMessage("user", displayText ?? trimmed);
 
       // Fold any (possibly edited) uploaded document text into the carried
-      // upload context so it is used now AND persists for later turns.
+      // upload context so it is used now AND persists for later turns. The
+      // confirmed body replaces the extraction; contradictory copies are
+      // never appended to the durable source context.
       const docText = extractedText?.trim();
-      if (docText && !uploadContextRef.current.includes(docText)) {
-        uploadContextRef.current = [uploadContextRef.current, `Uploaded document text:\n${docText}`]
-          .filter(Boolean)
-          .join("\n\n");
-      }
+      if (docText) replaceUploadContext(docText);
+      const effectiveExtractedText = uploadTextRef.current || docText || undefined;
 
       const isFirstTurn = situationRef.current === "";
       setThinking(true);
@@ -248,38 +279,44 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
             contextParts.length > 0 ? contextParts.join("\n\n") : displayText || trimmed || "";
           situationRef.current = firstUserContent;
           historyRef.current.push({ role: "user", content: firstUserContent });
-          next = await api.start(firstUserContent, extractedText);
+          next = await api.start(firstUserContent, effectiveExtractedText, requestContext);
         } else {
           const answer = trimmed || "Please use the document I just uploaded.";
           historyRef.current.push({ role: "user", content: answer });
-          next = await api.continue({
-            situation: situationRef.current,
-            domain: result?.domain,
-            history: historyRef.current,
-            answer,
-            extractedText:
-              [uploadContextRef.current, extractedText?.trim()].filter(Boolean).join("\n\n") ||
-              undefined,
-          });
+          next = await api.continue(
+            {
+              situation: situationRef.current,
+              domain: result?.domain,
+              history: historyRef.current,
+              answer,
+              extractedText: uploadContextRef.current || effectiveExtractedText,
+            },
+            requestContext,
+          );
         }
+        requestContext.assertCurrent();
         // Every message is interpreted by TED first. TED — not a keyword
         // check — decides whether the user is explicitly asking for live
         // job openings. Because the decision is re-made from the latest
         // message each turn, the user can enter or leave the job-search
         // flow just by saying so.
         if (next.jobSearch) {
-          const jobResult = await jobMatch({
-            situation: combinedContext,
-            experience: uploadContextRef.current || extractedText,
-            location: extractLocation(combinedContext),
-            history: historyRef.current,
-          });
+          const jobResult = await jobMatch(
+            {
+              situation: combinedContext,
+              experience: uploadContextRef.current || extractedText,
+              location: extractLocation(combinedContext),
+              history: historyRef.current,
+            },
+            requestContext,
+          );
+          requestContext.assertCurrent();
           const reply = formatJobMatch(jobResult);
           addMessage("ted", reply);
           historyRef.current.push({ role: "assistant", content: reply });
           if (!situationRef.current) situationRef.current = combinedContext;
           setResult(null);
-          return;
+          return true;
         }
 
         applyResult(next);
@@ -288,19 +325,27 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
         // recommendation, force a recommendation so the chat can never
         // silently stall mid-conversation.
         if (!clarifyShouldContinue(next) && !next.recommendation) {
-          const forced = await recommend({
-            situation: situationRef.current || trimmed,
-            domain: next.domain,
-          });
+          const forced = await recommend(
+            {
+              situation: situationRef.current || trimmed,
+              domain: next.domain,
+            },
+            requestContext,
+          );
+          requestContext.assertCurrent();
           setResult(forced);
         }
+        return true;
       } catch {
-        onError?.("TED hit a small snag. Please try again in a moment.");
+        if (ownerDispatchIsCurrent(requestContext)) {
+          onError?.("TED hit a small snag. Please try again in a moment.");
+        }
+        return false;
       } finally {
-        setThinking(false);
+        if (ownerDispatchIsCurrent(requestContext)) setThinking(false);
       }
     },
-    [addMessage, api, applyResult, result, onError],
+    [addMessage, api, applyResult, replaceUploadContext, result, onError, user?.id],
   );
 
   const adjustUnderstanding = useCallback((next: string) => {
@@ -332,6 +377,9 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
       situationRef.current = situation?.trim() || firstUser || "(resumed conversation)";
       uploadContextRef.current = uploadContext?.trim() ?? "";
       uploadIdRef.current = uploadId?.trim() || undefined;
+      uploadFileNameRef.current = "";
+      uploadSummaryRef.current = "";
+      uploadTextRef.current = "";
       historyRef.current = saved.map((m) => ({
         role: m.role === "ted" ? "assistant" : "user",
         content: m.text,
@@ -349,6 +397,9 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
     situationRef.current = "";
     uploadContextRef.current = "";
     uploadIdRef.current = undefined;
+    uploadFileNameRef.current = "";
+    uploadSummaryRef.current = "";
+    uploadTextRef.current = "";
     historyRef.current = [];
   }, []);
 
@@ -359,6 +410,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
     conversationStarted: messages.length > 0,
     showRecommendation: Boolean(result?.intentClear && result.recommendation),
     seedUploadContext,
+    replaceUploadContext,
     clearUploadContext,
     getUploadContext,
     getUploadId,

@@ -16,7 +16,16 @@ import {
   type JobRoleIdea,
   type JobVacancy,
 } from "@prompted/shared/api-client";
+import {
+  preflightUploadMetadata,
+  UPLOAD_REQUIREMENT,
+} from "@prompted/shared/ingest-upload";
 import { ensureApiConfigured } from "@/lib/api";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+  type OwnerDispatchLease,
+} from "@/lib/browser-principal-state";
 import { type ConfirmOutcomeParams, useOutcome } from "@/hooks/useOutcome";
 import { useAuth } from "@/components/providers";
 import {
@@ -30,7 +39,7 @@ import {
   type RoleOutcome,
   type RoleOutcomeStage,
 } from "@/lib/api/saved-roles";
-import { ACCEPT_ATTRIBUTE, MAX_FILE_BYTES } from "@/hooks/useFileAttachment";
+import { ACCEPT_ATTRIBUTE } from "@/hooks/useFileAttachment";
 import { Icon } from "@/components/atoms/Icon";
 import { ProfileResourceSelector } from "./ProfileResourceSelector";
 import { fetchProfileResources, type ProfileResourceSnapshot } from "@/lib/profile-resources";
@@ -62,8 +71,6 @@ type EnhancedJobMatchResult = Omit<JobMatchResult, "listings" | "role_ideas"> & 
   role_ideas?: EnhancedRoleIdea[];
 };
 
-const READABLE_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".csv"] as const;
-
 function uploadErrorMessage(err: unknown): string {
   if (err && typeof err === "object" && "payload" in err) {
     const payload = (err as { payload?: unknown }).payload;
@@ -75,12 +82,7 @@ function uploadErrorMessage(err: unknown): string {
       }
     }
   }
-  return "TED couldn't read that resume. Please try a PDF, DOCX, TXT, Markdown or CSV file.";
-}
-
-function isReadableResume(file: File): boolean {
-  const lower = file.name.toLowerCase();
-  return READABLE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  return `TED couldn't read that resume. ${UPLOAD_REQUIREMENT}`;
 }
 
 function cleanList(items: Array<string | undefined> | undefined, limit = 5): string[] {
@@ -94,7 +96,16 @@ export function safeExternalHttpUrl(value: string | undefined): string | null {
   if (!value) return null;
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.port
+    ) {
+      return null;
+    }
+    parsed.hash = "";
+    return parsed.href;
   } catch {
     return null;
   }
@@ -115,13 +126,17 @@ export function FindRolesScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [savedIds, setSavedIds] = useState<Record<string, string>>({});
   const [savingRole, setSavingRole] = useState(false);
+  const savingRoleRef = useRef<OwnerDispatchLease | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [planItems, setPlanItems] = useState<RoleActionItem[]>([]);
+  const [togglingPlanItemIds, setTogglingPlanItemIds] = useState<Set<string>>(() => new Set());
+  const togglingPlanItemIdsRef = useRef(new Set<string>());
   // Outcome-tracking loop: what actually happened, distinct from the
   // action-plan checklist above (which tracks preparation, not results).
   const [outcomesOpen, setOutcomesOpen] = useState(false);
   const [outcomeHistory, setOutcomeHistory] = useState<RoleOutcome[]>([]);
   const [recordingOutcome, setRecordingOutcome] = useState(false);
+  const recordingOutcomeRef = useRef<OwnerDispatchLease | null>(null);
   const [outcomeNote, setOutcomeNote] = useState("");
   const [outcomeStage, setOutcomeStage] = useState<RoleOutcomeStage>("applied");
   // Clarification chat: TED's readiness-gate questions and the user's
@@ -145,6 +160,8 @@ export function FindRolesScreen() {
   const [uploadingResume, setUploadingResume] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const loadingActionRef = useRef<OwnerDispatchLease | null>(null);
+  const uploadActionRef = useRef<OwnerDispatchLease | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<EnhancedJobMatchResult | null>(null);
   const [searched, setSearched] = useState(false);
@@ -160,17 +177,30 @@ export function FindRolesScreen() {
       return () => {
         active = false;
       };
-    void fetchProfileResources()
+    let requestContext: OwnerDispatchLease;
+    try {
+      requestContext = captureOwnerDispatch(user.id);
+    } catch {
+      setProfileSnapshot(null);
+      return () => {
+        active = false;
+      };
+    }
+    void fetchProfileResources(requestContext, user.email ?? "")
       .then((snapshot) => {
-        if (active) setProfileSnapshot(snapshot);
+        if (active && ownerDispatchIsCurrent(requestContext)) {
+          setProfileSnapshot(snapshot);
+        }
       })
       .catch(() => {
-        if (active) setProfileSnapshot(null);
+        if (active && ownerDispatchIsCurrent(requestContext)) {
+          setProfileSnapshot(null);
+        }
       });
     return () => {
       active = false;
     };
-  }, [user?.id]);
+  }, [user?.email, user?.id]);
 
   const selectedProfileResources = useMemo(
     () =>
@@ -182,6 +212,11 @@ export function FindRolesScreen() {
   const selectedProfileResumeText = selectedProfileResources.resume?.extractedText.trim() ?? "";
   const effectiveResumeText = resumeTextRef.current.trim() || selectedProfileResumeText;
   const effectiveResumeName = resumeName || selectedProfileResources.resume?.fileName || "";
+  const selectedCountryCode = useMemo(() => {
+    const country = selectedProfileResources.facts.address?.country.trim().toUpperCase() ?? "";
+    if (country === "AU" || country === "AUSTRALIA") return "AU";
+    return /^[A-Z]{2}$/.test(country) ? country : undefined;
+  }, [selectedProfileResources.facts.address?.country]);
 
   // The "situation" textarea was previously locked to a fixed 74px height
   // with overflow:hidden and no scrollbar, so text beyond ~3 lines was
@@ -294,19 +329,33 @@ export function FindRolesScreen() {
     const s = searchContext.trim();
     const experience = effectiveResumeText;
     if ((!s && !experience) || loading || uploadingResume) return;
+    if (!user?.id) return;
+    let requestContext: OwnerDispatchLease;
+    try {
+      requestContext = captureOwnerDispatch(user.id);
+    } catch {
+      setError("Your signed-in account changed. Please try that search again.");
+      return;
+    }
+    loadingActionRef.current = requestContext;
     setLoading(true);
     setError(null);
     setClarifyHistory([]);
     try {
       ensureApiConfigured();
-      const res = await jobMatch({
-        situation: s || "Use my uploaded resume to find suitable roles and application gaps.",
-        experience: experience || undefined,
-        location: location.trim() || undefined,
-        work_type: workType !== "Any" ? workType : undefined,
-        distance: distance.trim() || undefined,
-        role_focus: roleFocus.trim() || undefined,
-      });
+      const res = await jobMatch(
+        {
+          situation: s || "Use my uploaded resume to find suitable roles and application gaps.",
+          experience: experience || undefined,
+          location: location.trim() || undefined,
+          work_type: workType !== "Any" ? workType : undefined,
+          distance: distance.trim() || undefined,
+          role_focus: roleFocus.trim() || undefined,
+          country_code: selectedCountryCode,
+        },
+        requestContext,
+      );
+      requestContext.assertCurrent();
       const typed = res as EnhancedJobMatchResult;
       setResult(typed);
       setSearched(true);
@@ -314,11 +363,16 @@ export function FindRolesScreen() {
         setClarifyHistory([{ role: "assistant", content: typed.ask }]);
       }
     } catch {
-      setError(
-        "TED hit a snag finding roles. Try again in a moment, or add a little more location and role detail.",
-      );
+      if (ownerDispatchIsCurrent(requestContext)) {
+        setError(
+          "TED hit a snag finding roles. Try again in a moment, or add a little more location and role detail.",
+        );
+      }
     } finally {
-      setLoading(false);
+      if (loadingActionRef.current === requestContext) {
+        loadingActionRef.current = null;
+        setLoading(false);
+      }
     }
   }, [
     searchContext,
@@ -326,9 +380,11 @@ export function FindRolesScreen() {
     workType,
     distance,
     roleFocus,
+    selectedCountryCode,
     loading,
     uploadingResume,
     effectiveResumeText,
+    user?.id,
   ]);
 
   /** Answers TED's clarifying question inline, in the chat panel, instead of
@@ -338,10 +394,19 @@ export function FindRolesScreen() {
   const answerClarify = useCallback(async () => {
     const answer = clarifyDraft.trim();
     if (!answer || loading) return;
+    if (!user?.id) return;
+    let requestContext: OwnerDispatchLease;
+    try {
+      requestContext = captureOwnerDispatch(user.id);
+    } catch {
+      setError("Your signed-in account changed. Please try that answer again.");
+      return;
+    }
     const nextHistory: { role: "user" | "assistant"; content: string }[] = [
       ...clarifyHistory,
       { role: "user", content: answer },
     ];
+    loadingActionRef.current = requestContext;
     setClarifyHistory(nextHistory);
     setClarifyDraft("");
     setLoading(true);
@@ -359,21 +424,25 @@ export function FindRolesScreen() {
       const answeredLocation =
         !location.trim() && result?.missing?.includes("location") ? answer : location.trim();
       if (answeredLocation && answeredLocation !== location.trim()) setLocation(answeredLocation);
-      const res = await jobMatch({
-        situation: [
-          searchContext.trim() ||
-            "Use my uploaded resume to find suitable roles and application gaps.",
-          answersContext,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        experience: effectiveResumeText || undefined,
-        location: answeredLocation || undefined,
-        work_type: workType !== "Any" ? workType : undefined,
-        distance: distance.trim() || undefined,
-        role_focus: roleFocus.trim() || undefined,
-        history: nextHistory,
-      });
+      const res = await jobMatch(
+        {
+          situation: [
+            searchContext.trim() ||
+              "Use my uploaded resume to find suitable roles and application gaps.",
+            answersContext,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          experience: effectiveResumeText || undefined,
+          location: answeredLocation || undefined,
+          work_type: workType !== "Any" ? workType : undefined,
+          distance: distance.trim() || undefined,
+          role_focus: roleFocus.trim() || undefined,
+          history: nextHistory,
+        },
+        requestContext,
+      );
+      requestContext.assertCurrent();
       const typed = res as EnhancedJobMatchResult;
       setResult(typed);
       if (typed.need_more_context && typed.ask) {
@@ -384,9 +453,14 @@ export function FindRolesScreen() {
         setClarifyHistory([]);
       }
     } catch {
-      setError("TED hit a snag with that answer. Try again in a moment.");
+      if (ownerDispatchIsCurrent(requestContext)) {
+        setError("TED hit a snag with that answer. Try again in a moment.");
+      }
     } finally {
-      setLoading(false);
+      if (loadingActionRef.current === requestContext) {
+        loadingActionRef.current = null;
+        setLoading(false);
+      }
     }
   }, [
     clarifyDraft,
@@ -399,6 +473,7 @@ export function FindRolesScreen() {
     loading,
     result,
     effectiveResumeText,
+    user?.id,
   ]);
 
   const uploadResume = useCallback(
@@ -406,18 +481,26 @@ export function FindRolesScreen() {
       const file = e.currentTarget.files?.[0];
       e.currentTarget.value = "";
       if (!file || uploadingResume) return;
-
-      if (!isReadableResume(file)) {
-        setUploadError(
-          "Use a PDF, DOCX, TXT, Markdown or CSV resume so TED can read the text properly.",
-        );
+      if (!user?.id) return;
+      const preflight = preflightUploadMetadata({
+        fileName: file.name,
+        mimeType: file.type,
+        byteLength: file.size,
+      });
+      if (!preflight.ok) {
+        setUploadError(preflight.message);
         return;
       }
-      if (file.size > MAX_FILE_BYTES) {
-        setUploadError("That resume is too large. Please upload a file under 8MB.");
+
+      let requestContext: OwnerDispatchLease;
+      try {
+        requestContext = captureOwnerDispatch(user.id);
+      } catch {
+        setUploadError("Your signed-in account changed. Please choose the resume again.");
         return;
       }
 
+      uploadActionRef.current = requestContext;
       setUploadingResume(true);
       setUploadError(null);
       setError(null);
@@ -426,7 +509,9 @@ export function FindRolesScreen() {
         const upload = await ingestUpload(
           file,
           "Extract this resume for job matching. Identify the person's role history, skills, industries, qualifications, strengths, seniority, constraints and application gaps.",
+          requestContext,
         );
+        requestContext.assertCurrent();
         const extractedText = upload.extracted_text.trim();
         const summary = String(upload.confirm_payload["summary"] ?? "").trim();
         resumeTextRef.current = extractedText;
@@ -436,12 +521,15 @@ export function FindRolesScreen() {
         setResult(null);
         setSearched(false);
       } catch (err) {
-        setUploadError(uploadErrorMessage(err));
+        if (ownerDispatchIsCurrent(requestContext)) setUploadError(uploadErrorMessage(err));
       } finally {
-        setUploadingResume(false);
+        if (uploadActionRef.current === requestContext) {
+          uploadActionRef.current = null;
+          setUploadingResume(false);
+        }
       }
     },
-    [uploadingResume],
+    [uploadingResume, user?.id],
   );
 
   const clearResume = useCallback(() => {
@@ -524,57 +612,141 @@ export function FindRolesScreen() {
   );
 
   const handleSaveRole = useCallback(
-    async (v: EnhancedVacancy): Promise<string | null> => {
-      if (!user?.id || savingRole) return null;
+    async (
+      v: EnhancedVacancy,
+      existingLease?: OwnerDispatchLease,
+    ): Promise<string | null> => {
+      if (!user?.id || savingRoleRef.current) return null;
+      let requestContext: OwnerDispatchLease;
+      try {
+        requestContext = existingLease ?? captureOwnerDispatch(user.id);
+        if (requestContext.expectedUserId !== user.id.trim().toLowerCase()) {
+          throw new Error("SAVED_ROLE_OWNER_CONTEXT_MISMATCH");
+        }
+        requestContext.assertCurrent();
+      } catch {
+        setError("Your signed-in account changed. Please try that action again.");
+        return null;
+      }
+      savingRoleRef.current = requestContext;
       setSavingRole(true);
       try {
+        const safeJobUrl = safeExternalHttpUrl(v.url);
+        const sourceLinked = Boolean(
+          safeJobUrl &&
+            v.source_status === "source_linked_not_independently_verified",
+        );
         const id = await saveRole({
           userId: user.id,
           roleTitle: v.title || "Role",
           companyName: v.employer,
           location: v.location,
           matchPercentage: typeof v.fit_score === "number" ? Math.round(v.fit_score) : undefined,
-          jobUrl: v.url,
+          jobUrl: safeJobUrl ?? undefined,
           sourceLabel: v.source,
-          contactSourceStatus: v.url ? "official" : "needs_confirmation",
-        });
+          contactSourceStatus: sourceLinked ? "public_listing" : "needs_confirmation",
+        }, requestContext);
+        requestContext.assertCurrent();
         if (id) setSavedIds((prev) => ({ ...prev, [roleKey(v)]: id }));
-        return id ?? null;
+        return id;
+      } catch (caught) {
+        if (ownerDispatchIsCurrent(requestContext)) {
+          setError(
+            caught instanceof Error && caught.message === "SAVED_ROLE_OWNER_CONTEXT_MISMATCH"
+              ? "Your signed-in account changed. Please try that action again."
+              : "TED couldn't save that role. Please try again.",
+          );
+        }
+        return null;
       } finally {
-        setSavingRole(false);
+        if (savingRoleRef.current === requestContext) {
+          savingRoleRef.current = null;
+          setSavingRole(false);
+        }
       }
     },
-    [user?.id, savingRole, roleKey],
+    [user?.id, roleKey],
   );
 
   const openActionPlan = useCallback(
     async (v: EnhancedVacancy) => {
       if (!user?.id) return;
+      let requestContext: OwnerDispatchLease;
+      try {
+        requestContext = captureOwnerDispatch(user.id);
+      } catch {
+        setError("Your signed-in account changed. Please try that action again.");
+        return;
+      }
       let id = savedIds[roleKey(v)];
       if (!id) {
-        id = (await handleSaveRole(v)) ?? undefined;
+        id = (await handleSaveRole(v, requestContext)) ?? undefined;
       }
       if (!id) return;
-      setPlanItems(await fetchActionItems(id));
-      setPlanOpen(true);
-      setOutcomesOpen(false);
+      try {
+        const items = await fetchActionItems(id, requestContext);
+        requestContext.assertCurrent();
+        setPlanItems(items);
+        setPlanOpen(true);
+        setOutcomesOpen(false);
+      } catch {
+        if (ownerDispatchIsCurrent(requestContext)) {
+          setError("TED couldn't load that action plan. Please try again.");
+        }
+      }
     },
     [user?.id, savedIds, roleKey, handleSaveRole],
   );
 
   const togglePlanItem = useCallback(async (item: RoleActionItem) => {
+    if (!user?.id || togglingPlanItemIdsRef.current.has(item.id)) return;
+    let requestContext: OwnerDispatchLease;
+    try {
+      requestContext = captureOwnerDispatch(user.id);
+    } catch {
+      setError("Your signed-in account changed. Please try that action again.");
+      return;
+    }
     const next = item.status === "done" ? "pending" : "done";
-    setPlanItems((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: next } : p)));
-    await setActionItemStatus(item.id, next);
-  }, []);
+    const inFlight = new Set(togglingPlanItemIdsRef.current).add(item.id);
+    togglingPlanItemIdsRef.current = inFlight;
+    setTogglingPlanItemIds(inFlight);
+    try {
+      const persisted = await setActionItemStatus(
+        {
+          id: item.id,
+          expectedMutationToken: item.mutation_token,
+          status: next,
+        },
+        requestContext,
+      );
+      requestContext.assertCurrent();
+      setPlanItems((prev) =>
+        prev.map((p) => (p.id === persisted.item.id ? persisted.item : p)),
+      );
+      if (persisted.status === "revision_conflict") {
+        setError("That action changed elsewhere. The latest saved status is shown.");
+      }
+    } catch {
+      if (ownerDispatchIsCurrent(requestContext)) {
+        setError("TED couldn't update that action. Its previous status is unchanged.");
+      }
+    } finally {
+      const remaining = new Set(togglingPlanItemIdsRef.current);
+      remaining.delete(item.id);
+      togglingPlanItemIdsRef.current = remaining;
+      setTogglingPlanItemIds(remaining);
+    }
+  }, [user?.id]);
 
   /** Ensures the role is saved, then returns its id \u2014 shared by the
    * outcome and interview-prep handlers below (both need a saved_role_id). */
   const ensureSaved = useCallback(
-    async (v: EnhancedVacancy): Promise<string | null> => {
+    async (v: EnhancedVacancy, requestContext: OwnerDispatchLease): Promise<string | null> => {
+      requestContext.assertCurrent();
       const existing = savedIds[roleKey(v)];
       if (existing) return existing;
-      return handleSaveRole(v);
+      return handleSaveRole(v, requestContext);
     },
     [savedIds, roleKey, handleSaveRole],
   );
@@ -582,35 +754,69 @@ export function FindRolesScreen() {
   const openOutcomes = useCallback(
     async (v: EnhancedVacancy) => {
       if (!user?.id) return;
-      const savedId = await ensureSaved(v);
-      if (!savedId) return;
-      setOutcomeHistory(await fetchRoleOutcomes(savedId));
-      setOutcomesOpen(true);
-      setPlanOpen(false);
+      let requestContext: OwnerDispatchLease;
+      try {
+        requestContext = captureOwnerDispatch(user.id);
+      } catch {
+        setError("Your signed-in account changed. Please try that action again.");
+        return;
+      }
+      try {
+        const savedId = await ensureSaved(v, requestContext);
+        if (!savedId) return;
+        const history = await fetchRoleOutcomes(savedId, requestContext);
+        requestContext.assertCurrent();
+        setOutcomeHistory(history);
+        setOutcomesOpen(true);
+        setPlanOpen(false);
+      } catch {
+        if (ownerDispatchIsCurrent(requestContext)) {
+          setError("TED couldn't load the outcome history. Please try again.");
+        }
+      }
     },
     [user?.id, ensureSaved],
   );
 
   const submitOutcome = useCallback(
     async (v: EnhancedVacancy) => {
-      if (!user?.id || recordingOutcome) return;
-      const savedId = await ensureSaved(v);
-      if (!savedId) return;
+      if (!user?.id || recordingOutcomeRef.current) return;
+      let requestContext: OwnerDispatchLease;
+      try {
+        requestContext = captureOwnerDispatch(user.id);
+      } catch {
+        setError("Your signed-in account changed. Please try that action again.");
+        return;
+      }
+      recordingOutcomeRef.current = requestContext;
       setRecordingOutcome(true);
       try {
-        await recordRoleOutcome({
+        const savedId = await ensureSaved(v, requestContext);
+        if (!savedId) return;
+        const recorded = await recordRoleOutcome({
           userId: user.id,
           savedRoleId: savedId,
           stage: outcomeStage,
           note: outcomeNote,
-        });
-        setOutcomeHistory(await fetchRoleOutcomes(savedId));
+        }, requestContext);
+        requestContext.assertCurrent();
+        setOutcomeHistory((history) => [
+          recorded,
+          ...history.filter((entry) => entry.id !== recorded.id),
+        ]);
         setOutcomeNote("");
+      } catch {
+        if (ownerDispatchIsCurrent(requestContext)) {
+          setError("TED couldn't record that outcome. Please try again.");
+        }
       } finally {
-        setRecordingOutcome(false);
+        if (recordingOutcomeRef.current === requestContext) {
+          recordingOutcomeRef.current = null;
+          setRecordingOutcome(false);
+        }
       }
     },
-    [user?.id, recordingOutcome, ensureSaved, outcomeStage, outcomeNote],
+    [user?.id, ensureSaved, outcomeStage, outcomeNote],
   );
 
   /** Interview prep tied to this specific role: seeds TED's existing
@@ -644,9 +850,9 @@ export function FindRolesScreen() {
       window.open(applyUrl, "_blank", "noopener,noreferrer");
       return;
     }
-    // No official link found: never guess contacts, tell the user plainly.
+    // No safe source-linked page: never guess contacts, tell the user plainly.
     setError(
-      "No official apply link was found for this role. Check the employer's careers page directly.",
+      "No source-linked apply page was returned for this role. Check the employer's careers page directly.",
     );
   }, []);
 
@@ -668,6 +874,8 @@ export function FindRolesScreen() {
     searched &&
     result &&
     !result.need_more_context &&
+    result.vacancy_search?.status === "completed" &&
+    result.vacancy_search.source_linked_count === 0 &&
     listings.length === 0 &&
     roleIdeas.length === 0;
   const showResults = loading || Boolean(result);
@@ -739,8 +947,7 @@ export function FindRolesScreen() {
                     : "Upload resume"}
               </strong>
               <span>
-                PDF, DOCX, TXT, Markdown or CSV under 8MB. TED uses this as the evidence base for
-                matching.
+                {UPLOAD_REQUIREMENT} TED uses this as the evidence base for matching.
               </span>
             </span>
           </label>
@@ -851,8 +1058,8 @@ export function FindRolesScreen() {
             <div>
               <strong>Apply source rules</strong>
               <span>
-                Official links first. Public emails only. Unsure sources are marked needs
-                confirmation.
+                Source-linked pages are shown with a verification reminder. Unsure sources are
+                marked needs confirmation.
               </span>
             </div>
             <div>
@@ -878,13 +1085,26 @@ export function FindRolesScreen() {
 
       {loading && (
         <div className={styles.loading} role="status">
-          <Icon name="loader-2" /> TED is checking official and employer sources for current
+          <Icon name="loader-2" /> TED is checking government and employer sources for current
           openings...
         </div>
       )}
 
       {result && !loading && (
         <div className={styles.results}>
+          {result.vacancy_search?.status === "failed" && (
+            <div className={styles.error} role="alert">
+              <p>
+                TED could not finish checking current vacancy sources. The role ideas below are
+                still available, but this is not a zero-results finding.
+              </p>
+              {result.vacancy_search.retryable && (
+                <button type="button" className={styles.primary} onClick={() => void search()}>
+                  Retry current openings
+                </button>
+              )}
+            </div>
+          )}
           {result.need_more_context ? (
             <div className={styles.clarifyChat} aria-label="TED is asking a clarifying question">
               <div className={styles.clarifyHeader}>
@@ -1026,17 +1246,19 @@ export function FindRolesScreen() {
 
                         <h3 className={styles.detailHead}>Apply route</h3>
                         <ul className={styles.applyRoute}>
-                          {active.url ? (
+                          {safeExternalHttpUrl(active.url) &&
+                          active.source_status === "source_linked_not_independently_verified" ? (
                             <li>
-                              Official apply link: {active.source || "employer listing"}{" "}
-                              <span className={styles.sourceOfficial}>Official</span>
+                              Source-linked apply page: {active.source || "source listing"}{" "}
+                              <span className={styles.sourceUnsure}>Verify details</span>
                             </li>
                           ) : (
                             <li>
-                              No official link found{" "}
+                              No confirmed source-linked apply page{" "}
                               <span className={styles.sourceUnsure}>Needs confirmation</span>
                             </li>
                           )}
+                          <li>Verify the role details and closing status on the source site.</li>
                           <li>
                             You always apply on the source site yourself - TED never applies for
                             you.
@@ -1053,6 +1275,7 @@ export function FindRolesScreen() {
                                     <input
                                       type="checkbox"
                                       checked={item.status === "done"}
+                                      disabled={togglingPlanItemIds.has(item.id)}
                                       onChange={() => void togglePlanItem(item)}
                                     />
                                     <span
@@ -1213,8 +1436,8 @@ export function FindRolesScreen() {
                                   <span className={styles.matchStatus}>
                                     {isSaved
                                       ? "Saved to library"
-                                      : v.url
-                                        ? "Apply link found"
+                                      : safeExternalHttpUrl(v.url)
+                                        ? "Source link found"
                                         : "Needs confirmation"}
                                   </span>
                                 </button>

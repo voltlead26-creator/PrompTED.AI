@@ -5,9 +5,14 @@ import type { ConversationMessage } from "@prompted/shared/browser";
 import { resolveTemplateByRecommendationName } from "@prompted/shared/catalogue";
 import type { RecommendationItem } from "@prompted/shared/orchestration";
 import { Icon } from "@/components/atoms/Icon";
+import { useAuth } from "@/components/providers";
 import { useOutcome } from "@/hooks/useOutcome";
 import { fetchOutcome } from "@/lib/api/outcomes";
-import { loadPendingOutcome } from "@/lib/workspace-store";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+} from "@/lib/browser-principal-state";
+import { currentWorkspaceCacheScope, loadPendingOutcome } from "@/lib/workspace-store";
 import styles from "./AlternateFormats.module.css";
 
 interface AlternateFormatsProps {
@@ -52,6 +57,7 @@ function normaliseAlternatives(raw: unknown): RecommendationItem[] {
 
 export function AlternateFormats({ outcomeId }: AlternateFormatsProps) {
   const outcome = useOutcome();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<RecommendationItem[]>([]);
   const [situation, setSituation] = useState("");
@@ -63,26 +69,35 @@ export function AlternateFormats({ outcomeId }: AlternateFormatsProps) {
     let cancelled = false;
 
     async function load() {
-      const pending = loadPendingOutcome(outcomeId);
-      const saved = await fetchOutcome(outcomeId);
-      const rawAlternatives = pending?.alternateFormats ?? saved?.recommendation_payload?.alternatives ?? [];
+      const requestContext = user?.id ? captureOwnerDispatch(user.id) : null;
+      const saved = requestContext
+        ? await fetchOutcome(outcomeId, requestContext)
+        : null;
+      const pending = user
+        ? null
+        : loadPendingOutcome(currentWorkspaceCacheScope(), outcomeId);
+      const rawAlternatives = saved?.recommendation_payload?.alternatives ?? pending?.alternateFormats ?? [];
       const alternatives = normaliseAlternatives(rawAlternatives);
-      const thread = pending?.conversation ?? saved?.recommendation_payload?.conversation ?? [];
+      const thread = saved?.recommendation_payload?.conversation ?? pending?.conversation ?? [];
 
-      if (cancelled) return;
+      if (
+        cancelled ||
+        (requestContext && !ownerDispatchIsCurrent(requestContext))
+      ) return;
       setItems(alternatives);
-      setSituation(pending?.situation || saved?.situation_text || "");
+      setSituation(saved?.situation_text || pending?.situation || "");
       setConversation(thread);
       setConversationContext(
-        pending?.conversationContext ||
+        saved?.recommendation_payload?.conversation_context ||
+          pending?.conversationContext ||
           thread.map((message) => `${message.role === "ted" ? "TED" : "User"}: ${message.text}`).join("\n"),
       );
-      setUploadContext(pending?.uploadContext || saved?.recommendation_payload?.upload_context || "");
+      setUploadContext(saved?.recommendation_payload?.upload_context || pending?.uploadContext || "");
     }
 
-    void load();
+    void load().catch(() => undefined);
     return () => { cancelled = true; };
-  }, [outcomeId]);
+  }, [outcomeId, user]);
 
   if (items.length === 0) return null;
 

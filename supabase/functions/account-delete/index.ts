@@ -132,6 +132,21 @@ Deno.serve(async (req) => {
   });
 
   const gateway: AccountDeletionGateway = {
+    async beginDeletionFence(authenticatedUserId) {
+      const { data, error } = await adminClient.rpc(
+        "begin_account_deletion_fence",
+        { p_user_id: authenticatedUserId },
+      );
+      const receipt = data && typeof data === "object" && !Array.isArray(data)
+        ? data as {
+          outcome: "ready" | "blocked";
+          active_uploads?: number;
+          active_storage_dispatches?: number;
+          retry_after_seconds?: number;
+        }
+        : null;
+      return { data: receipt, error };
+    },
     async loadOwnedBusinesses(authenticatedUserId) {
       const { data, error } = await adminClient
         .from("businesses")
@@ -175,11 +190,13 @@ Deno.serve(async (req) => {
       const { error } = await adminClient.storage.from(bucket).remove(paths);
       return { error };
     },
-    async upsertDeletionAudit(record) {
+    async insertDeletionAuditIdempotently(record) {
       const { error } = await adminClient
         .from("audit_logs")
-        .upsert(record, { onConflict: "id" });
-      return { error };
+        .insert(record);
+      // The deterministic primary key makes a previous successful request
+      // safe to retry without granting UPDATE on the append-only audit log.
+      return { error: error?.code === "23505" ? null : error };
     },
     async deleteAuthUser(authenticatedUserId) {
       const { error } = await adminClient.auth.admin.deleteUser(

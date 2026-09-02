@@ -5,11 +5,17 @@
 // =====================================================
 
 import { handleOptions, jsonResponse } from "../_shared/cors.ts";
-import { guardRequest, AuthError } from "../_shared/auth-guard.ts";
+import { AuthError, guardRequest } from "../_shared/auth-guard.ts";
 import { routeRequest, USER_SAFE_ERROR } from "../_shared/provider-router.ts";
-import { buildSystemPrompt, type ClariPrefs } from "../_shared/prompt-builder.ts";
-import { parseModelJson } from "../_shared/orchestration.ts";
+import {
+  buildSystemPrompt,
+  type ClariPrefs,
+} from "../_shared/prompt-builder.ts";
 import { loadUserMemoryContext } from "../_shared/user-memory.ts";
+import {
+  EXPLAIN_OUTPUT_SCHEMA,
+  validateExplainOutput,
+} from "../_shared/model-output-contracts.ts";
 
 interface ExplainBody {
   content?: string;
@@ -20,24 +26,26 @@ interface ExplainBody {
   clari?: ClariPrefs;
 }
 
-function fallbackTitle(sectionName?: string, question?: string): string {
-  return sectionName?.trim() || question?.trim() || "TED explanation";
-}
-
 Deno.serve(async (req) => {
   const options = handleOptions(req);
   if (options) return options;
   const origin = req.headers.get("origin");
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: { message: "Method not allowed" } }, 405, origin);
+    return jsonResponse(
+      { error: { message: "Method not allowed" } },
+      405,
+      origin,
+    );
   }
 
   let auth;
   try {
     auth = await guardRequest(req, { enforceCap: false });
   } catch (err) {
-    if (err instanceof AuthError) return jsonResponse(err.payload, err.status, origin);
+    if (err instanceof AuthError) {
+      return jsonResponse(err.payload, err.status, origin);
+    }
     return jsonResponse(USER_SAFE_ERROR, 500, origin);
   }
 
@@ -49,7 +57,11 @@ Deno.serve(async (req) => {
     const sectionName = String(body.section_name ?? "").slice(0, 200).trim();
 
     if (!content && !selection) {
-      return jsonResponse({ error: { message: "content is required" } }, 400, origin);
+      return jsonResponse(
+        { error: { message: "content is required" } },
+        400,
+        origin,
+      );
     }
 
     const memory = auth.userId === "anonymous"
@@ -59,7 +71,8 @@ Deno.serve(async (req) => {
       task: "explain",
       domain: body.domain as never,
       clari: body.clari,
-      profileHint: [sectionName, question, selection || content].filter(Boolean).join("\n\n"),
+      profileHint: [sectionName, question, selection || content].filter(Boolean)
+        .join("\n\n"),
       extra: memory,
     });
 
@@ -75,29 +88,23 @@ Deno.serve(async (req) => {
 
     const result = await routeRequest({
       task: "explain",
+      logicalStageKey: "explain-section.primary",
+      outputSchema: EXPLAIN_OUTPUT_SCHEMA,
       systemPrompt,
       messages: [{ role: "user", content: userContent }],
       maxTokens: 1800,
       signal: req.signal,
     });
 
-    const parsed = parseModelJson(result.text);
-    if (parsed && typeof parsed === "object") {
-      return jsonResponse(parsed, 200, origin);
+    try {
+      return jsonResponse(
+        validateExplainOutput(result.structured),
+        200,
+        origin,
+      );
+    } catch {
+      return jsonResponse(USER_SAFE_ERROR, 502, origin);
     }
-
-    return jsonResponse(
-      {
-        title: fallbackTitle(sectionName, question),
-        plain_english: result.text.trim() || "TED couldn't generate an explanation just now.",
-        why_it_matters: [],
-        what_to_watch: [],
-        missing_or_risky: [],
-        suggested_next_step: null,
-      },
-      200,
-      origin,
-    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown";
     const isAbort = /abort|timeout/i.test(message);

@@ -32,7 +32,9 @@ export function allowedOriginsForEnvironment(
         parsed.search ||
         parsed.hash
       ) {
-        throw new Error("ALLOWED_ORIGINS must contain exact HTTP(S) origins only.");
+        throw new Error(
+          "ALLOWED_ORIGINS must contain exact HTTP(S) origins only.",
+        );
       }
       return parsed.origin;
     });
@@ -63,7 +65,7 @@ export function corsHeaders(origin: string | null): HeadersInit {
   const headers: Record<string, string> = {
     ...privateResponseHeaders(),
     "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
+      "authorization, x-client-info, apikey, content-type, x-idempotency-key, x-request-id",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
   };
   if (origin && allowed.includes(origin)) {
@@ -83,7 +85,9 @@ export function rejectForbiddenOrigin(req: Request): Response | null {
   const allowed = getAllowedOrigins();
   if (!allowed.includes(origin)) {
     return new Response(
-      JSON.stringify({ error: { code: "FORBIDDEN_ORIGIN", message: "Origin not allowed." } }),
+      JSON.stringify({
+        error: { code: "FORBIDDEN_ORIGIN", message: "Origin not allowed." },
+      }),
       {
         status: 403,
         headers: {

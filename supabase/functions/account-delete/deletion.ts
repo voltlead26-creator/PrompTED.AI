@@ -1,6 +1,9 @@
 import { enumerateStoragePrefix, type StorageList } from "./assets.ts";
 
-export type StorageBucket = "assets" | "original-documents";
+export type StorageBucket =
+  | "assets"
+  | "original-documents"
+  | "captured-exports";
 
 export interface QueryResult<T> {
   data: T | null;
@@ -22,6 +25,15 @@ export interface AccountDeletionGateway {
     businessIds: string[],
     userId: string,
   ): Promise<QueryResult<Array<{ business_id: unknown; user_id: unknown }>>>;
+  beginDeletionFence(userId: string): Promise<
+    QueryResult<{
+      outcome: "ready" | "blocked";
+      active_uploads?: number;
+      active_storage_dispatches?: number;
+      active_external_egress?: number;
+      retry_after_seconds?: number;
+    }>
+  >;
   listStorage: (
     bucket: StorageBucket,
     ...args: Parameters<StorageList>
@@ -30,7 +42,7 @@ export interface AccountDeletionGateway {
     bucket: StorageBucket,
     paths: string[],
   ): Promise<{ error: unknown | null }>;
-  upsertDeletionAudit(
+  insertDeletionAuditIdempotently(
     record: DeletionAuditRecord,
   ): Promise<{ error: unknown | null }>;
   deleteAuthUser(userId: string): Promise<{ error: unknown | null }>;
@@ -52,6 +64,7 @@ export interface AccountDeletionProgress {
 export type AccountDeletionFailureCode =
   | "BUSINESS_TRANSFER_REQUIRED"
   | "DELETION_PREFLIGHT_FAILED"
+  | "ACTIVE_STORAGE_OPERATION"
   | "STORAGE_DELETION_FAILED"
   | "AUDIT_RECORD_FAILED"
   | "AUTH_DELETION_FAILED";
@@ -176,6 +189,7 @@ async function preflightTargets(
       paths: [] as string[],
     })),
     { bucket: "original-documents", rootPrefix: userId, paths: [] },
+    { bucket: "captured-exports", rootPrefix: userId, paths: [] },
   ];
 
   for (const target of targets) {
@@ -403,6 +417,38 @@ export async function deleteAccountData(
   if (initialScope.failure) return initialScope.failure;
   const businessIds = initialScope.businessIds;
 
+  const preMutationScope = await loadDeletionScope(userId, gateway, 0);
+  if (preMutationScope.failure) return preMutationScope.failure;
+  if (!sameBusinessScope(businessIds, preMutationScope.businessIds)) {
+    return changedScopeFailure(0);
+  }
+
+  let fence: Awaited<ReturnType<AccountDeletionGateway["beginDeletionFence"]>>;
+  try {
+    fence = await gateway.beginDeletionFence(userId);
+  } catch {
+    return failure(
+      "DELETION_PREFLIGHT_FAILED",
+      "Account deletion could not establish its safety fence.",
+      progress("not_started", 0),
+    );
+  }
+  if (fence.error || !fence.data) {
+    return failure(
+      "DELETION_PREFLIGHT_FAILED",
+      "Account deletion could not establish its safety fence.",
+      progress("not_started", 0),
+    );
+  }
+  if (fence.data.outcome === "blocked") {
+    return failure(
+      "ACTIVE_STORAGE_OPERATION",
+      "An admitted file operation is still finishing. Retry this exact deletion shortly.",
+      progress("not_started", 0),
+      { status: 409, retryable: true },
+    );
+  }
+
   let targets: StorageTarget[];
   try {
     targets = await preflightTargets(gateway, businessIds, userId);
@@ -412,12 +458,6 @@ export async function deleteAccountData(
       "Stored files could not be verified for deletion.",
       progress("not_started", 0),
     );
-  }
-
-  const preMutationScope = await loadDeletionScope(userId, gateway, 0);
-  if (preMutationScope.failure) return preMutationScope.failure;
-  if (!sameBusinessScope(businessIds, preMutationScope.businessIds)) {
-    return changedScopeFailure(0);
   }
 
   const storage = await drainStorageTargets(gateway, targets);
@@ -436,7 +476,7 @@ export async function deleteAccountData(
   const auditId = await accountDeletionAuditId(userId);
   let auditResult: { error: unknown | null };
   try {
-    auditResult = await gateway.upsertDeletionAudit({
+    auditResult = await gateway.insertDeletionAuditIdempotently({
       id: auditId,
       user_id: userId,
       // This durable record is written before the auth boundary, so it must

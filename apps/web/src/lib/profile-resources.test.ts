@@ -2,19 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getProfileResourceAvailability,
   normaliseProfileDetails,
-  ProfileResourceError,
   saveProfileDetails,
   type ProfileResourceSnapshot,
 } from "./profile-resources";
+import { testOwnerDispatchLease } from "@/test/owner-dispatch-lease";
 
-const { createClient, getSession, refreshSession, rpc } = vi.hoisted(() => ({
-  createClient: vi.fn(),
-  getSession: vi.fn(),
-  refreshSession: vi.fn(),
+const { withOwnerSupabase, rpc } = vi.hoisted(() => ({
+  withOwnerSupabase: vi.fn(),
   rpc: vi.fn(),
 }));
 
-vi.mock("@/lib/supabase/client", () => ({ createClient }));
+vi.mock("@/lib/supabase/owner-client", () => ({ withOwnerSupabase }));
 
 const EMPTY_DETAILS = {
   fullName: "",
@@ -101,30 +99,23 @@ describe("profile-resources", () => {
 
 describe("saveProfileDetails", () => {
   beforeEach(() => {
-    createClient.mockReset();
-    getSession.mockReset();
-    refreshSession.mockReset();
+    withOwnerSupabase.mockReset();
     rpc.mockReset();
-    createClient.mockReturnValue({
-      auth: { getSession, refreshSession },
-      rpc,
-    });
+    withOwnerSupabase.mockImplementation(async (_lease, operation) =>
+      operation({ rpc }),
+    );
   });
 
-  it("saves using the cached session directly when it is not near expiry, without a live server round trip", async () => {
-    getSession.mockResolvedValue({
-      data: {
-        session: {
-          user: { id: "user-1", email: "kai@example.com" },
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-        },
-      },
-    });
+  it("saves through the exact immutable owner transport", async () => {
     rpc.mockResolvedValue({ error: null });
+    const lease = testOwnerDispatchLease("user-1");
 
-    await saveProfileDetails({ ...EMPTY_DETAILS, fullName: "Kai Churchward" });
+    await saveProfileDetails(
+      { ...EMPTY_DETAILS, fullName: "Kai Churchward" },
+      lease,
+    );
 
-    expect(refreshSession).not.toHaveBeenCalled();
+    expect(withOwnerSupabase).toHaveBeenCalledWith(lease, expect.any(Function));
     expect(rpc).toHaveBeenCalledWith("update_own_profile_details", {
       p_display_name: "Kai Churchward",
       p_full_name: "Kai Churchward",
@@ -140,50 +131,22 @@ describe("saveProfileDetails", () => {
     });
   });
 
-  it("refreshes an expiring session before saving", async () => {
-    getSession.mockResolvedValue({
-      data: {
-        session: {
-          user: { id: "stale-user" },
-          expires_at: Math.floor(Date.now() / 1000) - 5,
-        },
-      },
-    });
-    refreshSession.mockResolvedValue({
-      data: { session: { user: { id: "user-1", email: "kai@example.com" }, expires_at: Math.floor(Date.now() / 1000) + 3600 } },
-      error: null,
-    });
-    rpc.mockResolvedValue({ error: null });
-
-    await saveProfileDetails({ ...EMPTY_DETAILS, fullName: "Kai Churchward" });
-
-    expect(refreshSession).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledTimes(1);
-  });
-
-  it("throws a sign-in error rather than silently failing when there is no session", async () => {
-    getSession.mockResolvedValue({ data: { session: null } });
-    refreshSession.mockResolvedValue({ data: { session: null }, error: new Error("no session") });
-
+  it("does not reach the RPC when the owner transport rejects", async () => {
+    withOwnerSupabase.mockRejectedValue(new Error("owner changed"));
     await expect(
-      saveProfileDetails({ ...EMPTY_DETAILS, fullName: "Kai Churchward" }),
-    ).rejects.toThrow(ProfileResourceError);
+      saveProfileDetails(
+        { ...EMPTY_DETAILS, fullName: "Kai Churchward" },
+        testOwnerDispatchLease("user-1"),
+      ),
+    ).rejects.toThrow("owner changed");
     expect(rpc).not.toHaveBeenCalled();
   });
 
   it("surfaces an RPC rejection without silently changing protected fields", async () => {
-    getSession.mockResolvedValue({
-      data: {
-        session: {
-          user: { id: "user-1", email: "kai@example.com" },
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-        },
-      },
-    });
     rpc.mockResolvedValue({ error: new Error("rejected") });
 
-    await expect(saveProfileDetails(EMPTY_DETAILS)).rejects.toThrow(
-      "Your Profile couldn't be saved",
-    );
+    await expect(
+      saveProfileDetails(EMPTY_DETAILS, testOwnerDispatchLease("user-1")),
+    ).rejects.toThrow("Your Profile couldn't be saved");
   });
 });

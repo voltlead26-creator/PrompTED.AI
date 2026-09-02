@@ -2,6 +2,8 @@
 
 import {
   generateDocumentStream,
+  type GenerateDocumentInput,
+  type ApiRequestContext,
   type DocumentDraftSectionEvent,
   type DocumentSectionEvent,
   type MissingInfoEvent,
@@ -339,8 +341,11 @@ export async function streamInitialDraft(params: {
   outcomeId: string;
   state: WorkspaceDocumentState;
   pending: PendingOutcome | null;
-  generationRequestId?: string;
+  generationRequestId:
+    | string
+    | ((input: Omit<GenerateDocumentInput, "generation_request_id">) => Promise<string>);
   signal?: AbortSignal;
+  requestContext: ApiRequestContext;
   onSection: (event: DocumentSectionEvent) => void;
   onDraftSection?: (event: DocumentDraftSectionEvent) => void;
   onMissingInfo?: (event: MissingInfoEvent) => void;
@@ -394,27 +399,31 @@ export async function streamInitialDraft(params: {
     };
   });
 
+  const generationInput: Omit<GenerateDocumentInput, "generation_request_id"> = {
+    template_id: defaults.templateId ?? defaults.templateName,
+    situation,
+    conversation_context: generationConversationContext,
+    upload_context: uploadContext,
+    upload_id: defaults.uploadId,
+    sections,
+    domain: template?.domain,
+    structure_type: template?.structure_type,
+    advice_boundary: template?.advice_boundary,
+    design_bespoke: !template,
+    document_name: defaults.templateName,
+  };
+  const generationRequestId = typeof params.generationRequestId === "function"
+    ? await params.generationRequestId(generationInput)
+    : params.generationRequestId;
+
   await generateDocumentStream(
-    {
-      template_id: defaults.templateId ?? defaults.templateName,
-      situation,
-      conversation_context: generationConversationContext,
-      upload_context: uploadContext,
-      upload_id: defaults.uploadId,
-      sections,
-      domain: template?.domain,
-      structure_type: template?.structure_type,
-      advice_boundary: template?.advice_boundary,
-      design_bespoke: !template,
-      document_name: defaults.templateName,
-      generation_request_id: params.generationRequestId,
-    },
+    { ...generationInput, generation_request_id: generationRequestId },
     (event) => {
       if (validateFinishedSection(event.content).valid) {
         params.onSection(event);
       }
     },
-    params.signal,
+    params.requestContext,
     undefined,
     params.onMissingInfo,
     params.onUnresolvedPlaceholders,

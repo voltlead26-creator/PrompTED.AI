@@ -19,7 +19,7 @@ describe("initAnalytics", () => {
     delete process.env.NEXT_PUBLIC_POSTHOG_SESSION_RECORDING;
   });
 
-  it("disables session recording by default and masks all inputs", async () => {
+  it("disables session recording by default and sets its sample rate to zero", async () => {
     const { initAnalytics } = await import("./analytics");
     initAnalytics();
 
@@ -28,12 +28,15 @@ describe("initAnalytics", () => {
       expect.objectContaining({
         autocapture: false,
         disable_session_recording: true,
-        session_recording: expect.objectContaining({ maskAllInputs: true }),
+        session_recording: expect.objectContaining({
+          sampleRate: 0,
+          maskAllInputs: true,
+        }),
       }),
     );
   });
 
-  it("enables masked session recording only through an explicit flag", async () => {
+  it("keeps session recording disabled even when the public flag requests it", async () => {
     process.env.NEXT_PUBLIC_POSTHOG_SESSION_RECORDING = "true";
     const { initAnalytics } = await import("./analytics");
     initAnalytics();
@@ -41,8 +44,11 @@ describe("initAnalytics", () => {
     expect(init).toHaveBeenCalledWith(
       "ph_test",
       expect.objectContaining({
-        disable_session_recording: false,
-        session_recording: expect.objectContaining({ maskAllInputs: true }),
+        disable_session_recording: true,
+        session_recording: expect.objectContaining({
+          sampleRate: 0,
+          maskAllInputs: true,
+        }),
       }),
     );
   });

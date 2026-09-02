@@ -3,6 +3,9 @@ project_id = "jjsykocqpjlekgsbylkd"
 [auth]
 enable_anonymous_sign_ins = false
 
+[edge_runtime]
+policy = "per_worker"
+
 [functions.openai-responses]
 enabled = false
 verify_jwt = true
@@ -43,7 +46,15 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+[functions.extract-upload]
+enabled = true
+verify_jwt = false
+
 [functions.ingest-upload]
+enabled = true
+verify_jwt = false
+
+[functions.brand-logo]
 enabled = true
 verify_jwt = false
 

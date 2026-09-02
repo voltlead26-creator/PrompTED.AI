@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import type { ConversationMessage, RecommendationPayload } from "@prompted/shared/browser";
 import type { RecommendationItem } from "@prompted/shared/orchestration";
 import { useAuth } from "@/components/providers";
+import {
+  commitHomeUploadIntake,
+  HomeUploadIntakeError,
+  reconcileHomeUploadIntakeCommit,
+} from "@/lib/api/home-intakes";
 import { upsertOutcome } from "@/lib/api/outcomes";
+import { captureOwnerDispatch } from "@/lib/browser-principal-state";
+import { currentWorkspaceCacheScope, savePendingOutcome } from "@/lib/workspace-store";
 
 export interface ConfirmOutcomeParams {
   situation: string;
@@ -16,6 +23,13 @@ export interface ConfirmOutcomeParams {
   uploadId?: string;
   conversation?: ConversationMessage[];
   alternateFormats?: RecommendationItem[];
+  /** Explicit durable Home checkpoint. Other upload callers retain the legacy path. */
+  homeUploadIntake?: {
+    intakeId: string;
+    uploadId: string;
+    expectedRevision: number;
+    confirmedText: string;
+  };
 }
 
 export interface UseOutcome {
@@ -94,38 +108,85 @@ export function useOutcome(): UseOutcome {
 
   const confirm = useCallback(
     async (params: ConfirmOutcomeParams) => {
-      const id =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `outcome-${Date.now()}`;
+      const userId = user?.id;
+      if (!userId) {
+        throw new Error("Sign in again before starting this outcome.");
+      }
+      const requestContext = captureOwnerDispatch(userId);
 
       const catalogue = await import("@prompted/shared/catalogue");
+      requestContext.assertCurrent();
       const template = resolveConfirmedTemplate(catalogue, params.templateName, params.templateId);
       const resolvedParams: ConfirmOutcomeParams = {
         ...params,
         templateName: template?.name ?? params.templateName,
         templateId: template?.slug ?? template?.id ?? params.templateId,
       };
+      const recommendationPayload = buildRecommendationPayload(catalogue, resolvedParams);
+      let id: string;
+      let persistedParams = resolvedParams;
 
-      try {
-        sessionStorage.setItem(`prompted:pending:${id}`, JSON.stringify(resolvedParams));
-      } catch {
-        // sessionStorage may be unavailable.
+      if (resolvedParams.homeUploadIntake) {
+        if (
+          !resolvedParams.uploadId ||
+          resolvedParams.uploadId !== resolvedParams.homeUploadIntake.uploadId
+        ) {
+          throw new Error("HOME_UPLOAD_INTAKE_CONTEXT_MISMATCH");
+        }
+        const commitInput = {
+          intakeId: resolvedParams.homeUploadIntake.intakeId,
+          uploadId: resolvedParams.homeUploadIntake.uploadId,
+          expectedRevision: resolvedParams.homeUploadIntake.expectedRevision,
+          confirmedText: resolvedParams.homeUploadIntake.confirmedText,
+          situation: resolvedParams.situation || resolvedParams.templateName,
+          recommendationPayload,
+        };
+        let receipt: Awaited<ReturnType<typeof commitHomeUploadIntake>>;
+        try {
+          receipt = await commitHomeUploadIntake(commitInput, requestContext);
+        } catch (error) {
+          if (!(error instanceof HomeUploadIntakeError) || !error.ambiguous) throw error;
+          try {
+            receipt = await reconcileHomeUploadIntakeCommit(commitInput, requestContext);
+            requestContext.assertCurrent();
+          } catch {
+            requestContext.assertCurrent();
+            throw error;
+          }
+        }
+        requestContext.assertCurrent();
+        id = receipt.outcomeId;
+        persistedParams = {
+          ...resolvedParams,
+          situation: receipt.situation,
+          templateId: receipt.templateId,
+          templateName: receipt.templateName,
+          conversationContext: receipt.conversationContext,
+          uploadContext: receipt.uploadContext,
+          uploadId: receipt.uploadId,
+        };
+      } else {
+        id =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `outcome-${Date.now()}`;
+        await upsertOutcome(
+          {
+            id,
+            user_id: userId,
+            situation_text: resolvedParams.situation || resolvedParams.templateName,
+            recommendation_payload: recommendationPayload,
+            status: "in_progress",
+          },
+          requestContext,
+        );
       }
+      requestContext.assertCurrent();
+      savePendingOutcome(currentWorkspaceCacheScope(userId), id, persistedParams);
 
-      const userId = user?.id;
-      if (userId) {
-        await upsertOutcome({
-          id,
-          user_id: userId,
-          situation_text: resolvedParams.situation || resolvedParams.templateName,
-          recommendation_payload: buildRecommendationPayload(catalogue, resolvedParams),
-          status: "in_progress",
-        });
-      }
-
+      requestContext.assertCurrent();
       router.push(
-        isInteractivePlan(resolvedParams) ? `/outcomes/${id}/checklist` : `/outcomes/${id}`,
+        isInteractivePlan(persistedParams) ? `/outcomes/${id}/checklist` : `/outcomes/${id}`,
       );
       return id;
     },

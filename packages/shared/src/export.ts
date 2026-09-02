@@ -88,15 +88,25 @@ function safeHeadingColour(value: string | null | undefined): string {
 function safeBrandLogoUrl(
   value: string | null | undefined,
   trustedAssetOrigin: string | undefined,
+  businessId: string | null | undefined,
 ): string | null {
-  if (!value || !trustedAssetOrigin) return null;
+  if (!value || !trustedAssetOrigin || !businessId) return null;
   try {
     const candidate = new URL(value);
     const trusted = new URL(trustedAssetOrigin);
-    if (candidate.origin !== trusted.origin) return null;
-    if (!candidate.pathname.startsWith("/storage/v1/object/public/assets/brand-kits/")) {
+    if (
+      candidate.origin !== trusted.origin ||
+      candidate.username !== "" ||
+      candidate.password !== "" ||
+      candidate.search !== "" ||
+      candidate.hash !== ""
+    ) {
       return null;
     }
+    const match = candidate.pathname.match(
+      /^\/storage\/v1\/object\/public\/assets\/brand-kits\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:logo\.(?:png|jpg|webp)|logos\/[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:png|jpg|webp))$/i,
+    );
+    if (!match || match[1]?.toLowerCase() !== businessId.toLowerCase()) return null;
     return candidate.href;
   } catch {
     return null;
@@ -145,7 +155,11 @@ export function buildExportHtml(input: ExportDocumentInput): string {
   const brand = input.brandKit;
   const headingColour = safeHeadingColour(brand?.primary_colour);
 
-  const logoUrl = safeBrandLogoUrl(brand?.logo_url, input.trustedAssetOrigin);
+  const logoUrl = safeBrandLogoUrl(
+    brand?.logo_url,
+    input.trustedAssetOrigin,
+    brand?.business_id,
+  );
   const logo = logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="" />` : "";
   const footer = brand?.footer_text
     ? `<footer class="footer">${escapeHtml(brand.footer_text)}</footer>`

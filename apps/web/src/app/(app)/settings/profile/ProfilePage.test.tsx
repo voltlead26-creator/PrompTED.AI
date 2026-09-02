@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProfileResourceSnapshot } from "@/lib/profile-resources";
+import { recordBrowserPrincipal } from "@/lib/browser-principal-state";
 import ProfilePage from "./page";
 
 const mocks = vi.hoisted(() => ({
@@ -92,6 +93,7 @@ const withResumes: ProfileResourceSnapshot = {
 
 describe("ProfilePage", () => {
   beforeEach(() => {
+    recordBrowserPrincipal("user-1");
     vi.clearAllMocks();
     mocks.authLoading = false;
     mocks.fetchProfileResources.mockResolvedValue(baseSnapshot);
@@ -100,6 +102,8 @@ describe("ProfilePage", () => {
     mocks.restorePreviousResume.mockResolvedValue(undefined);
     mocks.createResumeDownloadUrl.mockResolvedValue("https://example.com/resume");
   });
+
+  afterEach(() => recordBrowserPrincipal(undefined));
 
   it("keeps the Profile destination labelled while authentication loads", () => {
     mocks.authLoading = true;
@@ -144,6 +148,11 @@ describe("ProfilePage", () => {
     await waitFor(() =>
       expect(mocks.saveProfileDetails).toHaveBeenCalledWith(
         expect.objectContaining({ phone: "0411111111", email: "kai@example.com" }),
+        expect.objectContaining({
+          expectedUserId: "user-1",
+          signal: expect.any(AbortSignal),
+          assertCurrent: expect.any(Function),
+        }),
       ),
     );
     await waitFor(() => expect(screen.getByText("Profile up to date")).toBeInTheDocument());
@@ -155,13 +164,38 @@ describe("ProfilePage", () => {
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(["resume"], "Kai Resume.pdf", { type: "application/pdf" });
     fireEvent.change(fileInput, { target: { files: [file] } });
-    await waitFor(() => expect(mocks.uploadMasterResume).toHaveBeenCalledWith(file));
+    await waitFor(() => expect(mocks.uploadMasterResume).toHaveBeenCalledWith(
+      file,
+      expect.objectContaining({
+        expectedUserId: "user-1",
+        signal: expect.any(AbortSignal),
+        assertCurrent: expect.any(Function),
+      }),
+    ));
     await waitFor(() => expect(mocks.fetchProfileResources).toHaveBeenCalledTimes(2));
     // Regression: the API client must be configured (so ingestUpload actually
     // attaches an Authorization header) before the upload is attempted —
     // this page previously never called it, so uploads silently went out
     // unauthenticated and the server rejected them with a bare 401.
     expect(mocks.ensureApiConfigured).toHaveBeenCalled();
+  });
+
+  it("rejects oversized text before changing the saved resume workflow", async () => {
+    const { container } = render(<ProfilePage />);
+    await screen.findByText("No Current resume saved");
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).toHaveAttribute("accept", expect.stringContaining(".xlsx"));
+    const oversized = new File(["not read"], "resume.md", { type: "text/markdown" });
+    Object.defineProperty(oversized, "size", { value: 1024 * 1024 + 1 });
+
+    fireEvent.change(input!, { target: { files: [oversized] } });
+
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith({
+      message: "TXT, Markdown and CSV files need to be 1MB or smaller.",
+      tone: "error",
+    }));
+    expect(mocks.uploadMasterResume).not.toHaveBeenCalled();
+    expect(mocks.fetchProfileResources).toHaveBeenCalledTimes(1);
   });
 
   it("renders Current and Previous resume resources with explicit restore confirmation", async () => {

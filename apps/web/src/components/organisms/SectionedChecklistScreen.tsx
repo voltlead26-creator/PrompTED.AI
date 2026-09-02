@@ -50,12 +50,21 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
 
   const selectedItem = checklist.items.find((item) => item.id === selectedItemId) ?? checklist.items[0] ?? null;
   const selectedParsed = selectedItem ? splitItem(selectedItem.text) : null;
+  const selectedItemSaving = selectedItem ? checklist.isSavingItem(selectedItem.id) : false;
 
   if (checklist.loading) return <Spinner label="Loading plan" />;
+  if (checklist.error) {
+    return (
+      <div role="alert">
+        <p>{checklist.error}</p>
+        <button type="button" onClick={() => void checklist.retry()}>Try again</button>
+      </div>
+    );
+  }
   if (!checklist.items.length) return <p>No checklist items were generated.</p>;
 
   async function requestEdit(action: EditAction, instruction?: string) {
-    if (!selectedItem || !selectedParsed || pending) return;
+    if (!selectedItem || !selectedParsed || pending || selectedItemSaving) return;
     const result = await editor.run({ action, content: selectedParsed.text, instruction });
     if (!result?.content.trim()) return;
     setPending({
@@ -70,9 +79,14 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
   }
 
   async function applyChange() {
-    if (!pending) return;
-    await checklist.updateText(pending.itemId, `${pending.section}${SEP}${pending.suggested}`);
-    setPending(null);
+    if (!pending || checklist.isSavingItem(pending.itemId)) return;
+    try {
+      await checklist.updateText(pending.itemId, `${pending.section}${SEP}${pending.suggested}`);
+      setPending(null);
+    } catch {
+      // The hook exposes exact reconciliation or unconfirmed-save truth.
+      // Keep the review open so the user does not lose the proposed wording.
+    }
   }
 
   function retryChange() {
@@ -107,6 +121,7 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
                         checked={item.done}
                         label={item.done ? `Mark ${label} as not done` : `Mark ${label} as done`}
                         onToggle={() => void checklist.toggleDone(item.id)}
+                        disabled={checklist.isSavingItem(item.id)}
                       />
                       <button type="button" className={styles.selectItem} aria-pressed={selected} onClick={() => setSelectedItemId(item.id)}>
                         <span className={item.done ? styles.complete : ""}>{label}</span>
@@ -122,6 +137,7 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
                           onDiscard={() => setPending(null)}
                           onRetry={retryChange}
                           onApply={() => void applyChange()}
+                          busy={checklist.isSavingItem(item.id)}
                         />
                       </div>
                     )}
@@ -134,13 +150,13 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
       </div>
 
       <div className={styles.contextBar} role="toolbar" aria-label="Edit selected checklist item">
-        <button type="button" onClick={() => void requestEdit("expand")} disabled={!selectedItem || editor.streaming || Boolean(pending)}>
+        <button type="button" onClick={() => void requestEdit("expand")} disabled={!selectedItem || selectedItemSaving || editor.streaming || Boolean(pending)}>
           <Icon name="arrows-maximize" size={17} />Expand
         </button>
-        <button type="button" onClick={() => void requestEdit("shorten")} disabled={!selectedItem || editor.streaming || Boolean(pending)}>
+        <button type="button" onClick={() => void requestEdit("shorten")} disabled={!selectedItem || selectedItemSaving || editor.streaming || Boolean(pending)}>
           <Icon name="arrows-minimize" size={17} />Shorten
         </button>
-        <button type="button" className={styles.primary} onClick={() => setShowTEdit(true)} disabled={!selectedItem || Boolean(pending)} aria-expanded={showTEdit}>
+        <button type="button" className={styles.primary} onClick={() => setShowTEdit(true)} disabled={!selectedItem || selectedItemSaving || Boolean(pending)} aria-expanded={showTEdit}>
           <Icon name="sparkles" size={17} />tEdit
         </button>
       </div>
@@ -161,7 +177,8 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
         </aside>
       )}
 
-      {checklist.savingItemId && <span className={styles.saving} aria-live="polite">Saving change…</span>}
+      {checklist.saveError && <span className={styles.saving} role="status" aria-live="polite">{checklist.saveError}</span>}
+      {checklist.savingItemIds.length > 0 && <span className={styles.saving} role="status" aria-live="polite">Saving change…</span>}
     </section>
   );
 }

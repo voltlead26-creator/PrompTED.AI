@@ -42,8 +42,8 @@ export function UploadAnalysisPanel({
           <h2 className={styles.title}>I can build your {documentName} now</h2>
         </div>
         <p className={styles.lede}>
-          To make it noticeably stronger, you could add a few things first. TED weaves
-          anything you upload into the document — or you can build straight away.
+          To make it noticeably stronger, you can add one supporting file first. TED binds
+          that exact source to this draft — or you can build straight away.
         </p>
 
         <ul className={styles.list}>
@@ -82,7 +82,7 @@ export function UploadAnalysisPanel({
             loadingLabel="Reading"
             leadingIcon={<Icon name="plus" size={16} />}
           >
-            Upload a file
+            {hasUploads ? "Replace file" : "Upload a file"}
           </Button>
           <Button variant="primary" onClick={onBuild} disabled={busy}>
             {hasUploads ? "Build with these" : "Build now"}
@@ -91,7 +91,8 @@ export function UploadAnalysisPanel({
         </div>
 
         <p className={styles.skip}>
-          Uploading is optional — you can build now and add more later.
+          Uploading is optional. You can replace this source before building or add confirmed
+          details in the editor later.
         </p>
 
         {children}

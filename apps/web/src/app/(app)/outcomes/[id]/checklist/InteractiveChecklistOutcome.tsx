@@ -2,28 +2,27 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { generateArtifactStream, generateChecklist } from "@prompted/shared/api-client";
+import { ApiError, generateArtifactStream, generateChecklist } from "@prompted/shared/api-client";
 import type { ChecklistItemResult } from "@prompted/shared/orchestration";
 import { ArtifactActionScreen } from "@/components/organisms/ArtifactActionScreen";
 import { AlternateFormats } from "@/components/organisms/AlternateFormats";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { useAuth } from "@/components/providers";
-import { createClient } from "@/lib/supabase/client";
 import { ensureApiConfigured } from "@/lib/api";
+import { captureOwnerDispatch, ownerDispatchIsCurrent } from "@/lib/browser-principal-state";
 import { fetchOutcome, updateOutcome } from "@/lib/api/outcomes";
-import { fetchArtifactByOutcome, saveArtifact } from "@/lib/api/artifacts";
-import { loadPendingOutcome } from "@/lib/workspace-store";
+import { replaceOwnChecklist } from "@/lib/api/checklists";
+import { createOrReplayArtifact, fetchArtifactByOutcome } from "@/lib/api/artifacts";
+import { withOwnerSupabase } from "@/lib/supabase/owner-client";
+import {
+  currentWorkspaceCacheScope,
+  deterministicGenerationEntityId,
+  resolveGenerationRequestIdentity,
+} from "@/lib/workspace-store";
 import styles from "./InteractiveChecklistOutcome.module.css";
 
 const SECTION_SEPARATOR = "␟";
-const guestKey = (outcomeId: string) => `prompted:guest-checklist:${outcomeId}`;
-const guestSavedKey = (outcomeId: string) => `prompted:guest-checklist-saved:${outcomeId}`;
-
-function makeId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function normaliseDueDate(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -37,136 +36,238 @@ function encodeSection(item: ChecklistItemResult): string {
 
 export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }) {
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id;
   const [title, setTitle] = useState("Your action plan");
-  const [ready, setReady] = useState(false);
+  const [preparationState, setPreparationState] = useState<"loading" | "ready" | "failed">(
+    "loading",
+  );
+  const [preparationAttempt, setPreparationAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const startedRef = useRef(false);
+  const preparationAttemptRef = useRef(0);
 
   useEffect(() => {
-    if (authLoading || startedRef.current) return;
-    startedRef.current = true;
+    if (authLoading) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const attempt = preparationAttemptRef.current + 1;
+    preparationAttemptRef.current = attempt;
+    setPreparationState("loading");
+    setError(null);
 
     async function prepare() {
-      const pending = loadPendingOutcome(outcomeId);
-      const outcome = await fetchOutcome(outcomeId);
-      setTitle(
-        pending?.templateName ||
-        outcome?.recommendation_payload?.primary?.reason ||
-        "Your action plan",
-      );
-      setSaved(Boolean(outcome?.is_saved));
-
-      const v2Artifact = user ? await fetchArtifactByOutcome(outcomeId) : null;
-      if (v2Artifact) {
-        setReady(true);
-        return;
-      }
-
-      if (!user) {
-        try {
-          setSaved(window.localStorage.getItem(guestSavedKey(outcomeId)) === "true");
-          const existing = window.localStorage.getItem(guestKey(outcomeId));
-          if (existing) {
-            setReady(true);
-            return;
-          }
-        } catch {
-          // Continue and regenerate if local storage is unavailable.
-        }
-      } else {
-        const supabase = createClient();
-        const { count } = await supabase
-          .from("checklist_items")
-          .select("id", { count: "exact", head: true })
-          .eq("outcome_id", outcomeId);
-
-        if ((count ?? 0) > 0) {
-          setReady(true);
+      let requestContext: ReturnType<typeof captureOwnerDispatch> | null = null;
+      try {
+        if (!userId) {
+          setError("Sign in again before TED builds this plan.");
+          setPreparationState("failed");
           return;
         }
-      }
+        requestContext = captureOwnerDispatch(userId, controller.signal);
+        const cacheScope = currentWorkspaceCacheScope(userId);
+        const outcome = await fetchOutcome(outcomeId, requestContext);
+        requestContext.assertCurrent();
+        if (!outcome) throw new Error("OUTCOME_NOT_FOUND");
+        setTitle(outcome.recommendation_payload?.primary?.reason || "Your action plan");
+        setSaved(Boolean(outcome.is_saved));
 
-      const situation = [
-        outcome?.situation_text,
-        pending?.situation,
-        pending?.conversationContext,
-        pending?.uploadContext,
-      ].filter(Boolean).join("\n\n").trim();
+        const v2Artifact = await fetchArtifactByOutcome(outcomeId, requestContext);
+        if (v2Artifact) {
+          if (!cancelled && attempt === preparationAttemptRef.current) {
+            setPreparationState("ready");
+          }
+          return;
+        }
 
-      try {
+        const { count, error: countError } = await withOwnerSupabase(
+          requestContext,
+          async (supabase) =>
+            await supabase
+              .from("checklist_items")
+              .select("id", { count: "exact", head: true })
+              .eq("outcome_id", outcomeId),
+        );
+        requestContext.assertCurrent();
+        if (countError) throw countError;
+        if (!Number.isSafeInteger(count) || Number(count) < 0) {
+          throw new Error("CHECKLIST_COUNT_INVALID");
+        }
+        if (Number(count) > 0) {
+          if (!cancelled && attempt === preparationAttemptRef.current) {
+            setPreparationState("ready");
+          }
+          return;
+        }
+
+        const situation = [
+          outcome.situation_text,
+          outcome.recommendation_payload?.conversation_context,
+          outcome.recommendation_payload?.upload_context,
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+          .trim();
+
         ensureApiConfigured();
-        const v2Kind = /checklist/i.test(pending?.templateName ?? "") ? "checklist" : "action_plan";
+        const v2Kind: "checklist" | "action_plan" = /checklist/i.test(
+          outcome.recommendation_payload?.primary?.reason ?? "",
+        )
+          ? "checklist"
+          : "action_plan";
         try {
-          if (!user) throw new Error("authenticated_artifact_required");
-          const artifact = await generateArtifactStream({
-            request_id: makeId(),
+          const artifactInput = {
             outcome_id: outcomeId,
             kind: v2Kind,
-            template_id: pending?.templateId ?? undefined,
+            template_id: outcome.recommendation_payload?.primary?.template_id ?? undefined,
             situation,
-            conversation_context: pending?.conversationContext,
-            upload_context: pending?.uploadContext,
+            conversation_context: outcome.recommendation_payload?.conversation_context,
+            upload_context: outcome.recommendation_payload?.upload_context,
             locale: navigator.language || "en-AU",
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Melbourne",
-          }, () => {});
-          await saveArtifact(artifact);
-          setReady(true);
+          };
+          const artifactRequestId = await resolveGenerationRequestIdentity(
+            cacheScope,
+            outcomeId,
+            `initial-artifact:${v2Kind}`,
+            artifactInput,
+          );
+          const artifact = await generateArtifactStream(
+            {
+              request_id: artifactRequestId,
+              ...artifactInput,
+            },
+            () => {},
+            requestContext,
+          );
+          requestContext.assertCurrent();
+          await createOrReplayArtifact(artifact, requestContext);
+          requestContext.assertCurrent();
+          if (!cancelled && attempt === preparationAttemptRef.current) {
+            setPreparationState("ready");
+          }
           return;
-        } catch {
-          // Fall through to the existing checklist generator during rollout.
+        } catch (artifactError) {
+          // Only the explicit cohort-disabled response may fall back. A
+          // provider, settlement or post-generation save failure must not
+          // start and charge a second logical generation.
+          if (!(artifactError instanceof ApiError) || artifactError.status !== 404) {
+            throw artifactError;
+          }
         }
-        const generated = await generateChecklist({ situation });
+        const checklistInput = { situation };
+        const checklistRequestId = await resolveGenerationRequestIdentity(
+          cacheScope,
+          outcomeId,
+          "initial-checklist",
+          checklistInput,
+        );
+        const generated = await generateChecklist(
+          {
+            ...checklistInput,
+            generation_request_id: checklistRequestId,
+          },
+          requestContext,
+        );
+        requestContext.assertCurrent();
         if (generated.length === 0) throw new Error("empty_checklist");
 
         const now = new Date().toISOString();
-        const rows = generated.map((item: ChecklistItemResult, index: number) => ({
-          id: makeId(),
-          outcome_id: outcomeId,
-          user_id: user?.id ?? "guest",
-          text: encodeSection(item),
-          due_date: normaliseDueDate(item.due_date),
-          reason: item.reason ?? null,
-          done: false,
-          reminder_offset_days: null,
-          reminder_sent: false,
-          order_index: index,
-          created_at: now,
-          updated_at: now,
-        }));
+        const rows = await Promise.all(
+          generated.map(async (item: ChecklistItemResult, index: number) => ({
+            id: await deterministicGenerationEntityId(
+              checklistRequestId,
+              `checklist-item:${index}`,
+            ),
+            outcome_id: outcomeId,
+            user_id: userId,
+            text: encodeSection(item),
+            due_date: normaliseDueDate(item.due_date),
+            reason: item.reason ?? null,
+            done: false,
+            reminder_offset_days: null,
+            reminder_sent: false,
+            order_index: index,
+            created_at: now,
+            updated_at: now,
+          })),
+        );
 
-        if (user) {
-          const supabase = createClient();
-          const { error: insertError } = await supabase.from("checklist_items").insert(rows);
-          if (insertError) throw insertError;
-        } else {
-          window.localStorage.setItem(guestKey(outcomeId), JSON.stringify(rows));
+        await replaceOwnChecklist(
+          {
+            outcomeId,
+            requestId: checklistRequestId,
+            expectedOutcomeUpdatedAt: outcome.updated_at,
+            items: rows.map(({ id, text, due_date, reason, order_index }) => ({
+              id,
+              text,
+              due_date,
+              reason,
+              order_index,
+            })),
+          },
+          requestContext,
+        );
+        requestContext.assertCurrent();
+        if (!cancelled && attempt === preparationAttemptRef.current) {
+          setPreparationState("ready");
         }
-
-        setReady(true);
       } catch {
-        setError("TED could not build this plan just now. Your earlier information is still safe.");
-        setReady(true);
+        if (
+          !cancelled &&
+          attempt === preparationAttemptRef.current &&
+          (!requestContext || ownerDispatchIsCurrent(requestContext))
+        ) {
+          setError("TED couldn't load this plan safely. Your earlier information is still safe.");
+          setPreparationState("failed");
+        }
       }
     }
 
     void prepare();
-  }, [authLoading, outcomeId, user]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [authLoading, outcomeId, preparationAttempt, userId]);
 
   async function handleSave() {
+    if (!userId) return;
+    const requestContext = captureOwnerDispatch(userId);
     setSaving(true);
     try {
-      if (user) await updateOutcome(outcomeId, { is_saved: true });
-      else window.localStorage.setItem(guestSavedKey(outcomeId), "true");
+      await updateOutcome(outcomeId, { is_saved: true }, requestContext);
+      requestContext.assertCurrent();
       setSaved(true);
     } finally {
-      setSaving(false);
+      if (ownerDispatchIsCurrent(requestContext)) setSaving(false);
     }
   }
 
-  if (!ready) {
-    return <div className={styles.loading}><Spinner label="Building your plan…" size="md" /></div>;
+  if (preparationState === "loading") {
+    return (
+      <div className={styles.loading}>
+        <Spinner label="Building your plan…" size="md" />
+      </div>
+    );
+  }
+
+  if (preparationState === "failed") {
+    return (
+      <main className={styles.page}>
+        <section className={styles.errorCard} role="alert">
+          <p>{error ?? "TED couldn't load this plan safely."}</p>
+          <button
+            type="button"
+            className={styles.saveButton}
+            onClick={() => setPreparationAttempt((value) => value + 1)}
+          >
+            Retry
+          </button>
+          <Link href={`/outcomes/${outcomeId}/conversation`}>Back to conversation</Link>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -184,7 +285,9 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
             {saving ? "Saving…" : saved ? "Saved" : "Save"}
           </button>
           <details className={styles.options}>
-            <summary aria-label="Plan options"><Icon name="dots-vertical" size={20} /></summary>
+            <summary aria-label="Plan options">
+              <Icon name="dots-vertical" size={20} />
+            </summary>
             <div className={styles.optionsPanel}>
               <AlternateFormats outcomeId={outcomeId} />
             </div>

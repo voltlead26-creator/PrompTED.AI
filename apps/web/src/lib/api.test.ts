@@ -1,111 +1,58 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testOwnerDispatchLease } from "@/test/owner-dispatch-lease";
 
-const { configureApiClient, createClient, getSession, refreshSession } =
-  vi.hoisted(() => ({
-    configureApiClient: vi.fn(),
-    createClient: vi.fn(),
-    getSession: vi.fn(),
-    refreshSession: vi.fn(),
-  }));
+const { configureApiClient, captureOwnerAccessToken } = vi.hoisted(() => ({
+  configureApiClient: vi.fn(),
+  captureOwnerAccessToken: vi.fn(),
+}));
 
 vi.mock("@prompted/shared/api-client", () => ({ configureApiClient }));
-vi.mock("@/lib/supabase/client", () => ({ createClient }));
+vi.mock("@/lib/supabase/owner-client", () => ({ captureOwnerAccessToken }));
 
-async function getConfiguredToken(): Promise<() => Promise<string | null>> {
+async function configuredClient() {
   const { ensureApiConfigured } = await import("./api");
   ensureApiConfigured();
-  const configured = configureApiClient.mock.calls[0]?.[0] as {
-    getToken: () => Promise<string | null>;
+  return configureApiClient.mock.calls[0]?.[0] as {
+    baseUrl: string;
+    getToken: typeof captureOwnerAccessToken;
   };
-  return configured.getToken;
 }
 
 describe("ensureApiConfigured", () => {
   beforeEach(() => {
     vi.resetModules();
     configureApiClient.mockReset();
-    createClient.mockReset();
-    getSession.mockReset();
-    refreshSession.mockReset();
-    createClient.mockReturnValue({
-      auth: { getSession, refreshSession },
-    });
+    captureOwnerAccessToken.mockReset();
   });
 
-  it("returns the cached access token directly when it is not near expiry", async () => {
-    getSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: "fresh-access-token",
-          refresh_token: "refresh-token",
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-        },
-      },
-      error: null,
-    });
-
-    const getToken = await getConfiguredToken();
-
-    await expect(getToken()).resolves.toBe("fresh-access-token");
-    expect(refreshSession).not.toHaveBeenCalled();
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
-  it("refreshes a session that is expired or about to expire before returning a token", async () => {
-    getSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: "stale-access-token",
-          refresh_token: "refresh-token",
-          expires_at: Math.floor(Date.now() / 1000) - 5,
-        },
-      },
-      error: null,
-    });
-    refreshSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: "fresh-access-token",
-          refresh_token: "next-refresh-token",
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-        },
-        user: { id: "user-1" },
-      },
-      error: null,
-    });
+  it("always uses the stable same-origin gateway", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://untrusted.example/functions");
 
-    const getToken = await getConfiguredToken();
+    const configured = await configuredClient();
 
-    await expect(getToken()).resolves.toBe("fresh-access-token");
-    expect(refreshSession).toHaveBeenCalledTimes(1);
+    expect(configured.baseUrl).toBe("/api");
   });
 
-  it("returns null when there is no session at all", async () => {
-    getSession.mockResolvedValue({ data: { session: null }, error: null });
+  it("delegates token capture with the exact immutable owner lease", async () => {
+    const lease = testOwnerDispatchLease("user-1");
+    captureOwnerAccessToken.mockResolvedValue("owner-bound-token");
 
-    const getToken = await getConfiguredToken();
+    const configured = await configuredClient();
 
-    await expect(getToken()).resolves.toBeNull();
-    expect(refreshSession).not.toHaveBeenCalled();
+    await expect(configured.getToken(lease)).resolves.toBe("owner-bound-token");
+    expect(captureOwnerAccessToken).toHaveBeenCalledWith(lease);
   });
 
-  it("returns null when refreshing an expiring session fails", async () => {
-    getSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: "stale-access-token",
-          refresh_token: "refresh-token",
-          expires_at: Math.floor(Date.now() / 1000) - 5,
-        },
-      },
-      error: null,
-    });
-    refreshSession.mockResolvedValue({
-      data: { session: null, user: null },
-      error: new Error("refresh token already used"),
-    });
+  it("configures the shared client only once", async () => {
+    const { ensureApiConfigured } = await import("./api");
 
-    const getToken = await getConfiguredToken();
+    ensureApiConfigured();
+    ensureApiConfigured();
 
-    await expect(getToken()).resolves.toBeNull();
+    expect(configureApiClient).toHaveBeenCalledTimes(1);
   });
 });

@@ -5,13 +5,25 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ingestUpload } from "@prompted/shared/api-client";
 import type { Section } from "@prompted/shared/browser";
+import {
+  preflightUploadMetadata,
+  UPLOAD_REQUIREMENT,
+} from "@prompted/shared/ingest-upload";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useAuth } from "@/components/providers";
 import { ACCEPT_ATTRIBUTE } from "@/hooks/useFileAttachment";
 import { ensureApiConfigured } from "@/lib/api";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+} from "@/lib/browser-principal-state";
 import { commitDocumentImport } from "@/lib/api/import-workspace";
-import { savePendingOutcome, saveWorkspace } from "@/lib/workspace-store";
+import {
+  savePendingOutcome,
+  saveWorkspace,
+  userWorkspaceCacheScope,
+} from "@/lib/workspace-store";
 import { ImportReviewPanel } from "./ImportReviewPanel";
 import { assessImportFidelity, type ImportFidelityReport } from "./import-fidelity";
 import { splitImportedDocument } from "./import-structure";
@@ -70,7 +82,7 @@ function importFailureMessage(code: ImportFailureCode): string {
     case "empty_document":
       return "TED could not find selectable text in that file. If it is a scan or photo, convert it with text recognition first and try again.";
     case "unsupported_file":
-      return "TED cannot read that file type yet. Try a PDF, Word document or plain-text file.";
+      return `TED cannot read that file type yet. ${UPLOAD_REQUIREMENT}`;
     case "password_protected":
       return "That document appears to be password protected. Save an unlocked copy and import that version.";
     case "network_error":
@@ -80,7 +92,7 @@ function importFailureMessage(code: ImportFailureCode): string {
     case "service_unavailable":
       return "Document import is temporarily unavailable. Your original file is safe; please try again shortly.";
     default:
-      return "TED could not import that document. Your original file is safe. Try another PDF, Word document or plain-text file with selectable text.";
+      return `TED could not import that document. Your original file is safe. ${UPLOAD_REQUIREMENT}`;
   }
 }
 
@@ -97,6 +109,15 @@ export function MasterWorkspaceImport() {
 
   const handleFile = useCallback(
     async (file: File) => {
+      const preflight = preflightUploadMetadata({
+        fileName: file.name,
+        mimeType: file.type,
+        byteLength: file.size,
+      });
+      if (!preflight.ok) {
+        setError(preflight.message);
+        return;
+      }
       if (authLoading) return;
       if (!user?.id) {
         // Anonymous access was removed: there is no fallback session to wait
@@ -104,6 +125,7 @@ export function MasterWorkspaceImport() {
         setError("Sign in to upload a document \u2014 anonymous uploads are no longer supported.");
         return;
       }
+      const requestContext = captureOwnerDispatch(user.id);
 
       setBusy(true);
       setError(null);
@@ -114,7 +136,9 @@ export function MasterWorkspaceImport() {
         const result = await ingestUpload(
           file,
           "Import this finished document into Master Workspace for editing. Keep its heading hierarchy, subheadings, paragraphs and list structure where they can be identified reliably.",
+          requestContext,
         );
+        requestContext.assertCurrent();
         const extracted = result.extracted_text.trim();
         if (!extracted) throw new ImportFailure("empty_document");
 
@@ -146,9 +170,11 @@ export function MasterWorkspaceImport() {
           fidelity,
         });
       } catch (caught) {
-        setError(importFailureMessage(classifyImportFailure(caught)));
+        if (ownerDispatchIsCurrent(requestContext)) {
+          setError(importFailureMessage(classifyImportFailure(caught)));
+        }
       } finally {
-        setBusy(false);
+        if (ownerDispatchIsCurrent(requestContext)) setBusy(false);
       }
     },
     [authLoading, user],
@@ -157,6 +183,12 @@ export function MasterWorkspaceImport() {
   const createWorkspace = useCallback(
     async (sections: Section[]) => {
       if (!pending) return;
+      const userId = user?.id;
+      if (!userId) {
+        setError(importFailureMessage("sync_failed"));
+        return;
+      }
+      const requestContext = captureOwnerDispatch(userId);
       setBusy(true);
       setError(null);
 
@@ -188,11 +220,12 @@ export function MasterWorkspaceImport() {
           conversation: [],
           situation: pendingOutcome.situation,
           upload_context: pending.extracted,
+          upload_id: pending.uploadId,
         };
 
-        if (user?.id) {
-          try {
-            await commitDocumentImport({
+        try {
+          await commitDocumentImport(
+            {
               uploadId: pending.uploadId,
               outcomeId: pending.outcomeId,
               documentId: pending.documentId,
@@ -200,19 +233,27 @@ export function MasterWorkspaceImport() {
               situationText: pendingOutcome.situation,
               recommendationPayload,
               sections,
-            });
-          } catch (syncError) {
-            throw new ImportFailure("sync_failed", { cause: syncError });
-          }
+            },
+            requestContext,
+          );
+          requestContext.assertCurrent();
+        } catch (syncError) {
+          throw new ImportFailure("sync_failed", { cause: syncError });
         }
 
-        savePendingOutcome(pending.outcomeId, pendingOutcome);
-        saveWorkspace(workspace);
+        const cacheScope = userWorkspaceCacheScope(userId);
+        requestContext.assertCurrent();
+        savePendingOutcome(cacheScope, pending.outcomeId, pendingOutcome);
+        requestContext.assertCurrent();
+        saveWorkspace(cacheScope, workspace);
+        requestContext.assertCurrent();
         router.push(`/outcomes/${pending.outcomeId}`);
       } catch (caught) {
-        setError(importFailureMessage(classifyImportFailure(caught)));
+        if (ownerDispatchIsCurrent(requestContext)) {
+          setError(importFailureMessage(classifyImportFailure(caught)));
+        }
       } finally {
-        setBusy(false);
+        if (ownerDispatchIsCurrent(requestContext)) setBusy(false);
       }
     },
     [pending, router, user],

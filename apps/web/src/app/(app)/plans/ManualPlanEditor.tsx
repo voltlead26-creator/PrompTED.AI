@@ -8,12 +8,16 @@ import { useEditWithTED } from "@/hooks/useEditWithTED";
 import {
   createManualPlan,
   createManualPlanItem,
-  loadGuestManualPlan,
+  loadManualPlan,
   moveManualPlanItem,
-  saveGuestManualPlan,
+  saveManualPlan,
   type ManualPlanItem,
   type ManualPlanState,
 } from "./manual-plan-store";
+import {
+  currentDeviceDataScope,
+  deviceDataOwnerToken,
+} from "@/lib/owner-bound-device-store";
 import styles from "./ManualPlanEditor.module.css";
 
 interface PendingTedChange {
@@ -29,33 +33,56 @@ interface DeletedPlanItem {
   index: number;
 }
 
-export function ManualPlanEditor({ planId }: { planId?: string | null }) {
-  const [plan, setPlan] = useState<ManualPlanState | null>(null);
+interface BoundPlanState {
+  storageIdentity: string;
+  plan: ManualPlanState;
+}
+
+export function ManualPlanEditor({
+  planId,
+  ownerUserId,
+}: {
+  planId?: string | null;
+  ownerUserId?: string | null;
+}) {
+  const deviceScope = useMemo(() => currentDeviceDataScope(ownerUserId), [ownerUserId]);
+  const storageIdentity = `${deviceDataOwnerToken(deviceScope)}:${planId ?? "new"}`;
+  const [boundPlan, setBoundPlan] = useState<BoundPlanState | null>(null);
+  const plan = boundPlan?.storageIdentity === storageIdentity ? boundPlan.plan : null;
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [instruction, setInstruction] = useState("");
   const [pendingTedChange, setPendingTedChange] = useState<PendingTedChange | null>(null);
   const [lastDeleted, setLastDeleted] = useState<DeletedPlanItem | null>(null);
-  const hydrated = useRef(false);
+  const hydratedIdentityRef = useRef<string | null>(null);
+  const currentIdentityRef = useRef(storageIdentity);
+  currentIdentityRef.current = storageIdentity;
   const editor = useEditWithTED();
 
   useEffect(() => {
-    if (hydrated.current) return;
-    hydrated.current = true;
-    const initial = (planId ? loadGuestManualPlan(planId) : null) ?? createManualPlan();
-    setPlan(initial);
+    if (hydratedIdentityRef.current === storageIdentity) return;
+    hydratedIdentityRef.current = storageIdentity;
+    const initial = (planId ? loadManualPlan(deviceScope, planId) : null) ?? createManualPlan();
+    setBoundPlan({ storageIdentity, plan: initial });
     setSelectedItemId(initial.items[0]?.id ?? null);
-  }, [planId]);
+    setSaveState("idle");
+    setInstruction("");
+    setPendingTedChange(null);
+    setLastDeleted(null);
+  }, [deviceScope, planId, storageIdentity]);
 
   useEffect(() => {
-    if (!plan || !hydrated.current) return;
+    if (!plan || hydratedIdentityRef.current !== storageIdentity) return;
     setSaveState("saving");
     const timer = window.setTimeout(() => {
-      const saved = saveGuestManualPlan({ ...plan, updatedAt: new Date().toISOString() });
+      const saved = saveManualPlan(deviceScope, {
+        ...plan,
+        updatedAt: new Date().toISOString(),
+      });
       setSaveState(saved ? "saved" : "error");
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [plan]);
+  }, [deviceScope, plan, storageIdentity]);
 
   const selectedItem = useMemo(
     () => plan?.items.find((item) => item.id === selectedItemId) ?? null,
@@ -65,7 +92,11 @@ export function ManualPlanEditor({ planId }: { planId?: string | null }) {
   if (!plan) return <div className={styles.loading}>Opening live editor…</div>;
 
   function updatePlan(mutator: (current: ManualPlanState) => ManualPlanState) {
-    setPlan((current) => current ? mutator(current) : current);
+    setBoundPlan((current) =>
+      current?.storageIdentity === storageIdentity
+        ? { ...current, plan: mutator(current.plan) }
+        : current,
+    );
   }
 
   function updateItem(itemId: string, patch: Partial<ManualPlanItem>) {
@@ -146,6 +177,7 @@ export function ManualPlanEditor({ planId }: { planId?: string | null }) {
       (!allowPendingChange && pendingTedChange) ||
       editor.streaming
     ) return;
+    const requestIdentity = storageIdentity;
     const original = selectedItem.text;
     const result = await editor.run({
       action,
@@ -153,7 +185,7 @@ export function ManualPlanEditor({ planId }: { planId?: string | null }) {
       instruction: customInstruction,
       domain: "action plan step",
     });
-    if (!result?.content.trim()) return;
+    if (currentIdentityRef.current !== requestIdentity || !result?.content.trim()) return;
     setPendingTedChange({
       itemId: selectedItem.id,
       suggested: result.content.trim(),

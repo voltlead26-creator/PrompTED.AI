@@ -162,12 +162,91 @@ begin
 end;
 $function$;
 
+create or replace function pg_temp.captured_pdf_validation(
+  p_export_id uuid,
+  p_artifact_sha256 text,
+  p_byte_length integer
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_export private.captured_document_exports%rowtype;
+  v_brand jsonb;
+  v_footer_sha256 text;
+  v_evidence_sha256 text;
+begin
+  select * into strict v_export
+  from private.captured_document_exports
+  where id = p_export_id;
+  v_brand := v_export.brand_snapshot->'brand_kit';
+  v_footer_sha256 := case when nullif(v_brand->>'footer_text', '') is null
+    then null
+    else pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+      v_brand->>'footer_text', 'UTF8'
+    ), 'sha256'), 'hex') end;
+  v_evidence_sha256 := pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+    'prompted.export-brand-evidence.v1|' || v_export.brand_snapshot_version || '|' ||
+      v_export.brand_snapshot_sha256 || '|1|' ||
+      coalesce(v_brand->>'logo_storage_path', '~') || '|' ||
+      coalesce(v_brand->>'logo_content_sha256', '~') || '|' ||
+      coalesce(v_brand->>'logo_media_type', '~') || '|' ||
+      coalesce(v_brand->>'logo_byte_length', '~') || '|' ||
+      coalesce(v_footer_sha256, '~') || '|' ||
+      coalesce(pg_catalog.lower(v_brand->>'primary_colour'), '~') || '|' ||
+      coalesce(pg_catalog.lower(v_brand->>'secondary_colour'), '~'),
+    'UTF8'
+  ), 'sha256'), 'hex');
+  return pg_catalog.jsonb_build_object(
+    'passed', true,
+    'artifact_inspected', true,
+    'inspection_contract', 'prompted.rendered-pdf.v2',
+    'artifact_sha256', p_artifact_sha256,
+    'byte_length', p_byte_length,
+    'content_sha256', repeat('1', 64),
+    'section_order_sha256', repeat('2', 64),
+    'content_type', 'application/pdf',
+    'brand_snapshot_version', v_export.brand_snapshot_version,
+    'brand_snapshot_sha256', v_export.brand_snapshot_sha256,
+    'brand_present', true,
+    'brand_logo_storage_path', v_brand->>'logo_storage_path',
+    'brand_logo_sha256', v_brand->>'logo_content_sha256',
+    'brand_logo_media_type', v_brand->>'logo_media_type',
+    'brand_logo_byte_length', case
+      when v_brand->'logo_byte_length' = 'null'::jsonb then null
+      else (v_brand->>'logo_byte_length')::integer end,
+    'brand_footer_sha256', v_footer_sha256,
+    'brand_primary_colour', pg_catalog.lower(v_brand->>'primary_colour'),
+    'brand_secondary_colour', pg_catalog.lower(v_brand->>'secondary_colour'),
+    'brand_evidence_sha256', v_evidence_sha256,
+    'checks', pg_catalog.jsonb_build_object(
+      'transport_envelope', true,
+      'inspection_version', true,
+      'renderer_status', true,
+      'renderer_structural', true,
+      'content_matches', true,
+      'section_order_matches', true,
+      'artifact_hash_matches', true,
+      'brand_snapshot_matches', true,
+      'brand_logo_matches', true,
+      'brand_footer_matches', true,
+      'brand_colours_match', true
+    )
+  );
+end;
+$function$;
+
 select has_table('private', 'captured_document_operations', 'private operation records exist');
 select has_table('private', 'captured_document_operation_events', 'private operation event records exist');
 select has_table('private', 'captured_document_provider_attempts', 'private provider-attempt records exist');
 select has_table('private', 'captured_document_revisions', 'private revision records exist');
 select has_table('private', 'captured_document_approvals', 'private approval records exist');
 select has_table('private', 'captured_document_exports', 'private export records exist');
+select has_table(
+  'private', 'captured_export_storage_recoveries',
+  'immutable captured export recovery records exist'
+);
 select has_table('private', 'captured_document_allowances', 'private allowance records exist');
 select has_table('private', 'captured_document_activation_revisions', 'activation history exists');
 select has_column(
@@ -200,6 +279,11 @@ select has_function(
     'text','jsonb','jsonb','jsonb','text','text','text[]','text[]','text[]','jsonb','integer'
   ],
   'service acceptance command exists'
+);
+select has_function(
+  'public', 'get_captured_document_resume_payload',
+  array['uuid','uuid'],
+  'service-only immutable resume reconstruction exists'
 );
 select has_function(
   'public', 'claim_captured_document_operation',
@@ -245,6 +329,26 @@ select has_function(
   array['uuid','uuid','integer','text','text','text','jsonb'],
   'service inspected-artifact completion command exists'
 );
+select has_function(
+  'public', 'record_captured_export_storage_recovery',
+  array[
+    'uuid','uuid','uuid','integer','text','text','integer','text','jsonb','uuid'
+  ],
+  'service exact-byte captured export recovery command exists'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.record_captured_export_storage_recovery(uuid,uuid,uuid,integer,text,text,integer,text,jsonb,uuid)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.record_captured_export_storage_recovery(uuid,uuid,uuid,integer,text,text,integer,text,jsonb,uuid)',
+    'EXECUTE'
+  ),
+  'only the protected service boundary may record immutable export recovery'
+);
 
 select ok(
   not has_schema_privilege('authenticated', 'private', 'USAGE'),
@@ -277,6 +381,19 @@ select ok(
     'EXECUTE'
   ),
   'authenticated callers cannot manufacture operation acceptance'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.get_captured_document_resume_payload(uuid,uuid)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.get_captured_document_resume_payload(uuid,uuid)',
+    'EXECUTE'
+  ),
+  'only the protected service boundary can reconstruct immutable resume inputs'
 );
 select ok(
   has_function_privilege(
@@ -329,6 +446,7 @@ select is(
       and procedure_record.proname in (
         'configure_captured_document_activation',
         'accept_captured_document_operation',
+        'get_captured_document_resume_payload',
         'get_captured_document_operation',
         'get_latest_captured_document_operation',
         'claim_captured_document_operation',
@@ -345,7 +463,7 @@ select is(
       and procedure_record.prosecdef
       and procedure_record.proconfig @> array['search_path=""']::text[]
   ),
-  14,
+  15,
   'all public captured commands are SECURITY DEFINER with an empty search path'
 );
 select is(
@@ -379,23 +497,30 @@ select ok(
 );
 select is(
   (
-    select count(*)::integer
-    from pg_policy policy_record
-    where policy_record.polrelid = 'storage.objects'::regclass
-      and policy_record.polname = 'captured_exports_no_direct_client_access'
-      and not policy_record.polpermissive
-      and policy_record.polcmd = '*'
-      and policy_record.polroles @> array[
-        (select oid from pg_roles where rolname = 'anon'),
-        (select oid from pg_roles where rolname = 'authenticated')
-      ]::oid[]
-      and pg_get_expr(policy_record.polqual, policy_record.polrelid)
-        like '%captured-exports%'
-      and pg_get_expr(policy_record.polwithcheck, policy_record.polrelid)
-        like '%captured-exports%'
+    select pg_catalog.encode(
+      extensions.digest(
+        pg_catalog.convert_to(
+          policy_record.permissive || '|' || policy_record.cmd || '|' ||
+          pg_catalog.array_to_string(policy_record.roles, ',') || '|' ||
+          pg_catalog.regexp_replace(
+            coalesce(policy_record.qual, ''), E'\\s+', ' ', 'g'
+          ) || '|' ||
+          pg_catalog.regexp_replace(
+            coalesce(policy_record.with_check, ''), E'\\s+', ' ', 'g'
+          ),
+          'UTF8'
+        ),
+        'sha256'
+      ),
+      'hex'
+    )
+    from pg_catalog.pg_policies policy_record
+    where policy_record.schemaname = 'storage'
+      and policy_record.tablename = 'objects'
+      and policy_record.policyname = 'captured_exports_no_direct_client_access'
   ),
-  1,
-  'a restrictive policy denies direct client reads and writes for captured artifacts'
+  'ddaa0ccefbc1a111808332a1ee6aea088c702a653432a8d4a378414d013523c3',
+  'captured artifacts retain the exact restrictive browser read/write denial policy'
 );
 select is(
   (
@@ -422,12 +547,39 @@ union all
 select deletion_id, 'captured-delete@example.invalid', false, false, now(), now()
 from captured_operation_test_state;
 
-insert into public.outcomes(id, user_id, situation_text)
-select owner_outcome_id, owner_id, 'Synthetic captured operation test'
+insert into public.businesses(id, owner_user_id, trading_name)
+select
+  '91500000-0000-4000-8000-000000000001'::uuid,
+  owner_id,
+  'Captured Export Brand'
+from captured_operation_test_state;
+
+insert into public.outcomes(id, user_id, business_id, situation_text)
+select
+  owner_outcome_id,
+  owner_id,
+  '91500000-0000-4000-8000-000000000001'::uuid,
+  'Synthetic captured operation test'
 from captured_operation_test_state
 union all
-select deletion_outcome_id, deletion_id, 'Synthetic account-deletion cascade test'
+select
+  deletion_outcome_id,
+  deletion_id,
+  null,
+  'Synthetic account-deletion cascade test'
 from captured_operation_test_state;
+
+insert into public.brand_kits(
+  business_id,
+  primary_colour,
+  secondary_colour,
+  footer_text
+) values (
+  '91500000-0000-4000-8000-000000000001',
+  '#123456',
+  '#abcdef',
+  'Captured export footer'
+);
 
 insert into public.documents(user_id, outcome_id, title)
 select owner_id, owner_outcome_id, 'Legacy compatibility document'
@@ -506,6 +658,66 @@ set operation_id = operation_record.id
 from private.captured_document_operations operation_record
 where operation_record.user_id = state_record.owner_id
   and operation_record.idempotency_key = 'capture-main';
+
+select is(
+  (
+    select count(*)::integer
+    from private.document_allowance_reservations reservation_record
+    join captured_operation_test_state state_record
+      on state_record.operation_id = reservation_record.captured_operation_id
+     and state_record.owner_id = reservation_record.user_id
+    where reservation_record.status = 'reserved'
+      and reservation_record.request_id = 'capture-main'
+  ),
+  1,
+  'captured acceptance atomically inserts its pre-provider reservation despite parent/child trigger timing'
+);
+
+select is(
+  (
+    select public.get_captured_document_resume_payload(
+      owner_id,
+      operation_id
+    )->>'generation_request_id'
+    from captured_operation_test_state
+  ),
+  'capture-main',
+  'background resume reconstructs the exact immutable idempotency key'
+);
+select is(
+  (
+    select public.get_captured_document_resume_payload(
+      owner_id,
+      operation_id
+    )->'input_values'->>'confirmed_name'
+    from captured_operation_test_state
+  ),
+  'Synthetic Person',
+  'background resume reconstructs the immutable accepted input values'
+);
+select is(
+  (
+    select public.get_captured_document_resume_payload(
+      owner_id,
+      operation_id
+    )->>'accepted_user_cohort'
+    from captured_operation_test_state
+  ),
+  'internal',
+  'background resume preserves the accepted cohort after an admission rollback'
+);
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.get_captured_document_resume_payload(%L::uuid,%L::uuid)',
+      other_id,
+      operation_id
+    ),
+    '%CAPTURED_OPERATION_NOT_FOUND%'
+  ),
+  'resume reconstruction rejects a different user for the same operation'
+)
+from captured_operation_test_state;
 
 select is(
   (
@@ -733,6 +945,19 @@ select ok(
 )
 from captured_operation_test_state;
 
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.advance_captured_document_operation(%L::uuid,%s,%L::uuid,%L,%L::jsonb,%L)',
+      operation_id, 4, lease_token, 'terminal_failure', '{}',
+      'CAPTURED_PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED'
+    ),
+    '%CAPTURED_PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED%'
+  ),
+  'terminal failure cannot release allowance while a provider attempt remains prepared'
+)
+from captured_operation_test_state;
+
 select lives_ok(
   pg_temp.provider_attempt_sql(
     operation_id, 4, lease_token, 'generation', 1, 'deep',
@@ -773,6 +998,31 @@ select lives_ok(
     '2026-08-31T01:00:05Z', repeat('b', 64), '{"sections":[]}'::jsonb
   ),
   'successful structured output is captured as the durable resume checkpoint'
+)
+from captured_operation_test_state;
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'insert into private.captured_document_provider_attempts(operation_id,user_id,logical_stage_key,attempt_number,provider,semantic_route,model,reasoning_effort,retention_mode,status,input_tokens,output_tokens,started_at,request_sha256,attempt_sha256) values (%L::uuid,%L::uuid,%L,%s,%L,%L,%L,%L,%L,%L,%s,%s,%L::timestamptz,%L,%L)',
+      operation_id,
+      owner_id,
+      'generation',
+      3,
+      'openai',
+      'deep',
+      'gpt-test-deep',
+      'medium',
+      'store_false',
+      'prepared',
+      0,
+      0,
+      '2026-08-31T01:00:06Z',
+      repeat('d', 64),
+      repeat('e', 64)
+    ),
+    '%CAPTURED_PROVIDER_ATTEMPT_LIMIT_EXCEEDED:deep:3:2%'
+  ),
+  'a worker restart cannot allocate cumulative provider attempt three after the accepted budget of two'
 )
 from captured_operation_test_state;
 select is(
@@ -1031,6 +1281,19 @@ select is(
   'approval is retained as one immutable private record'
 );
 
+set local role service_role;
+select is(
+  public.load_legacy_export_snapshot(
+    state_record.owner_id,
+    state_record.document_id,
+    null
+  ) #>> '{brand_snapshot,brand_kit,footer_text}',
+  'Captured export footer',
+  'the authoritative target snapshot selects its linked business brand'
+)
+from captured_operation_test_state state_record;
+reset role;
+
 set local role authenticated;
 select lives_ok(
   format(
@@ -1071,6 +1334,12 @@ select ok(
 )
 from captured_operation_test_state;
 reset role;
+alter table captured_operation_test_state add column export_id uuid;
+update captured_operation_test_state state_record
+set export_id = export_record.id
+from private.captured_document_exports export_record
+where export_record.operation_id = state_record.operation_id;
+
 select is(
   (
     select count(*)::integer
@@ -1081,6 +1350,73 @@ select is(
   1,
   'export replay creates one exact-revision export request'
 );
+
+select is(
+  (
+    select export_record.brand_snapshot #>> '{brand_kit,footer_text}'
+    from private.captured_document_exports export_record
+    join captured_operation_test_state state_record
+      on state_record.operation_id = export_record.operation_id
+  ),
+  'Captured export footer',
+  'captured export admission freezes the target business brand snapshot'
+);
+select ok(
+  (
+    select export_record.brand_snapshot_version =
+        'prompted.export-brand-snapshot.v1'
+      and export_record.brand_snapshot_sha256 ~ '^[0-9a-f]{64}$'
+    from private.captured_document_exports export_record
+    join captured_operation_test_state state_record
+      on state_record.operation_id = export_record.operation_id
+  ),
+  'captured export persists an exact versioned brand snapshot identity'
+);
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'update private.captured_document_exports set brand_snapshot_sha256=%L where id=%L::uuid',
+      repeat('0', 64),
+      state_record.export_id
+    ),
+    '%CAPTURED_EXPORT_BRAND_SNAPSHOT_IMMUTABLE%'
+  ),
+  'a captured export brand snapshot cannot be replaced after admission'
+)
+from captured_operation_test_state state_record;
+
+update public.brand_kits
+set footer_text = 'Later brand footer', revision = revision + 1
+where business_id = '91500000-0000-4000-8000-000000000001';
+
+set local role authenticated;
+select is(
+  public.request_captured_document_export(
+    state_record.operation_id,
+    12,
+    state_record.document_id,
+    3,
+    'docx',
+    'export-main'
+  )->>'export_id',
+  state_record.export_id::text,
+  'the same export intent replays its exact admitted artifact after a later brand edit'
+)
+from captured_operation_test_state state_record;
+reset role;
+
+set local role service_role;
+select is(
+  public.get_captured_document_export_receipt(
+    state_record.owner_id,
+    state_record.export_id,
+    state_record.operation_id
+  ) #>> '{brand_snapshot,brand_kit,footer_text}',
+  'Captured export footer',
+  'captured export replay keeps the admitted brand after a later brand edit'
+)
+from captured_operation_test_state state_record;
+reset role;
 
 select ok(
   pg_temp.raises_matching(
@@ -1148,14 +1484,57 @@ select ok(
 from captured_operation_test_state state_record
 join private.captured_document_exports export_record
   on export_record.operation_id = state_record.operation_id;
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.complete_captured_document_export(%L::uuid,%L::uuid,%s,%L,%L,%L,%L::jsonb)',
+      export_record.id, state_record.operation_id, 13,
+      'captured-exports/' || state_record.owner_id::text || '/' || export_record.id::text || '/resume.docx',
+      repeat('a', 64), 'renderer.test.1',
+      '{"passed":true,"artifact_inspected":true}'
+    ),
+    '%CAPTURED_EXPORT_BRAND_EVIDENCE_MISMATCH%'
+  ),
+  'captured completion cannot omit the admitted brand snapshot identity'
+)
+from captured_operation_test_state state_record
+join private.captured_document_exports export_record
+  on export_record.operation_id = state_record.operation_id;
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.complete_captured_document_export(%L::uuid,%L::uuid,%s,%L,%L,%L,%L::jsonb)',
+      export_record.id, state_record.operation_id, 13,
+      'captured-exports/' || state_record.owner_id::text || '/' || export_record.id::text || '/resume.docx',
+      repeat('a', 64), 'renderer.test.1',
+      pg_catalog.jsonb_build_object(
+        'passed', true,
+        'artifact_inspected', true,
+        'brand_snapshot_version', export_record.brand_snapshot_version,
+        'brand_snapshot_sha256', repeat('f', 64)
+      )::text
+    ),
+    '%CAPTURED_EXPORT_BRAND_EVIDENCE_MISMATCH%'
+  ),
+  'captured completion rejects a well-formed but incorrect brand snapshot hash'
+)
+from captured_operation_test_state state_record
+join private.captured_document_exports export_record
+  on export_record.operation_id = state_record.operation_id;
 select lives_ok(
   format(
     'select public.complete_captured_document_export(%L::uuid,%L::uuid,%s,%L,%L,%L,%L::jsonb)',
     export_record.id, state_record.operation_id, 13,
-    'captured-exports/' || state_record.owner_id::text || '/' || export_record.id::text || '/resume.docx',
-    repeat('a', 64), 'renderer.test.1',
-    '{"passed":true,"artifact_inspected":true,"checks":["opened","readable"]}'
-  ),
+      'captured-exports/' || state_record.owner_id::text || '/' || export_record.id::text || '/resume.docx',
+      repeat('a', 64), 'renderer.test.1',
+      pg_catalog.jsonb_build_object(
+        'passed', true,
+        'artifact_inspected', true,
+        'checks', pg_catalog.jsonb_build_array('opened', 'readable'),
+        'brand_snapshot_version', export_record.brand_snapshot_version,
+        'brand_snapshot_sha256', export_record.brand_snapshot_sha256
+      )::text
+    ),
   'service completion binds the inspected artifact to the immutable request'
 )
 from captured_operation_test_state state_record
@@ -1165,10 +1544,16 @@ select lives_ok(
   format(
     'select public.complete_captured_document_export(%L::uuid,%L::uuid,%s,%L,%L,%L,%L::jsonb)',
     export_record.id, state_record.operation_id, 13,
-    'captured-exports/' || state_record.owner_id::text || '/' || export_record.id::text || '/resume.docx',
-    repeat('a', 64), 'renderer.test.1',
-    '{"passed":true,"artifact_inspected":true,"checks":["opened","readable"]}'
-  ),
+      'captured-exports/' || state_record.owner_id::text || '/' || export_record.id::text || '/resume.docx',
+      repeat('a', 64), 'renderer.test.1',
+      pg_catalog.jsonb_build_object(
+        'passed', true,
+        'artifact_inspected', true,
+        'checks', pg_catalog.jsonb_build_array('opened', 'readable'),
+        'brand_snapshot_version', export_record.brand_snapshot_version,
+        'brand_snapshot_sha256', export_record.brand_snapshot_sha256
+      )::text
+    ),
   'exact export completion replay returns the one durable artifact result'
 )
 from captured_operation_test_state state_record
@@ -1181,7 +1566,13 @@ select ok(
       export_record.id, state_record.operation_id, 14,
       'captured-exports/' || state_record.owner_id::text || '/' || export_record.id::text || '/resume.docx',
       repeat('b', 64), 'renderer.test.1',
-      '{"passed":true,"artifact_inspected":true,"checks":["opened","readable"]}'
+      pg_catalog.jsonb_build_object(
+        'passed', true,
+        'artifact_inspected', true,
+        'checks', pg_catalog.jsonb_build_array('opened', 'readable'),
+        'brand_snapshot_version', export_record.brand_snapshot_version,
+        'brand_snapshot_sha256', export_record.brand_snapshot_sha256
+      )::text
     ),
     '%CAPTURED_EXPORT_COMPLETION_REPLAY_CONFLICT%'
   ),
@@ -1210,6 +1601,320 @@ select is(
   ),
   1,
   'exact completion replay appends no duplicate export event'
+);
+
+-- A captured PDF snapshots one verified logo identity and retains that exact
+-- object even when the current brand kit later removes its active pointer.
+insert into storage.objects(bucket_id, name, metadata)
+values (
+  'assets',
+  'brand-kits/91500000-0000-4000-8000-000000000001/logos/98500000-0000-8000-8000-000000000001.png',
+  '{"mimetype":"image/png"}'::jsonb
+);
+update public.brand_kits
+set logo_url = 'https://project.test/storage/v1/object/public/assets/brand-kits/91500000-0000-4000-8000-000000000001/logos/98500000-0000-8000-8000-000000000001.png',
+    revision = revision + 1,
+    logo_operation_id = '98500000-0000-8000-8000-000000000001',
+    logo_storage_path = 'brand-kits/91500000-0000-4000-8000-000000000001/logos/98500000-0000-8000-8000-000000000001.png',
+    logo_content_sha256 = repeat('5', 64),
+    logo_media_type = 'image/png',
+    logo_byte_length = 4,
+    logo_status = 'ready',
+    updated_at = pg_catalog.clock_timestamp()
+where business_id = '91500000-0000-4000-8000-000000000001';
+
+select set_config(
+  'request.jwt.claim.sub',
+  (select owner_id::text from captured_operation_test_state),
+  true
+);
+set local role authenticated;
+select is(
+  public.request_captured_document_export(
+    state_record.operation_id,
+    (public.get_latest_captured_document_operation(state_record.document_id)
+      ->>'operation_revision')::integer,
+    state_record.document_id,
+    3,
+    'pdf',
+    'export-pdf-recovery'
+  )->>'status',
+  'requested',
+  'owner requests a captured PDF against the exact current approved revision'
+)
+from captured_operation_test_state state_record;
+reset role;
+
+create temp table captured_pdf_recovery as
+select
+  export_record.id as export_id,
+  export_record.operation_id,
+  export_record.user_id,
+  operation_record.operation_revision as expected_operation_revision,
+  export_record.user_id::text || '/' || export_record.id::text || '/resume.pdf'
+    as storage_path,
+  repeat('6', 64)::text as artifact_sha256,
+  512::integer as artifact_byte_length,
+  '98000000-0000-4000-8000-000000000001'::uuid as dispatch_token
+from private.captured_document_exports export_record
+join private.captured_document_operations operation_record
+  on operation_record.id = export_record.operation_id
+where export_record.idempotency_key = 'export-pdf-recovery';
+grant select on captured_pdf_recovery to service_role;
+
+set local role service_role;
+select is(
+  public.claim_user_storage_dispatch(
+    recovery.user_id,
+    recovery.export_id,
+    'captured-export',
+    pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+      recovery.storage_path, 'UTF8'
+    ), 'sha256'), 'hex'),
+    recovery.artifact_sha256,
+    recovery.dispatch_token
+  )->>'outcome',
+  'accepted',
+  'captured PDF Storage is admitted once under the export identity'
+)
+from captured_pdf_recovery recovery;
+reset role;
+
+insert into storage.objects(bucket_id, name, metadata)
+select 'captured-exports', storage_path, '{"mimetype":"application/pdf"}'::jsonb
+from captured_pdf_recovery;
+
+set local role service_role;
+select is(
+  public.record_captured_export_storage_recovery(
+    recovery.user_id,
+    recovery.export_id,
+    recovery.operation_id,
+    recovery.expected_operation_revision,
+    recovery.storage_path,
+    recovery.artifact_sha256,
+    recovery.artifact_byte_length,
+    'render-export.pdf.4',
+    pg_temp.captured_pdf_validation(
+      recovery.export_id,
+      recovery.artifact_sha256,
+      recovery.artifact_byte_length
+    ),
+    recovery.dispatch_token
+  )->>'outcome',
+  'recorded',
+  'exact stored PDF and brand evidence are durably recorded before acknowledgement'
+)
+from captured_pdf_recovery recovery;
+
+select is(
+  public.record_captured_export_storage_recovery(
+    recovery.user_id,
+    recovery.export_id,
+    recovery.operation_id,
+    recovery.expected_operation_revision,
+    recovery.storage_path,
+    recovery.artifact_sha256,
+    recovery.artifact_byte_length,
+    'render-export.pdf.4',
+    pg_temp.captured_pdf_validation(
+      recovery.export_id,
+      recovery.artifact_sha256,
+      recovery.artifact_byte_length
+    ),
+    recovery.dispatch_token
+  )->>'outcome',
+  'idempotent_replay',
+  'lost recovery acknowledgement replays one immutable recovery record'
+)
+from captured_pdf_recovery recovery;
+
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.record_captured_export_storage_recovery(%L::uuid,%L::uuid,%L::uuid,%s,%L,%L,%s,%L,%L::jsonb,%L::uuid)',
+      recovery.user_id,
+      recovery.export_id,
+      recovery.operation_id,
+      recovery.expected_operation_revision,
+      recovery.storage_path,
+      recovery.artifact_sha256,
+      recovery.artifact_byte_length + 1,
+      'render-export.pdf.4',
+      pg_temp.captured_pdf_validation(
+        recovery.export_id,
+        recovery.artifact_sha256,
+        recovery.artifact_byte_length + 1
+      )::text,
+      recovery.dispatch_token
+    ),
+    '%CAPTURED_EXPORT_STORAGE_RECOVERY_CONFLICT%'
+  ),
+  'one recovery identity cannot be rebound to a different artifact length'
+)
+from captured_pdf_recovery recovery;
+
+select is(
+  public.get_captured_document_export_receipt(
+    recovery.user_id,
+    recovery.export_id,
+    recovery.operation_id
+  )->>'outcome',
+  'storage_recovery',
+  'a retained exact artifact resumes finalisation instead of rendering again'
+)
+from captured_pdf_recovery recovery;
+select is(
+  public.get_captured_document_export_receipt(
+    recovery.user_id,
+    recovery.export_id,
+    recovery.operation_id
+  )->>'storage_dispatch_token',
+  recovery.dispatch_token::text,
+  'an unresolved Storage acknowledgement returns only its original exact token'
+)
+from captured_pdf_recovery recovery;
+
+select is(
+  public.complete_user_storage_dispatch(
+    recovery.user_id,
+    recovery.export_id,
+    'captured-export',
+    pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+      recovery.storage_path, 'UTF8'
+    ), 'sha256'), 'hex'),
+    recovery.artifact_sha256,
+    recovery.dispatch_token
+  )->>'outcome',
+  'completed',
+  'captured PDF Storage acknowledgement closes after recovery is durable'
+)
+from captured_pdf_recovery recovery;
+select ok(
+  (
+    select public.get_captured_document_export_receipt(
+      recovery.user_id,
+      recovery.export_id,
+      recovery.operation_id
+    )->>'storage_state' = 'completed'
+    and public.get_captured_document_export_receipt(
+      recovery.user_id,
+      recovery.export_id,
+      recovery.operation_id
+    )->'storage_dispatch_token' = 'null'::jsonb
+  ),
+  'completed Storage recovery never exposes a reusable dispatch token'
+)
+from captured_pdf_recovery recovery;
+
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.complete_captured_document_export(%L::uuid,%L::uuid,%s,%L,%L,%L,%L::jsonb)',
+      recovery.export_id,
+      recovery.operation_id,
+      recovery.expected_operation_revision,
+      recovery.storage_path,
+      recovery.artifact_sha256,
+      'render-export.pdf.4',
+      pg_catalog.jsonb_build_object(
+        'passed', true,
+        'artifact_inspected', true,
+        'brand_snapshot_version', 'prompted.export-brand-snapshot.v1'
+      )::text
+    ),
+    '%CAPTURED_EXPORT_BRAND_EVIDENCE_MISMATCH%'
+  ),
+  'new captured PDF completion rejects legacy marker-only inspection evidence'
+)
+from captured_pdf_recovery recovery;
+
+select lives_ok(
+  format(
+    'select public.complete_captured_document_export(%L::uuid,%L::uuid,%s,%L,%L,%L,%L::jsonb)',
+    recovery.export_id,
+    recovery.operation_id,
+    recovery.expected_operation_revision,
+    recovery.storage_path,
+    recovery.artifact_sha256,
+    'render-export.pdf.4',
+    pg_temp.captured_pdf_validation(
+      recovery.export_id,
+      recovery.artifact_sha256,
+      recovery.artifact_byte_length
+    )::text
+  ),
+  'strict v2 document, order, artifact, and frozen-brand evidence completes once'
+)
+from captured_pdf_recovery recovery;
+
+create temp table referenced_logo_remove_claim as
+select public.claim_brand_logo_operation(
+  recovery.user_id,
+  '98500000-0000-8000-8000-000000000002',
+  '91500000-0000-4000-8000-000000000001',
+  2,
+  repeat('7', 64),
+  'remove',
+  '#123456',
+  '#abcdef',
+  'Later brand footer',
+  null,
+  null,
+  null
+) as receipt
+from captured_pdf_recovery recovery;
+select is(
+  receipt->'old_storage_paths',
+  '[]'::jsonb,
+  'a logo frozen by a requested or completed export is excluded from deletion'
+)
+from referenced_logo_remove_claim;
+reset role;
+select set_config(
+  'request.jwt.claim.sub',
+  (select owner_id::text from captured_operation_test_state),
+  true
+);
+set local role authenticated;
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.request_captured_document_export(%L::uuid,%s,%L::uuid,%s,%L,%L)',
+      state_record.operation_id,
+      (public.get_latest_captured_document_operation(state_record.document_id)
+        ->>'operation_revision')::integer,
+      state_record.document_id,
+      3,
+      'pdf',
+      'export-during-brand-mutation'
+    ),
+    '%BRAND_LOGO_OPERATION_IN_PROGRESS%'
+  ),
+  'captured export admission cannot race an active brand mutation'
+)
+from captured_operation_test_state state_record;
+reset role;
+set local role service_role;
+select lives_ok(
+  $$select public.complete_brand_logo_operation(
+    '91000000-0000-4000-8000-000000000001',
+    '98500000-0000-8000-8000-000000000002',
+    ((select receipt->>'claim_token' from referenced_logo_remove_claim))::uuid,
+    repeat('8', 64)
+  )$$,
+  'current brand pointer removal may complete without deleting frozen export evidence'
+);
+reset role;
+select is(
+  (
+    select pg_catalog.count(*)::integer
+    from storage.objects
+    where bucket_id = 'assets'
+      and name = 'brand-kits/91500000-0000-4000-8000-000000000001/logos/98500000-0000-8000-8000-000000000001.png'
+  ),
+  1,
+  'historical captured export logo bytes remain available after current removal'
 );
 
 select lives_ok(
@@ -1258,6 +1963,25 @@ select is(
   'lease renewal advances durable revision without changing the fencing token'
 );
 
+select lives_ok(
+  format(
+    'select public.advance_captured_document_operation(%L::uuid,%s,%L::uuid,%L,%L::jsonb)',
+    cancel_operation_id, 3, lease_token, 'generating', '{}'
+  ),
+  'the cancellation-test lease holder enters the provider stage'
+)
+from captured_operation_test_state;
+select lives_ok(
+  pg_temp.provider_attempt_sql(
+    cancel_operation_id, 4, lease_token, 'generation', 0, 'deep',
+    'gpt-test-deep', 'medium', null, 'prepared', 0, 0,
+    null, null, '2026-08-31T02:00:00Z', null,
+    repeat('d', 64), null
+  ),
+  'the in-flight provider dispatch is durably prepared before owner cancellation'
+)
+from captured_operation_test_state;
+
 select set_config(
   'request.jwt.claim.sub',
   (select owner_id::text from captured_operation_test_state),
@@ -1267,20 +1991,74 @@ set local role authenticated;
 select lives_ok(
   format(
     'select public.request_captured_document_cancellation(%L::uuid,%s,%L)',
-    cancel_operation_id, 3, 'owner_cancelled'
+    cancel_operation_id, 5, 'owner_cancelled'
   ),
-  'owner cancellation durably terminates the logical operation'
+  'owner cancellation records durable intent while a provider attempt is live'
 )
 from captured_operation_test_state;
 select lives_ok(
   format(
     'select public.request_captured_document_cancellation(%L::uuid,%s,%L)',
-    cancel_operation_id, 3, 'owner_cancelled'
+    cancel_operation_id, 5, 'owner_cancelled'
   ),
-  'exact owner cancellation replay is idempotent'
+  'exact pending owner cancellation replay is idempotent'
 )
 from captured_operation_test_state;
 reset role;
+select is(
+  (
+    select status || ':' || operation_revision::text || ':' ||
+      (cancel_requested_at is not null)::text
+    from private.captured_document_operations operation_record
+    join captured_operation_test_state state_record
+      on state_record.cancel_operation_id = operation_record.id
+  ),
+  'generating:6:true',
+  'active work retains its lease and exposes durable cancellation intent'
+);
+select ok(
+  pg_temp.raises_matching(
+    format(
+      'select public.cancel_captured_document_operation(%L::uuid,%s,%L::uuid,%L)',
+      cancel_operation_id, 6, lease_token, 'owner_cancelled'
+    ),
+    '%CAPTURED_PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED%'
+  ),
+  'the lease holder cannot release cancellation while a provider attempt is unresolved'
+)
+from captured_operation_test_state;
+select lives_ok(
+  pg_temp.provider_attempt_sql(
+    cancel_operation_id, 6, lease_token, 'generation', 1, 'deep',
+    'gpt-test-deep', 'medium', 'response-cancelled-late', 'succeeded', 21, 34,
+    null, null, '2026-08-31T02:00:00Z', '2026-08-31T02:00:02Z',
+    repeat('d', 64), '{"sections":[]}'::jsonb
+  ),
+  'the lease holder reconciles the completed provider attempt with actual usage'
+)
+from captured_operation_test_state;
+select is(
+  (
+    select usage_record.input_tokens::text || ':' ||
+      usage_record.output_tokens::text
+    from public.usage_ledger usage_record
+    join private.captured_document_provider_attempts attempt_record
+      on usage_record.generation_request_id =
+        'captured-attempt:' || attempt_record.id::text
+    join captured_operation_test_state state_record
+      on state_record.cancel_operation_id = attempt_record.operation_id
+  ),
+  '21:34',
+  'late provider usage is settled exactly once before the document reservation is released'
+);
+select lives_ok(
+  format(
+    'select public.cancel_captured_document_operation(%L::uuid,%s,%L::uuid,%L)',
+    cancel_operation_id, 7, lease_token, 'owner_cancelled'
+  ),
+  'the lease holder terminalizes cancellation after provider reconciliation'
+)
+from captured_operation_test_state;
 select is(
   (
     select status
@@ -1289,7 +2067,7 @@ select is(
       on state_record.cancel_operation_id = operation_record.id
   ),
   'cancelled',
-  'cancelled state is durable and rejects delayed provider writes'
+  'cancelled state is durable after the in-flight attempt is reconciled'
 );
 select is(
   (
@@ -1300,6 +2078,18 @@ select is(
   ),
   0,
   'cancelled work consumes no completed-document allowance'
+);
+select is(
+  (
+    select reservation_record.status
+    from private.document_allowance_reservations reservation_record
+    join captured_operation_test_state state_record
+      on state_record.cancel_operation_id = reservation_record.captured_operation_id
+    order by reservation_record.attempt_number desc
+    limit 1
+  ),
+  'released',
+  'terminal cancellation releases only the residual document allowance reservation'
 );
 
 select lives_ok(
@@ -1426,6 +2216,152 @@ select is(
   ),
   'legacy_unversioned',
   'legacy compatibility never relabels historical document provenance'
+);
+
+-- Simulate rows that existed before the additive brand-snapshot migration.
+-- Disable only the new INSERT capture trigger for these fixtures; the v0 table
+-- constraints and public receipt/completion contracts remain live.
+alter table private.captured_document_exports
+  disable trigger capture_captured_export_brand_snapshot_before_insert;
+insert into private.captured_document_exports(
+  id, operation_id, approval_id, document_id, user_id, document_revision,
+  ledger_version, format, idempotency_key, request_sha256, status,
+  storage_path, artifact_sha256, renderer_version,
+  artifact_validation_result, completion_sha256, completed_at,
+  validation_result, brand_snapshot_version, brand_snapshot,
+  brand_snapshot_sha256
+)
+select
+  '97000000-0000-4000-8000-000000000001',
+  operation_record.id,
+  approval_record.id,
+  operation_record.document_id,
+  operation_record.user_id,
+  operation_record.latest_document_revision,
+  operation_record.ledger_version,
+  'pdf',
+  'historical-v0-completed',
+  repeat('c', 64),
+  'created',
+  'captured-exports/' || operation_record.user_id::text ||
+    '/97000000-0000-4000-8000-000000000001/document.pdf',
+  repeat('d', 64),
+  'renderer.historical.1',
+  '{"passed":true,"artifact_inspected":true}'::jsonb,
+  repeat('e', 64),
+  pg_catalog.clock_timestamp(),
+  approval_record.validation_result,
+  'prompted.export-brand-snapshot.legacy-unbound.v0',
+  '{"brand_kit":null}'::jsonb,
+  null
+from captured_operation_test_state state_record
+join private.captured_document_operations operation_record
+  on operation_record.id = state_record.operation_id
+join private.captured_document_approvals approval_record
+  on approval_record.operation_id = operation_record.id;
+
+insert into private.captured_document_exports(
+  id, operation_id, approval_id, document_id, user_id, document_revision,
+  ledger_version, format, idempotency_key, request_sha256, status,
+  validation_result, brand_snapshot_version, brand_snapshot,
+  brand_snapshot_sha256
+)
+select
+  '97000000-0000-4000-8000-000000000002',
+  operation_record.id,
+  approval_record.id,
+  operation_record.document_id,
+  operation_record.user_id,
+  operation_record.latest_document_revision,
+  operation_record.ledger_version,
+  'pdf',
+  'historical-v0-pending',
+  repeat('f', 64),
+  'requested',
+  approval_record.validation_result,
+  'prompted.export-brand-snapshot.legacy-unbound.v0',
+  '{"brand_kit":null}'::jsonb,
+  null
+from captured_operation_test_state state_record
+join private.captured_document_operations operation_record
+  on operation_record.id = state_record.operation_id
+join private.captured_document_approvals approval_record
+  on approval_record.operation_id = operation_record.id;
+alter table private.captured_document_exports
+  enable trigger capture_captured_export_brand_snapshot_before_insert;
+
+set local role service_role;
+select is(
+  public.get_captured_document_export_receipt(
+    state_record.owner_id,
+    '97000000-0000-4000-8000-000000000001',
+    state_record.operation_id
+  ) #>> '{brand_snapshot,snapshot_version}',
+  'prompted.export-brand-snapshot.legacy-unbound.v0',
+  'a completed historical v0 export remains explicitly unbound and replayable'
+)
+from captured_operation_test_state state_record;
+reset role;
+
+select lives_ok(
+  format(
+    'select public.complete_captured_document_export(%L::uuid,%L::uuid,%s,%L,%L,%L,%L::jsonb)',
+    '97000000-0000-4000-8000-000000000002',
+    operation_record.id,
+    operation_record.operation_revision,
+    'captured-exports/' || operation_record.user_id::text ||
+      '/97000000-0000-4000-8000-000000000002/document.pdf',
+    repeat('1', 64),
+    'renderer.historical.1',
+    pg_catalog.jsonb_build_object(
+      'passed', true,
+      'artifact_inspected', true,
+      'brand_snapshot_version',
+        'prompted.export-brand-snapshot.legacy-unbound.v0',
+      'brand_snapshot_sha256', null
+    )::text
+  ),
+  'an admitted historical v0 request completes only with explicit unbound evidence'
+)
+from captured_operation_test_state state_record
+join private.captured_document_operations operation_record
+  on operation_record.id = state_record.operation_id;
+
+delete from public.brand_kits
+where business_id = '91500000-0000-4000-8000-000000000001';
+insert into private.captured_document_exports(
+  id, operation_id, approval_id, document_id, user_id, document_revision,
+  ledger_version, format, idempotency_key, request_sha256, status,
+  validation_result
+)
+select
+  '97000000-0000-4000-8000-000000000003',
+  operation_record.id,
+  approval_record.id,
+  operation_record.document_id,
+  operation_record.user_id,
+  operation_record.latest_document_revision,
+  operation_record.ledger_version,
+  'pdf',
+  'new-v1-without-brand-row',
+  repeat('2', 64),
+  'requested',
+  approval_record.validation_result
+from captured_operation_test_state state_record
+join private.captured_document_operations operation_record
+  on operation_record.id = state_record.operation_id
+join private.captured_document_approvals approval_record
+  on approval_record.operation_id = operation_record.id;
+select ok(
+  (
+    select export_record.brand_snapshot_version =
+        'prompted.export-brand-snapshot.v1'
+      and export_record.brand_snapshot = '{"brand_kit":null}'::jsonb
+      and export_record.brand_snapshot_sha256 ~ '^[0-9a-f]{64}$'
+    from private.captured_document_exports export_record
+    where export_record.id = '97000000-0000-4000-8000-000000000003'
+  ),
+  'a new export without a brand row records a hashed v1 null snapshot rather than historical v0'
 );
 
 select * from finish();

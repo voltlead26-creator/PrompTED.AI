@@ -14,7 +14,7 @@ export interface ManualPlanState {
   updatedAt: string;
 }
 
-const STORAGE_PREFIX = "prompted:manual-plan:";
+const MANUAL_PLAN_RESOURCE = "manual-plan";
 
 function makeId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
@@ -79,40 +79,36 @@ export function moveManualPlanItem(
   return next;
 }
 
-export function loadGuestManualPlan(id: string): ManualPlanState | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${id}`);
-    return raw ? normaliseManualPlan(JSON.parse(raw)) : null;
-  } catch {
-    return null;
-  }
+function isManualPlan(value: unknown): value is ManualPlanState {
+  return normaliseManualPlan(value) !== null;
 }
 
-export function saveGuestManualPlan(plan: ManualPlanState): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    window.localStorage.setItem(`${STORAGE_PREFIX}${plan.id}`, JSON.stringify(plan));
-    return true;
-  } catch {
-    return false;
-  }
+export function loadManualPlan(
+  scope: DeviceDataScope,
+  id: string,
+): ManualPlanState | null {
+  const value = readDeviceData(scope, MANUAL_PLAN_RESOURCE, id, isManualPlan);
+  const plan = normaliseManualPlan(value);
+  return plan?.id === id ? plan : null;
 }
 
-export function listGuestManualPlans(): ManualPlanState[] {
-  if (typeof window === "undefined") return [];
-  const plans: ManualPlanState[] = [];
-  try {
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const key = window.localStorage.key(index);
-      if (!key?.startsWith(STORAGE_PREFIX)) continue;
-      const raw = window.localStorage.getItem(key);
-      if (!raw) continue;
-      const plan = normaliseManualPlan(JSON.parse(raw));
-      if (plan) plans.push(plan);
-    }
-  } catch {
-    return [];
-  }
-  return plans.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+export function saveManualPlan(scope: DeviceDataScope, plan: ManualPlanState): boolean {
+  const normalized = normaliseManualPlan(plan);
+  if (!normalized || normalized.id !== plan.id) return false;
+  return writeDeviceData(scope, MANUAL_PLAN_RESOURCE, plan.id, normalized);
 }
+
+export function listManualPlans(scope: DeviceDataScope): ManualPlanState[] {
+  return listDeviceData(scope, MANUAL_PLAN_RESOURCE, isManualPlan)
+    .flatMap(({ id, value }) => {
+      const plan = normaliseManualPlan(value);
+      return plan?.id === id ? [plan] : [];
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+import {
+  listDeviceData,
+  readDeviceData,
+  writeDeviceData,
+  type DeviceDataScope,
+} from "@/lib/owner-bound-device-store";

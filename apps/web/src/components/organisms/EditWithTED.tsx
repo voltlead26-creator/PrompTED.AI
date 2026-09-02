@@ -8,6 +8,7 @@ import styles from "./EditWithTED.module.css";
 
 interface EditWithTEDProps {
   streaming: boolean;
+  reconciling?: boolean;
   hasSelection: boolean;
   error?: string | null;
   onRun: (action: EditAction, instruction?: string) => void;
@@ -33,11 +34,13 @@ const nextId = () => (messageCounter += 1);
 
 export function EditWithTED({
   streaming,
+  reconciling = false,
   hasSelection,
   error,
   onRun,
   onCancel,
 }: EditWithTEDProps) {
+  const unavailable = streaming || reconciling;
   const [messages, setMessages] = useState<ThreadMessage[]>([
     {
       id: nextId(),
@@ -71,7 +74,7 @@ export function EditWithTED({
   }, [streaming, error]);
 
   const dispatch = (action: EditAction, said: string, instruction?: string) => {
-    if (streaming) return;
+    if (unavailable) return;
     addMessage("user", said);
     awaitingRef.current = true;
     const trimmed = instruction?.trim();
@@ -90,7 +93,7 @@ export function EditWithTED({
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || unavailable) return;
     dispatch("improve", text, text);
     setInput("");
   };
@@ -98,7 +101,10 @@ export function EditWithTED({
   const handleCancel = () => {
     awaitingRef.current = false;
     onCancel();
-    addMessage("ted", "Stopped. Your existing wording is unchanged.");
+    addMessage(
+      "ted",
+      "Cancellation requested. TED is reconciling the durable edit before another attempt can start. Your existing wording has not been changed.",
+    );
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -118,7 +124,10 @@ export function EditWithTED({
 
       <div className={styles.thread} role="log" aria-live="polite">
         {messages.map((message) => (
-          <div key={message.id} className={`${styles.msg} ${message.role === "user" ? styles.user : styles.ted}`}>
+          <div
+            key={message.id}
+            className={`${styles.msg} ${message.role === "user" ? styles.user : styles.ted}`}
+          >
             {message.role === "ted" && (
               <span className={styles.avatar} aria-hidden="true">
                 <Icon name="message-chatbot" size={15} />
@@ -127,10 +136,16 @@ export function EditWithTED({
             <p className={styles.msgText}>{message.text}</p>
           </div>
         ))}
-        {streaming && (
+        {unavailable && (
           <div className={`${styles.msg} ${styles.ted}`}>
-            <span className={styles.avatar} aria-hidden="true"><Icon name="loader-2" size={15} /></span>
-            <p className={styles.msgText}>TED is preparing a suggestion…</p>
+            <span className={styles.avatar} aria-hidden="true">
+              <Icon name="loader-2" size={15} />
+            </span>
+            <p className={styles.msgText}>
+              {reconciling
+                ? "TED is reconciling the durable edit…"
+                : "TED is preparing a suggestion…"}
+            </p>
           </div>
         )}
         <div ref={threadEndRef} />
@@ -143,7 +158,7 @@ export function EditWithTED({
             type="button"
             className={styles.chip}
             onClick={() => handleQuickAction(action.id, action.said)}
-            disabled={streaming}
+            disabled={unavailable}
           >
             <Icon name={action.icon} size={14} />
             {action.label}
@@ -159,17 +174,19 @@ export function EditWithTED({
           onKeyDown={handleKeyDown}
           placeholder="Tell TED what to change…"
           rows={2}
-          disabled={streaming}
+          disabled={unavailable}
           aria-label="Tell TED what to change"
         />
         {streaming ? (
-          <Button variant="ghost" size="sm" onClick={handleCancel}>Cancel</Button>
+          <Button variant="ghost" size="sm" onClick={handleCancel}>
+            Cancel
+          </Button>
         ) : (
           <Button
             variant="primary"
             size="sm"
             onClick={handleSend}
-            disabled={!input.trim()}
+            disabled={unavailable || !input.trim()}
             leadingIcon={<Icon name="arrow-right" size={16} />}
           >
             Suggest

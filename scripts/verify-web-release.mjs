@@ -11,6 +11,7 @@
 // pay for a full build before finding out about it.
 
 import { spawn } from "node:child_process";
+import { resolveVerificationEnvironment } from "./verify-web-environment.mjs";
 
 const STEPS = [
   // Tests the checker's own logic (scripts/check-deployment-contract.test.mjs)
@@ -31,12 +32,13 @@ const STEPS = [
   { name: "check:progressive-bundles", command: "pnpm", args: ["check:progressive-bundles"] },
 ];
 
-function run(step) {
+function run(step, environment) {
   return new Promise((resolve, reject) => {
     console.log(`\n> verify:web -- ${step.name}`);
     const child = spawn(step.command, step.args, {
       stdio: "inherit",
       shell: process.platform === "win32",
+      env: environment,
     });
     child.on("close", (code) => {
       if (code === 0) resolve();
@@ -47,8 +49,9 @@ function run(step) {
 }
 
 async function main() {
+  const environment = resolveVerificationEnvironment(process.env);
   for (const step of STEPS) {
-    await run(step);
+    await run(step, environment);
   }
   console.log("\nverify:web passed.");
 }

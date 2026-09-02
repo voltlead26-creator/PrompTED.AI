@@ -50,6 +50,8 @@ Call the Edge Function with an authenticated Supabase session:
 const { data, error } = await supabase.functions.invoke("transport-victoria", {
   body: {
     action: "departures",
+    request_id: crypto.randomUUID(),
+    consent: { publicTransportLookup: true },
     routeType: 0,
     stopId: 1071,
     maxResults: 10,
@@ -57,11 +59,24 @@ const { data, error } = await supabase.functions.invoke("transport-victoria", {
 });
 ```
 
-The UI should translate provider failures into a neutral fallback and must not expose raw upstream errors or credentials.
+Create one `request_id` for an intentional lookup and reuse that same ID only
+when retrying its acknowledgement. An intentionally refreshed lookup needs a
+new ID. Every action requires explicit `publicTransportLookup` consent. A
+`search` or `nearby` request that sends coordinates also requires
+`preciseLocation: true`; the function validates Victorian bounds and rounds
+coordinates to three decimal degrees (about 110 metres of latitude) before
+external egress. Action-specific field allow-lists prevent unrelated document
+or profile content from being sent.
+
+The UI should translate provider failures into a neutral fallback and must not
+expose raw upstream errors or credentials. A processing, completed, deletion-
+fenced, or reconciliation-required receipt is not permission to dispatch the
+same lookup again.
 
 ## Deployment gate
 
-Before enabling the transport feature:
+Before enabling the transport feature, and with separate hosted-action
+authorization:
 
 1. Set both secrets in the production Supabase project.
 2. Run the PTV signing unit tests.

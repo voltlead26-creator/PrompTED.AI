@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import type { BrandKit, Section } from "@prompted/shared";
 import { sanitiseSectionContent } from "@/lib/sanitise";
+import { isWorkspaceSectionContentLoaded } from "@/lib/workspace-initial-state";
 import styles from "./LivePreview.module.css";
 
 /** True when content carries HTML tags (rich text from the editor). */
@@ -55,7 +56,11 @@ export function LivePreview({
             <h2 className={styles.heading} style={headingStyle}>
               {section.name}
             </h2>
-            {section.content.trim() ? (
+            {!isWorkspaceSectionContentLoaded(section) ? (
+              <p className={styles.placeholder}>
+                Saved wording for this section has not been loaded into this preview.
+              </p>
+            ) : section.content.trim() ? (
               looksLikeHtml(section.content) ? (
                 <div
                   className={styles.richBody}

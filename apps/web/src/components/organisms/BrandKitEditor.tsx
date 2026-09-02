@@ -1,95 +1,132 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Input } from "@/components/atoms/Input";
 import { useToast } from "@/components/atoms/Toast";
-import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/providers";
+import type { BrandKit } from "@prompted/shared";
+import {
+  ApiError,
+  saveBrandKitOperation,
+} from "@prompted/shared/api-client";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+  type OwnerDispatchLease,
+} from "@/lib/browser-principal-state";
 import styles from "./BrandKitEditor.module.css";
 
 interface BrandKitEditorProps {
+  ownerUserId: string;
   businessId: string;
-  initial?: {
-    logo_url?: string | null;
-    primary_colour?: string;
-    secondary_colour?: string | null;
-    footer_text?: string | null;
-  };
-  onSave?: () => void;
+  initial?: BrandKit;
+  onSave?: (brandKit: BrandKit) => void;
 }
 
+const ALLOWED_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+
 /**
- * BrandKitEditor — logo upload, primary colour picker, footer text.
- * Saves to Supabase Storage (logo) and brand_kits table.
+ * BrandKitEditor — local logo preview, colours, and footer text. Selection is
+ * deliberately side-effect free; Save submits one durable server operation.
  */
-export function BrandKitEditor({ businessId, initial, onSave }: BrandKitEditorProps) {
+export function BrandKitEditor({ ownerUserId, businessId, initial, onSave }: BrandKitEditorProps) {
+  const { user } = useAuth();
   const { showToast } = useToast();
   const fileInputId = useId();
   const fileRef = useRef<HTMLInputElement>(null);
+  const saveActionRef = useRef<OwnerDispatchLease | null>(null);
 
-  const [logoUrl, setLogoUrl] = useState(initial?.logo_url ?? null);
+  const [authoritative, setAuthoritative] = useState<BrandKit | null>(initial ?? null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [logoAction, setLogoAction] = useState<"keep" | "replace" | "remove">("keep");
   const [primaryColour, setPrimaryColour] = useState(initial?.primary_colour ?? "#DC5430");
   const [secondaryColour, setSecondaryColour] = useState(initial?.secondary_colour ?? "");
   const [footerText, setFooterText] = useState(initial?.footer_text ?? "");
-  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const logoUrl = logoAction === "remove"
+    ? null
+    : previewUrl ?? authoritative?.logo_url ?? null;
 
-  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  function handleLogoSelection(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size < 1 || file.size > MAX_LOGO_BYTES) {
       showToast({ message: "Logo must be under 5 MB.", tone: "error" });
       return;
     }
-    if (!file.type.startsWith("image/")) {
-      showToast({ message: "Please upload an image file.", tone: "error" });
+    if (!ALLOWED_LOGO_TYPES.has(file.type)) {
+      showToast({ message: "Please upload a PNG, JPG or WebP image.", tone: "error" });
       return;
     }
-
-    setUploading(true);
-    const supabase = createClient();
-    const ext = file.name.split(".").pop() ?? "png";
-    const path = `brand-kits/${businessId}/logo.${ext}`;
-    const { error } = await supabase.storage
-      .from("assets")
-      .upload(path, file, { upsert: true });
-
-    if (error) {
-      showToast({ message: "Logo upload failed. Please try again.", tone: "error" });
-      setUploading(false);
-      return;
+    if (!user?.id || user.id.trim().toLowerCase() !== ownerUserId.trim().toLowerCase()) return;
+    try {
+      const nextPreviewUrl = URL.createObjectURL(file);
+      setSelectedFile(file);
+      setPreviewUrl(nextPreviewUrl);
+      setLogoAction("replace");
+      setDirty(true);
+      showToast({ message: "Logo selected. Save brand kit to apply it.", tone: "success" });
+    } catch {
+      showToast({ message: "The logo preview could not be prepared.", tone: "error" });
     }
-
-    const { data } = supabase.storage.from("assets").getPublicUrl(path);
-    setLogoUrl(data.publicUrl);
-    setUploading(false);
-    showToast({ message: "Logo uploaded.", tone: "success" });
   }
 
   async function handleSave() {
-    setSaving(true);
-    const supabase = createClient();
-    const { error } = await supabase.from("brand_kits").upsert(
-      {
-        business_id: businessId,
-        logo_url: logoUrl,
-        primary_colour: primaryColour,
-        secondary_colour: secondaryColour || null,
-        footer_text: footerText || null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "business_id" },
-    );
-    setSaving(false);
-
-    if (error) {
-      showToast({ message: "Could not save brand kit. Please try again.", tone: "error" });
+    if (!user?.id || user.id.trim().toLowerCase() !== ownerUserId.trim().toLowerCase()) return;
+    let requestContext: OwnerDispatchLease;
+    try {
+      requestContext = captureOwnerDispatch(ownerUserId);
+    } catch {
+      showToast({ message: "Your signed-in account changed. Please save again.", tone: "error" });
       return;
     }
-
-    showToast({ message: "Brand kit saved.", tone: "success" });
-    onSave?.();
+    saveActionRef.current = requestContext;
+    setSaving(true);
+    try {
+      const saved = await saveBrandKitOperation({
+        businessId,
+        expectedRevision: authoritative?.revision ?? 0,
+        logoAction,
+        primaryColour,
+        secondaryColour: secondaryColour || null,
+        footerText: footerText || null,
+        file: logoAction === "replace" ? selectedFile : null,
+      }, requestContext);
+      requestContext.assertCurrent();
+      setAuthoritative(saved);
+      setPrimaryColour(saved.primary_colour);
+      setSecondaryColour(saved.secondary_colour ?? "");
+      setFooterText(saved.footer_text ?? "");
+      setSelectedFile(null);
+      setPreviewUrl(null);
+      setLogoAction("keep");
+      setDirty(false);
+      showToast({ message: "Brand kit saved.", tone: "success" });
+      onSave?.(saved);
+    } catch (error) {
+      if (ownerDispatchIsCurrent(requestContext)) {
+        const message = error instanceof ApiError && error.code === "BRAND_KIT_REVISION_CONFLICT"
+          ? "The brand kit changed. Reload it before saving again."
+          : "Could not save brand kit safely. Please try the same save again.";
+        showToast({ message, tone: "error" });
+      }
+    } finally {
+      if (saveActionRef.current === requestContext) {
+        saveActionRef.current = null;
+        setSaving(false);
+      }
+    }
   }
 
   return (
@@ -110,17 +147,16 @@ export function BrandKitEditor({ businessId, initial, onSave }: BrandKitEditorPr
           id={fileInputId}
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/png,image/jpeg,image/webp"
           className="sr-only"
           aria-labelledby={`${fileInputId}-label`}
-          onChange={handleLogoUpload}
+          onChange={handleLogoSelection}
         />
         <Button
           variant="ghost"
           size="sm"
-          loading={uploading}
-          loadingLabel="Uploading logo…"
           onClick={() => fileRef.current?.click()}
+          disabled={saving}
         >
           {logoUrl ? "Replace logo" : "Upload logo"}
         </Button>
@@ -128,13 +164,19 @@ export function BrandKitEditor({ businessId, initial, onSave }: BrandKitEditorPr
           <Button
             variant="text"
             size="sm"
-            onClick={() => setLogoUrl(null)}
+            onClick={() => {
+              setSelectedFile(null);
+              setPreviewUrl(null);
+              setLogoAction("remove");
+              setDirty(true);
+            }}
+            disabled={saving}
             aria-label="Remove logo"
           >
             Remove
           </Button>
         )}
-        <p className={styles.hint}>PNG, JPG or SVG, max 5 MB.</p>
+        <p className={styles.hint}>PNG, JPG or WebP, max 5 MB.</p>
       </div>
 
       {/* Colours */}
@@ -148,14 +190,20 @@ export function BrandKitEditor({ businessId, initial, onSave }: BrandKitEditorPr
               id="primary-colour"
               type="color"
               value={primaryColour}
-              onChange={(e) => setPrimaryColour(e.target.value)}
+              onChange={(e) => {
+                setPrimaryColour(e.target.value);
+                setDirty(true);
+              }}
               className={styles.colourSwatch}
               aria-label="Primary colour picker"
             />
             <input
               type="text"
               value={primaryColour}
-              onChange={(e) => setPrimaryColour(e.target.value)}
+              onChange={(e) => {
+                setPrimaryColour(e.target.value);
+                setDirty(true);
+              }}
               className={styles.colourHex}
               maxLength={7}
               aria-label="Primary colour hex code"
@@ -174,14 +222,20 @@ export function BrandKitEditor({ businessId, initial, onSave }: BrandKitEditorPr
               id="secondary-colour"
               type="color"
               value={secondaryColour || "#efe5d4"}
-              onChange={(e) => setSecondaryColour(e.target.value)}
+              onChange={(e) => {
+                setSecondaryColour(e.target.value);
+                setDirty(true);
+              }}
               className={styles.colourSwatch}
               aria-label="Secondary colour picker"
             />
             <input
               type="text"
               value={secondaryColour}
-              onChange={(e) => setSecondaryColour(e.target.value)}
+              onChange={(e) => {
+                setSecondaryColour(e.target.value);
+                setDirty(true);
+              }}
               className={styles.colourHex}
               maxLength={7}
               placeholder="#efe5d4"
@@ -196,7 +250,10 @@ export function BrandKitEditor({ businessId, initial, onSave }: BrandKitEditorPr
         label="Footer text"
         type="text"
         value={footerText}
-        onChange={(e) => setFooterText(e.target.value)}
+        onChange={(e) => {
+          setFooterText(e.target.value);
+          setDirty(true);
+        }}
         hint="Appears at the bottom of every exported document."
         placeholder="© 2026 Acme Co. All rights reserved."
         maxLength={200}
@@ -226,10 +283,14 @@ export function BrandKitEditor({ businessId, initial, onSave }: BrandKitEditorPr
       </div>
 
       <div className={styles.actions}>
+        <p className={styles.hint} role="status">
+          {dirty ? "Unsaved brand kit changes." : "Brand kit is saved."}
+        </p>
         <Button
           onClick={handleSave}
           loading={saving}
           loadingLabel="Saving brand kit…"
+          disabled={!dirty}
         >
           Save brand kit
         </Button>

@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
+import {
+  preflightUploadMetadata,
+  UPLOAD_ACCEPT_ATTRIBUTE,
+} from "@prompted/shared/ingest-upload";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Input } from "@/components/atoms/Input";
@@ -9,6 +13,11 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { useToast } from "@/components/atoms/Toast";
 import { useAuth } from "@/components/providers";
 import { ensureApiConfigured } from "@/lib/api";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+  type OwnerDispatchLease,
+} from "@/lib/browser-principal-state";
 import {
   createResumeDownloadUrl,
   fetchProfileResources,
@@ -89,18 +98,23 @@ export default function ProfilePage() {
     [],
   );
 
-  async function reload() {
+  async function reload(existingLease?: OwnerDispatchLease) {
+    if (!user?.id) return;
+    const requestContext = existingLease ?? captureOwnerDispatch(user.id);
     setLoading(true);
     setError(null);
     try {
-      const next = await fetchProfileResources();
+      const next = await fetchProfileResources(requestContext, user.email ?? "");
+      requestContext.assertCurrent();
       setSnapshot(next);
       setDetails(next.details);
       setSavedDetails(next.details);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "TED couldn't load your Profile.");
+      if (ownerDispatchIsCurrent(requestContext)) {
+        setError(caught instanceof Error ? caught.message : "TED couldn't load your Profile.");
+      }
     } finally {
-      setLoading(false);
+      if (ownerDispatchIsCurrent(requestContext)) setLoading(false);
     }
   }
 
@@ -121,20 +135,27 @@ export default function ProfilePage() {
 
   async function handleSave(event: React.FormEvent) {
     event.preventDefault();
-    if (!dirty || saving) return;
+    if (!user?.id || !dirty || saving) return;
+    const requestContext = captureOwnerDispatch(user.id);
+    const submittedDetails = details;
     setSaving(true);
     try {
-      await saveProfileDetails(details);
-      setSavedDetails(details);
-      setSnapshot((current) => (current ? { ...current, details } : current));
+      await saveProfileDetails(submittedDetails, requestContext);
+      requestContext.assertCurrent();
+      setSavedDetails(submittedDetails);
+      setSnapshot((current) =>
+        current ? { ...current, details: submittedDetails } : current,
+      );
       showToast({ message: "Profile saved.", tone: "success" });
     } catch (caught) {
-      showToast({
-        message: caught instanceof Error ? caught.message : "Your Profile couldn't be saved.",
-        tone: "error",
-      });
+      if (ownerDispatchIsCurrent(requestContext)) {
+        showToast({
+          message: caught instanceof Error ? caught.message : "Your Profile couldn't be saved.",
+          tone: "error",
+        });
+      }
     } finally {
-      setSaving(false);
+      if (ownerDispatchIsCurrent(requestContext)) setSaving(false);
     }
   }
 
@@ -145,29 +166,46 @@ export default function ProfilePage() {
   async function handleResumeUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file || uploading) return;
+    if (!user?.id || !file || uploading) return;
+    const preflight = preflightUploadMetadata({
+      fileName: file.name,
+      mimeType: file.type,
+      byteLength: file.size,
+    });
+    if (!preflight.ok) {
+      showToast({ message: preflight.message, tone: "error" });
+      return;
+    }
+    const requestContext = captureOwnerDispatch(user.id);
     setUploading(true);
     try {
       ensureApiConfigured();
-      await uploadMasterResume(file);
-      await reload();
+      await uploadMasterResume(file, requestContext);
+      requestContext.assertCurrent();
+      await reload(requestContext);
+      requestContext.assertCurrent();
       showToast({
         message: "Current resume updated. Your previous version is still available.",
         tone: "success",
       });
     } catch (caught) {
-      showToast({
-        message: caught instanceof Error ? caught.message : "TED couldn't save that resume.",
-        tone: "error",
-      });
+      if (ownerDispatchIsCurrent(requestContext)) {
+        showToast({
+          message: caught instanceof Error ? caught.message : "TED couldn't save that resume.",
+          tone: "error",
+        });
+      }
     } finally {
-      setUploading(false);
+      if (ownerDispatchIsCurrent(requestContext)) setUploading(false);
     }
   }
 
   async function openResume(resource: ProfileResumeResource, download = false) {
+    if (!user?.id) return;
+    const requestContext = captureOwnerDispatch(user.id);
     try {
-      const url = await createResumeDownloadUrl(resource);
+      const url = await createResumeDownloadUrl(resource, requestContext);
+      requestContext.assertCurrent();
       if (download) {
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -180,28 +218,35 @@ export default function ProfilePage() {
         window.open(url, "_blank", "noopener,noreferrer");
       }
     } catch (caught) {
-      showToast({
-        message: caught instanceof Error ? caught.message : "TED couldn't open that resume file.",
-        tone: "error",
-      });
+      if (ownerDispatchIsCurrent(requestContext)) {
+        showToast({
+          message: caught instanceof Error ? caught.message : "TED couldn't open that resume file.",
+          tone: "error",
+        });
+      }
     }
   }
 
   async function confirmRestore() {
-    if (!snapshot?.previousResume || restoring) return;
+    if (!user?.id || !snapshot?.previousResume || restoring) return;
+    const requestContext = captureOwnerDispatch(user.id);
     setRestoring(true);
     try {
-      await restorePreviousResume();
+      await restorePreviousResume(requestContext);
+      requestContext.assertCurrent();
       setRestoreConfirm(false);
-      await reload();
+      await reload(requestContext);
+      requestContext.assertCurrent();
       showToast({ message: "Previous resume restored as Current.", tone: "success" });
     } catch (caught) {
-      showToast({
-        message: caught instanceof Error ? caught.message : "TED couldn't restore that resume.",
-        tone: "error",
-      });
+      if (ownerDispatchIsCurrent(requestContext)) {
+        showToast({
+          message: caught instanceof Error ? caught.message : "TED couldn't restore that resume.",
+          tone: "error",
+        });
+      }
     } finally {
-      setRestoring(false);
+      if (ownerDispatchIsCurrent(requestContext)) setRestoring(false);
     }
   }
 
@@ -399,7 +444,7 @@ export default function ProfilePage() {
               ref={fileRef}
               className={styles.hiddenInput}
               type="file"
-              accept=".pdf,.docx,.txt,.md,.csv"
+              accept={UPLOAD_ACCEPT_ATTRIBUTE}
               onChange={handleResumeUpload}
               tabIndex={-1}
               aria-hidden="true"

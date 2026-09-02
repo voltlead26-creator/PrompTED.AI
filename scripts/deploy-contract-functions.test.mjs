@@ -53,6 +53,63 @@ test("active function names are validated before deployment", () => {
   );
 });
 
+test("active function dependencies deploy before their consumers", () => {
+  assert.deepEqual(
+    getActiveFunctionNames({
+      functions: {
+        "ingest-upload": {
+          status: "active",
+          requiredFunctions: ["extract-upload"],
+        },
+        clarify: { status: "active" },
+        "extract-upload": { status: "active" },
+      },
+    }),
+    ["extract-upload", "ingest-upload", "clarify"],
+  );
+});
+
+test("function dependency ordering rejects missing, inactive, and cyclic dependencies", () => {
+  assert.throws(
+    () => getActiveFunctionNames({
+      functions: {
+        "ingest-upload": {
+          status: "active",
+          requiredFunctions: ["extract-upload"],
+        },
+      },
+    }),
+    /missing active function dependency/i,
+  );
+  assert.throws(
+    () => getActiveFunctionNames({
+      functions: {
+        "ingest-upload": {
+          status: "active",
+          requiredFunctions: ["extract-upload"],
+        },
+        "extract-upload": { status: "dormant" },
+      },
+    }),
+    /missing active function dependency/i,
+  );
+  assert.throws(
+    () => getActiveFunctionNames({
+      functions: {
+        "ingest-upload": {
+          status: "active",
+          requiredFunctions: ["extract-upload"],
+        },
+        "extract-upload": {
+          status: "active",
+          requiredFunctions: ["ingest-upload"],
+        },
+      },
+    }),
+    /cyclic function dependency/i,
+  );
+});
+
 test("buildSupabaseDeployArgs keeps every derived value in a separate argument", () => {
   assert.deepEqual(
     buildSupabaseDeployArgs(["clarify", "generate-document"], PROJECT_REF),
@@ -102,6 +159,57 @@ test("deployContractFunctions disables shell evaluation", async () => {
       options: { stdio: "inherit", shell: false },
     },
   ]);
+});
+
+test("deployContractFunctions completes dependency batches before consumers", async () => {
+  const calls = [];
+  await deployContractFunctions({
+    manifest: {
+      projectRef: PROJECT_REF,
+      functions: {
+        "ingest-upload": {
+          status: "active",
+          requiredFunctions: ["extract-upload"],
+        },
+        "extract-upload": { status: "active" },
+      },
+    },
+    requestedProjectRef: PROJECT_REF,
+    spawnImpl: (command, args) => {
+      calls.push({ command, args });
+      return Promise.resolve();
+    },
+  });
+  assert.deepEqual(calls.map((call) => call.args.slice(0, 3)), [
+    ["functions", "deploy", "extract-upload"],
+    ["functions", "deploy", "ingest-upload"],
+  ]);
+});
+
+test("deployContractFunctions stops before consumers when a dependency batch fails", async () => {
+  const calls = [];
+  await assert.rejects(
+    deployContractFunctions({
+      manifest: {
+        projectRef: PROJECT_REF,
+        functions: {
+          "ingest-upload": {
+            status: "active",
+            requiredFunctions: ["extract-upload"],
+          },
+          "extract-upload": { status: "active" },
+        },
+      },
+      requestedProjectRef: PROJECT_REF,
+      spawnImpl: (_command, args) => {
+        calls.push(args);
+        return Promise.reject(new Error("synthetic dependency deploy failure"));
+      },
+    }),
+    /synthetic dependency deploy failure/,
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2], "extract-upload");
 });
 
 test("deployContractFunctions rejects hostile contract data before starting Supabase CLI", async () => {

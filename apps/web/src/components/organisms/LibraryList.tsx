@@ -101,14 +101,14 @@ const TAB_LABELS: Record<LibraryTab, string> = {
   templates: "Your Templates",
 };
 
-export function LibraryList({ userId: _userId }: LibraryListProps) {
+export function LibraryList({ userId }: LibraryListProps) {
   const [activeTab, setActiveTab] = useState<LibraryTab>("recents");
   const { items, loading, error, hasMore, load, toggleSaved } = useLibrary(activeTab);
 
   useEffect(() => {
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, [activeTab, userId]);
 
   return (
     <section className={styles.section} aria-label="Your documents">

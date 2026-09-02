@@ -401,6 +401,11 @@ select ok(
   'duplicate or non-contiguous section order is rejected'
 );
 
+-- This fixture represents an interrupted privileged write from before the
+-- atomic guest-import command. Browser outcome DML is intentionally denied;
+-- seed the historical partial unit as the database owner, then restore the
+-- same authenticated runtime identity for the behavior under test.
+reset role;
 insert into public.outcomes(
   id, user_id, situation_text, recommendation_payload, status, is_saved
 ) values (
@@ -434,6 +439,10 @@ insert into public.sections(
   '[]'::jsonb,
   true
 );
+select set_config(
+  'request.jwt.claim.sub', 'a2000000-0000-4000-8000-000000000001', true
+);
+set local role authenticated;
 
 select ok(
   pg_temp.raises_matching(

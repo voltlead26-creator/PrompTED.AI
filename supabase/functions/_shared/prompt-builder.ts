@@ -6,9 +6,9 @@
 // =====================================================
 
 import {
-  selectProfile,
-  renderProfile,
   type DocumentIntelligenceProfile,
+  renderProfile,
+  selectProfile,
 } from "./document-intelligence-profiles.ts";
 import { renderDocumentIntelligenceContract } from "./document-intelligence.ts";
 import { TED_WORKFLOW_POLICY } from "./ted-workflow-policy.ts";
@@ -19,7 +19,12 @@ import phase2Templates from "../../../packages/shared/src/templates/phase2-templ
   type: "json",
 };
 
-export type Domain = "employment" | "education" | "business" | "personal" | "finance";
+export type Domain =
+  | "employment"
+  | "education"
+  | "business"
+  | "personal"
+  | "finance";
 export type ReadingLevel = "simple" | "moderate" | "detailed";
 export type Tone = "casual" | "professional";
 export type DetailLevel = "low" | "medium" | "high";
@@ -31,7 +36,8 @@ export interface ClariPrefs {
   detailLevel?: DetailLevel;
 }
 
-const TED_PERSONA = `You are TED, a warm, capable Australian assistant built into PrompTED.
+const TED_PERSONA =
+  `You are TED, a warm, capable Australian assistant built into PrompTED.
 PrompTED is AI for the rest of us: it exists for non-tech-savvy people so they do not get left behind.
 The product's major enemy is confusion. Your job is to remove confusion and make the next step obvious.
 Your job is to help people produce exactly the right document, plan, or checklist for their situation.
@@ -41,7 +47,8 @@ Match the user's tone and language where available, while keeping the output app
 If asked who or what you are, say you are TED, PrompTED's assistant. Never name or reference any underlying AI model or provider.
 Never say "As an AI language model" or similar. You are TED.`.trim();
 
-const QUESTION_OPTIONS_RULE = `Selectable answers: when — and ONLY when — your question has a genuinely small, enumerable set of likely answers that would cover what almost anyone would say (e.g. "Is this a rental or a property you own?", "Full-time, part-time or casual?", a yes/no question), set "question_options" to those 3-4 answers as short plain-language phrases the user could tap instead of typing. Leave "question_options" null for any open-ended question — a name, a date, an amount, free-text detail, or anything where a real answer could reasonably fall outside a short fixed list. Never force-fit an open question into options, and never include "Other" as an option — the free-text box is always available alongside the choices.`;
+const QUESTION_OPTIONS_RULE =
+  `Selectable answers: when — and ONLY when — your question has a genuinely small, enumerable set of likely answers that would cover what almost anyone would say (e.g. "Is this a rental or a property you own?", "Full-time, part-time or casual?", a yes/no question), set "question_options" to those 3-4 answers as short plain-language phrases the user could tap instead of typing. Leave "question_options" null for any open-ended question — a name, a date, an amount, free-text detail, or anything where a real answer could reasonably fall outside a short fixed list. Never force-fit an open question into options, and never include "Other" as an option — the free-text box is always available alongside the choices.`;
 
 // The ground-truth list of catalogue names the model is allowed to choose
 // from. Without this, "canonical catalogue name" was an unverifiable
@@ -62,7 +69,9 @@ const CATALOGUE_NAMES: readonly string[] = Array.from(
 const CANONICAL_DOCUMENT_RULE = `Canonical document selection rule:
 - Interpret the user's meaning, goal, audience and intended use. Do not rely on exact wording or keyword matching.
 - Translate informal requests into the most appropriate established document, plan or checklist type.
-- The recommendation name MUST be exactly one of these PrompTED catalogue names, copied verbatim — never a phrase you compose, paraphrase, or adapt, even if it sounds plausible: ${CATALOGUE_NAMES.join(", ")}.
+- The recommendation name MUST be exactly one of these PrompTED catalogue names, copied verbatim — never a phrase you compose, paraphrase, or adapt, even if it sounds plausible: ${
+  CATALOGUE_NAMES.join(", ")
+}.
 - Examples: "help me work out what to say in the interview" means Interview Script; "questions I should prepare for" means Interview Preparation Questions; "my work history for applications" means Resume; "a letter explaining why I suit the role" means Cover Letter.
 - If nothing in that list is a good fit, choose the closest real catalogue name rather than inventing one — a close real match is always better than a made-up name, which cannot be produced at all.
 - Never return no matching sections when a plausible catalogue output or nearest-fit structure exists.
@@ -97,7 +106,8 @@ const DOMAIN_PACKS: Record<Domain, string> = {
 
 const ADVICE_BOUNDARY_NOTICES: Record<AdviceBoundary, string> = {
   none: "",
-  light: "Note: This document provides general guidance only. For decisions with significant legal, financial, or personal consequences, seek professional advice.",
+  light:
+    "Note: This document provides general guidance only. For decisions with significant legal, financial, or personal consequences, seek professional advice.",
   "high-stakes":
     "IMPORTANT: This document touches on a high-stakes area (legal, financial, medical, or regulatory). PrompTED provides document support only — not professional advice. The user must review this output with a qualified professional before relying on it for any consequential decision.",
 };
@@ -117,25 +127,72 @@ const BUSINESS_PROPOSAL_PROFILE: DocumentIntelligenceProfile = {
     "proposal document",
   ],
   domains: ["business"],
-  requiredInformation: ["who the proposal is for", "what is being proposed", "the problem or opportunity", "the requested decision or next step"],
-  highValueInformation: ["client or audience priorities", "scope and deliverables", "timeline", "pricing or budget range", "proof points or relevant experience", "assumptions and exclusions"],
-  clarificationQuestions: ["Who is the proposal for, and what decision do you want them to make?", "What are you proposing, and what problem does it solve?", "Do you have scope, timeline or pricing details to include?"],
-  recommendedUploads: ["client brief or request for proposal", "notes from discovery or sales calls", "pricing or quote details", "case studies or relevant proof", "scope of work or service details"],
-  inferableInformation: ["commercial proposal structure", "professional persuasive tone", "standard assumptions, exclusions and next-step framing"],
-  riskChecks: ["do not invent client names, prices, deadlines or proof points", "separate confirmed scope from assumptions", "make the ask and next step explicit", "include caveats where pricing or timing is indicative"],
-  outputStructure: ["cover / proposal title", "executive summary", "problem or opportunity", "proposed solution", "scope and deliverables", "timeline", "investment or pricing", "assumptions and exclusions", "next steps"],
+  requiredInformation: [
+    "who the proposal is for",
+    "what is being proposed",
+    "the problem or opportunity",
+    "the requested decision or next step",
+  ],
+  highValueInformation: [
+    "client or audience priorities",
+    "scope and deliverables",
+    "timeline",
+    "pricing or budget range",
+    "proof points or relevant experience",
+    "assumptions and exclusions",
+  ],
+  clarificationQuestions: [
+    "Who is the proposal for, and what decision do you want them to make?",
+    "What are you proposing, and what problem does it solve?",
+    "Do you have scope, timeline or pricing details to include?",
+  ],
+  recommendedUploads: [
+    "client brief or request for proposal",
+    "notes from discovery or sales calls",
+    "pricing or quote details",
+    "case studies or relevant proof",
+    "scope of work or service details",
+  ],
+  inferableInformation: [
+    "commercial proposal structure",
+    "professional persuasive tone",
+    "standard assumptions, exclusions and next-step framing",
+  ],
+  riskChecks: [
+    "do not invent client names, prices, deadlines or proof points",
+    "separate confirmed scope from assumptions",
+    "make the ask and next step explicit",
+    "include caveats where pricing or timing is indicative",
+  ],
+  outputStructure: [
+    "cover / proposal title",
+    "executive summary",
+    "problem or opportunity",
+    "proposed solution",
+    "scope and deliverables",
+    "timeline",
+    "investment or pricing",
+    "assumptions and exclusions",
+    "next steps",
+  ],
 };
 
 function isBusinessProposalHint(hint: string): boolean {
   const h = (hint || "").toLowerCase();
   if (!/\bproposal\b/.test(h)) return false;
-  if (/\b(funding proposal|grant proposal|investor pitch|pitch deck|raise capital|seeking investment)\b/.test(h)) {
+  if (
+    /\b(funding proposal|grant proposal|investor pitch|pitch deck|raise capital|seeking investment)\b/
+      .test(h)
+  ) {
     return false;
   }
-  return /\b(business proposal|client proposal|sales proposal|service proposal|project proposal|commercial proposal|scope proposal|proposal document|proposal)\b/.test(h);
+  return /\b(business proposal|client proposal|sales proposal|service proposal|project proposal|commercial proposal|scope proposal|proposal document|proposal)\b/
+    .test(h);
 }
 
-function selectSupplementalProfile(hint: string): DocumentIntelligenceProfile | null {
+function selectSupplementalProfile(
+  hint: string,
+): DocumentIntelligenceProfile | null {
   if (isBusinessProposalHint(hint)) return BUSINESS_PROPOSAL_PROFILE;
   return null;
 }
@@ -145,9 +202,13 @@ function clariInstruction(clari?: ClariPrefs): string {
   const parts: string[] = [];
 
   if (clari.readingLevel === "simple") {
-    parts.push("Use short sentences and everyday words. Avoid technical jargon.");
+    parts.push(
+      "Use short sentences and everyday words. Avoid technical jargon.",
+    );
   } else if (clari.readingLevel === "detailed") {
-    parts.push("Use precise, detailed language. Technical terms are welcome where appropriate.");
+    parts.push(
+      "Use precise, detailed language. Technical terms are welcome where appropriate.",
+    );
   }
 
   if (clari.tone === "casual") {
@@ -187,7 +248,7 @@ Use uploaded document text and persisted memory as active context.
 
 Job-search signal: set "job_search" to true ONLY when the user's LATEST message explicitly asks to find live job openings right now (e.g. "find me jobs near me", "show me current openings", "help me search for work"). It is false when the user merely mentions work, a role, an employer, a location, or a career topic; false when they are asking for a document, plan or advice about a job they already have or are applying for; and always false when they say they already have a job or are not looking. When unsure, set it to false and ask or recommend as normal.
 
-Respond in JSON: { "domain": "...", "situation": "...", "confidence": 0.0, "intent_clear": true/false, "question": "..." | null, "question_options": ["..."] | null, "recommendation": { ... } | null, "job_search": true/false }`,
+Respond in JSON: { "domain": "...", "situation": "...", "confidence": 0.0, "intent_clear": true/false, "question": "..." | null, "question_options": ["..."] | null, "recommendation": { ... } | null, "job_search": true/false, "missing_information": ["..."] }`,
 
   clarify: `Your task: continue TED's warm, adaptive clarification conversation.
 
@@ -218,7 +279,8 @@ ${CANONICAL_DOCUMENT_RULE}
 Return: { "primary": { "name": "...", "format": "...", "reason": "...", "use_case": "...", "benefits": ["..."] }, "alternatives": [ ... ] }
 Always include exactly 2 alternatives. Each must have a canonical catalogue name, format, reason, use_case, and benefits array.`,
 
-  document: `Your task: write the ACTUAL FINISHED document, section by section — the real, ready-to-send text the user will use. NOT a plan, outline, summary, code-like output, scaffold, or description of what the document should contain.
+  document:
+    `Your task: write the ACTUAL FINISHED document, section by section — the real, ready-to-send text the user will use. NOT a plan, outline, summary, code-like output, scaffold, or description of what the document should contain.
 
 Perspective — use the genre-appropriate voice while writing as the user or their organisation:
 - Use "I" and "my" for personal documents such as cover letters, application emails, complaint or resignation letters, and personal statements.
@@ -264,7 +326,8 @@ Rules:
 - "changes" is a short list (2-5 items) of plain-language, specific statements of what you changed and why, written for the user to scan — e.g. "Removed 'Commercially focused' as a standalone claim; folded the substance into the results list below." Omit anything that didn't actually change.
 Respond ONLY with JSON: { "content": "...", "changes": ["...", "..."] }`,
 
-  explain: `Your task: explain the provided document section in plain, useful English so the user understands what it means and what to look for.
+  explain:
+    `Your task: explain the provided document section in plain, useful English so the user understands what it means and what to look for.
 
 Rules:
 - Explain, do not rewrite.
@@ -306,8 +369,10 @@ export function buildSystemPrompt(opts: PromptOptions): string {
       profileHint: [opts.profileHint, opts.extra].filter(Boolean).join(" "),
     }));
 
-    const hint = [opts.profileHint, opts.extra, opts.domain].filter(Boolean).join(" ");
-    const profile = selectSupplementalProfile(hint) ?? selectProfile(hint, opts.domain);
+    const hint = [opts.profileHint, opts.extra, opts.domain].filter(Boolean)
+      .join(" ");
+    const profile = selectSupplementalProfile(hint) ??
+      selectProfile(hint, opts.domain);
     if (profile) parts.push(renderProfile(profile, opts.task));
   }
 

@@ -258,6 +258,7 @@ export async function callOpenAIResponses(
 
     const result = await routeRequest({
       task: adapterTask(String(body.task ?? control.task)),
+      logicalStageKey: "openai-proxy.primary",
       systemPrompt: input.systemPrompt,
       messages: input.messages,
       maxTokens: Number(body.max_output_tokens ?? 2_000),
@@ -270,6 +271,7 @@ export async function callOpenAIResponses(
     if (control.reviewOutput && adapterTask(control.task) === "document") {
       const reviewed = await routeRequest({
         task: "review",
+        logicalStageKey: "openai-proxy.review",
         systemPrompt: [
           "Review this document against its stated constraints.",
           "Correct unsupported overclaims, structure failures, and unclear wording.",

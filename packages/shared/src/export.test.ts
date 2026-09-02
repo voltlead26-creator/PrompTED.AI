@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Section } from "./types";
+import type { BrandKit, Section } from "./types";
 import {
   selectApprovedSections,
   assertExportable,
@@ -24,6 +24,30 @@ function section(overrides: Partial<Section>): Section {
     is_required: true,
     created_at: now,
     updated_at: now,
+    ...overrides,
+  };
+}
+
+const BUSINESS_ID = "b7000000-0000-4000-8000-000000000001";
+const OTHER_BUSINESS_ID = "b7000000-0000-4000-8000-000000000002";
+const LOGO_OPERATION_ID = "b9000000-0000-8000-8000-000000000001";
+
+function brandKit(overrides: Partial<BrandKit> = {}): BrandKit {
+  return {
+    id: "b8000000-0000-4000-8000-000000000001",
+    business_id: BUSINESS_ID,
+    logo_url: null,
+    primary_colour: "#dc5430",
+    secondary_colour: null,
+    footer_text: null,
+    revision: 1,
+    logo_operation_id: null,
+    logo_storage_path: null,
+    logo_content_sha256: null,
+    logo_media_type: null,
+    logo_byte_length: null,
+    logo_status: "ready",
+    updated_at: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -156,19 +180,16 @@ describe("buildExportHtml", () => {
 
   it("applies brand kit colour, logo, and footer", () => {
     const logoUrl =
-      "https://project.supabase.co/storage/v1/object/public/assets/brand-kits/biz/logo.png";
+      `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/logo.png`;
     const html = buildExportHtml({
       title: "Doc",
       sections: [section({ name: "Intro", content: "hi", status: "approved" })],
-      brandKit: {
-        id: "bk",
-        business_id: "biz",
+      brandKit: brandKit({
         logo_url: logoUrl,
         primary_colour: "#123456",
-        secondary_colour: null,
         footer_text: "ACME Pty Ltd",
-        updated_at: "2026-01-01T00:00:00.000Z",
-      },
+        logo_status: "legacy_unverified",
+      }),
       trustedAssetOrigin: "https://project.supabase.co",
     });
     expect(html).toContain("#123456");
@@ -176,23 +197,53 @@ describe("buildExportHtml", () => {
     expect(html).toContain("ACME Pty Ltd");
   });
 
-  it("rejects external brand logos and CSS injected through brand colours", () => {
+  it("accepts an exact immutable versioned brand logo path", () => {
+    const logoUrl =
+      `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/logos/${LOGO_OPERATION_ID}.webp`;
     const html = buildExportHtml({
       title: "Doc",
-      sections: [section({ name: "Intro", content: "hi", status: "approved" })],
-      brandKit: {
-        id: "bk",
-        business_id: "biz",
-        logo_url: "https://tracker.example/logo.png",
-        primary_colour: "red;background-image:url(http://169.254.169.254/latest/meta-data/)",
-        secondary_colour: null,
-        footer_text: null,
-        updated_at: "2026-01-01T00:00:00.000Z",
-      },
+      sections: [section({ content: "hi" })],
+      brandKit: brandKit({
+        logo_url: logoUrl,
+        logo_operation_id: LOGO_OPERATION_ID,
+        logo_storage_path: `brand-kits/${BUSINESS_ID}/logos/${LOGO_OPERATION_ID}.webp`,
+        logo_content_sha256: "a".repeat(64),
+        logo_media_type: "image/webp",
+        logo_byte_length: 1024,
+      }),
       trustedAssetOrigin: "https://project.supabase.co",
     });
 
-    expect(html).not.toContain("tracker.example");
+    expect(html).toContain(logoUrl);
+  });
+
+  it.each([
+    ["external", "https://tracker.example/logo.png"],
+    [
+      "wrong business",
+      `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${OTHER_BUSINESS_ID}/logo.png`,
+    ],
+    [
+      "unexpected nested path",
+      `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/drafts/logo.png`,
+    ],
+    [
+      "query-bearing path",
+      `https://project.supabase.co/storage/v1/object/public/assets/brand-kits/${BUSINESS_ID}/logo.png?download=1`,
+    ],
+  ])("rejects a %s brand logo URL", (_case, logoUrl) => {
+    const html = buildExportHtml({
+      title: "Doc",
+      sections: [section({ name: "Intro", content: "hi", status: "approved" })],
+      brandKit: brandKit({
+        logo_url: logoUrl,
+        primary_colour: "red;background-image:url(http://169.254.169.254/latest/meta-data/)",
+        logo_status: "legacy_unverified",
+      }),
+      trustedAssetOrigin: "https://project.supabase.co",
+    });
+
+    expect(html).not.toContain(`<img class="logo"`);
     expect(html).not.toContain("169.254.169.254");
     expect(html).toContain("#26211c");
   });

@@ -8,10 +8,41 @@ export interface GuestMigrationNoticeProps {
   status: GuestMigrationStatus;
   result: GuestMigrationResult | null;
   onRetry: () => void;
+  onConfirm: () => void;
+  onDiscard: () => void;
 }
 
-export function GuestMigrationNotice({ status, result, onRetry }: GuestMigrationNoticeProps) {
-  if (status === "idle" || (status === "complete" && !result?.migrated && !result?.failed)) return null;
+export function GuestMigrationNotice({
+  status,
+  result,
+  onRetry,
+  onConfirm,
+  onDiscard,
+}: GuestMigrationNoticeProps) {
+  if (
+    status === "idle" ||
+    (status === "complete" &&
+      !result?.migrated &&
+      !result?.failed &&
+      !result?.skipped &&
+      !result?.cleanupFailed)
+  ) return null;
+
+  if (status === "review_required") {
+    return (
+      <div className={`${styles.notice} ${styles.warning}`} role="alert">
+        <div>
+          <strong>Unclaimed browser drafts need your choice.</strong>
+          <span>
+            These drafts are stored on this device and are not yet proven to belong to this account.
+            Move them only if they are yours, especially on a shared browser.
+          </span>
+        </div>
+        <button type="button" onClick={onConfirm}>Move my browser drafts</button>
+        <button type="button" onClick={onDiscard}>Discard browser drafts</button>
+      </div>
+    );
+  }
 
   if (status === "migrating") {
     return (
@@ -26,10 +57,18 @@ export function GuestMigrationNotice({ status, result, onRetry }: GuestMigration
     return (
       <div className={`${styles.notice} ${styles.warning}`} role="alert">
         <div>
-          <strong>Some guest documents could not be moved.</strong>
+          <strong>Guest document migration needs attention.</strong>
           <span>
-            {result?.migrated ? `${result.migrated} moved successfully. ` : ""}
-            {result?.failed ?? 0} still remain on this device.
+            {!result
+              ? "PrompTED could not confirm which guest documents moved. Your device copy has not been described as complete."
+              : [
+                  result.migrated ? `${result.migrated} moved successfully.` : "",
+                  result.failed ? `${result.failed} still need to be moved.` : "",
+                  result.skipped ? `${result.skipped} could not be safely claimed yet.` : "",
+                  result.cleanupFailed
+                    ? `${result.cleanupFailed} moved successfully but still need local cleanup on this device.`
+                    : "",
+                ].filter(Boolean).join(" ")}
           </span>
         </div>
         <button type="button" onClick={onRetry}>Retry migration</button>

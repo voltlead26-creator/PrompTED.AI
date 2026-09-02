@@ -13,6 +13,7 @@ jobs:
   verify-release:
     name: Verify production release
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
 
@@ -33,6 +34,16 @@ jobs:
         with:
           node-version: "22.23.2"
 
+      - name: Setup Deno 2
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.5
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
+        with:
+          version: "2.114.0"
+
       - name: Enable pnpm 10.33.0
         run: corepack enable && corepack prepare pnpm@10.33.0 --activate
 
@@ -48,9 +59,36 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: public-anon-key-for-build-only
           NEXT_PUBLIC_REVENUECAT_WEB_KEY: test_revenuecat_key
 
+      - name: Type-check every active function entry point
+        run: deno check supabase/functions/*/index.ts
+
+      - name: Run all Edge Function unit and contract tests
+        run: deno test --allow-env --allow-read supabase/functions
+
+      - name: Reject active non-OpenAI provider code
+        shell: bash
+        run: |
+          if rg -n --glob '*.ts' --glob '!*.test.ts' '(anthropic|google[_-]?ai|gemini)' supabase/functions; then
+            echo "::error::Active non-OpenAI provider code is prohibited."
+            exit 1
+          fi
+
+      - name: Apply every migration to a fresh local database
+        run: |
+          supabase start -x studio,imgproxy,mailpit,logflare,vector,supavisor
+          supabase db reset --local
+
+      - name: Run local database tests
+        run: supabase test db
+
+      - name: Stop local services
+        if: always()
+        run: supabase stop --no-backup
+
   deploy-functions-prod:
     name: Deploy Supabase foundation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: PrompTED.AI
     needs: verify-release
     permissions:
@@ -65,6 +103,12 @@ jobs:
         with:
           node-version: "22.23.2"
 
+      - name: Enable pnpm 10.33.0
+        run: corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+      - name: Install reviewed workspace dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Validate protected target inputs
         shell: bash
         run: |
@@ -74,6 +118,20 @@ jobs:
           [[ -z "${SUPABASE_PROJECT_REF:-}" ]] && missing+=("PROD_SUPABASE_PROJECT_REF")
           [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]] && missing+=("PROD_SUPABASE_SERVICE_ROLE_KEY")
           [[ -z "${SUPABASE_URL:-}" ]] && missing+=("PROD_SUPABASE_URL")
+          [[ ! "${OPENAI_FAST_CAPACITY_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_FAST_CAPACITY_FINGERPRINT")
+          [[ ! "${OPENAI_DEEP_CAPACITY_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_DEEP_CAPACITY_FINGERPRINT")
+          [[ ! "${OPENAI_RESEARCH_CAPACITY_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_RESEARCH_CAPACITY_FINGERPRINT")
+          [[ ! "${OPENAI_REVIEW_CAPACITY_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_REVIEW_CAPACITY_FINGERPRINT")
+          [[ ! "${OPENAI_FAST_MODEL:-}" =~ ^[a-z0-9][a-z0-9._-]{1,99}$ ]] && missing+=("PROD_OPENAI_FAST_MODEL")
+          [[ ! "${OPENAI_DEEP_MODEL:-}" =~ ^[a-z0-9][a-z0-9._-]{1,99}$ ]] && missing+=("PROD_OPENAI_DEEP_MODEL")
+          [[ ! "${OPENAI_RESEARCH_MODEL:-}" =~ ^[a-z0-9][a-z0-9._-]{1,99}$ ]] && missing+=("PROD_OPENAI_RESEARCH_MODEL")
+          [[ ! "${OPENAI_REVIEW_MODEL:-}" =~ ^[a-z0-9][a-z0-9._-]{1,99}$ ]] && missing+=("PROD_OPENAI_REVIEW_MODEL")
+          [[ ! "${OPENAI_ROUTING_VERSION:-}" =~ ^[a-z0-9][a-z0-9._-]{1,99}$ ]] && missing+=("PROD_OPENAI_ROUTING_VERSION")
+          [[ ! "${OPENAI_EVALUATION_SUITE_VERSION:-}" =~ ^[a-z0-9][a-z0-9._-]{1,99}$ ]] && missing+=("PROD_OPENAI_EVALUATION_SUITE_VERSION")
+          [[ ! "${OPENAI_FAST_EVALUATION_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_FAST_EVALUATION_FINGERPRINT")
+          [[ ! "${OPENAI_DEEP_EVALUATION_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_DEEP_EVALUATION_FINGERPRINT")
+          [[ ! "${OPENAI_RESEARCH_EVALUATION_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_RESEARCH_EVALUATION_FINGERPRINT")
+          [[ ! "${OPENAI_REVIEW_EVALUATION_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] && missing+=("PROD_OPENAI_REVIEW_EVALUATION_FINGERPRINT")
           if [[ ${#missing[@]} -gt 0 ]]; then
             echo "::error::Missing protected production input(s): ${missing[*]}."
             exit 1
@@ -84,6 +142,20 @@ jobs:
           SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PROD_SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
+          OPENAI_FAST_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_FAST_CAPACITY_FINGERPRINT }}
+          OPENAI_DEEP_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_DEEP_CAPACITY_FINGERPRINT }}
+          OPENAI_RESEARCH_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_RESEARCH_CAPACITY_FINGERPRINT }}
+          OPENAI_REVIEW_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_REVIEW_CAPACITY_FINGERPRINT }}
+          OPENAI_FAST_MODEL: ${{ secrets.PROD_OPENAI_FAST_MODEL }}
+          OPENAI_DEEP_MODEL: ${{ secrets.PROD_OPENAI_DEEP_MODEL }}
+          OPENAI_RESEARCH_MODEL: ${{ secrets.PROD_OPENAI_RESEARCH_MODEL }}
+          OPENAI_REVIEW_MODEL: ${{ secrets.PROD_OPENAI_REVIEW_MODEL }}
+          OPENAI_ROUTING_VERSION: ${{ secrets.PROD_OPENAI_ROUTING_VERSION }}
+          OPENAI_EVALUATION_SUITE_VERSION: ${{ secrets.PROD_OPENAI_EVALUATION_SUITE_VERSION }}
+          OPENAI_FAST_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_FAST_EVALUATION_FINGERPRINT }}
+          OPENAI_DEEP_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_DEEP_EVALUATION_FINGERPRINT }}
+          OPENAI_RESEARCH_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_RESEARCH_EVALUATION_FINGERPRINT }}
+          OPENAI_REVIEW_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_REVIEW_EVALUATION_FINGERPRINT }}
 
       - name: Check static deployment compatibility
         run: node scripts/check-deployment-contract.mjs
@@ -98,7 +170,7 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
-          version: "2.84.2"
+          version: "2.114.0"
 
       - name: Validate required Supabase secret names without reading values
         run: node scripts/check-supabase-secret-names.mjs
@@ -106,10 +178,43 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
 
+      - name: Inventory hosted release state before mutation
+        run: node scripts/probe-supabase-contract.mjs
+        env:
+          SUPABASE_PROBE_MODE: inventory
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
+          SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+
+      - name: Capture immutable backend release baseline
+        id: backend_baseline
+        run: >-
+          node scripts/backend-release-baseline.mjs capture
+          --path "$RUNNER_TEMP/prompted-backend-release-baseline.json"
+          --git-sha "$GITHUB_SHA"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
+          SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+
       - name: Link the exact Supabase project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+
+      - name: Revalidate immutable backend release baseline
+        run: >-
+          node scripts/backend-release-baseline.mjs verify
+          --path "$RUNNER_TEMP/prompted-backend-release-baseline.json"
+          --git-sha "$GITHUB_SHA"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
           SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
 
       - name: Apply ordered database migrations
@@ -121,14 +226,39 @@ jobs:
       - name: Probe the applied live schema
         run: node scripts/probe-supabase-contract.mjs
         env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
           SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PROD_SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+          PROD_OPENAI_FAST_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_FAST_CAPACITY_FINGERPRINT }}
+          PROD_OPENAI_DEEP_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_DEEP_CAPACITY_FINGERPRINT }}
+          PROD_OPENAI_RESEARCH_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_RESEARCH_CAPACITY_FINGERPRINT }}
+          PROD_OPENAI_REVIEW_CAPACITY_FINGERPRINT: ${{ secrets.PROD_OPENAI_REVIEW_CAPACITY_FINGERPRINT }}
+          PROD_OPENAI_FAST_MODEL: ${{ secrets.PROD_OPENAI_FAST_MODEL }}
+          PROD_OPENAI_DEEP_MODEL: ${{ secrets.PROD_OPENAI_DEEP_MODEL }}
+          PROD_OPENAI_RESEARCH_MODEL: ${{ secrets.PROD_OPENAI_RESEARCH_MODEL }}
+          PROD_OPENAI_REVIEW_MODEL: ${{ secrets.PROD_OPENAI_REVIEW_MODEL }}
+          PROD_OPENAI_ROUTING_VERSION: ${{ secrets.PROD_OPENAI_ROUTING_VERSION }}
+          PROD_OPENAI_EVALUATION_SUITE_VERSION: ${{ secrets.PROD_OPENAI_EVALUATION_SUITE_VERSION }}
+          PROD_OPENAI_FAST_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_FAST_EVALUATION_FINGERPRINT }}
+          PROD_OPENAI_DEEP_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_DEEP_EVALUATION_FINGERPRINT }}
+          PROD_OPENAI_RESEARCH_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_RESEARCH_EVALUATION_FINGERPRINT }}
+          PROD_OPENAI_REVIEW_EVALUATION_FINGERPRINT: ${{ secrets.PROD_OPENAI_REVIEW_EVALUATION_FINGERPRINT }}
 
       - name: Deploy named contract functions
         run: node scripts/deploy-contract-functions.mjs --project-ref "$SUPABASE_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+
+      - name: Verify hosted functions and JWT modes after deployment
+        run: node scripts/probe-supabase-contract.mjs
+        env:
+          SUPABASE_PROBE_MODE: post_function
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
           SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
 
       - name: Smoke-probe function cold starts
@@ -139,9 +269,22 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PROD_SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
 
+      - name: Report backend state after a failed release without rollback
+        if: ${{ failure() && steps.backend_baseline.outcome == 'success' }}
+        run: >-
+          node scripts/backend-release-baseline.mjs report
+          --path "$RUNNER_TEMP/prompted-backend-release-baseline.json"
+          --git-sha "$GITHUB_SHA"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
+          SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+
   deploy-web-prod:
     name: Deploy web app to Netlify
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: PrompTED.AI
     needs: deploy-functions-prod
     permissions:

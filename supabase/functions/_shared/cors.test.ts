@@ -30,12 +30,14 @@ Deno.test("local origins are added only in an explicit local environment", () =>
 });
 
 Deno.test("configured origins must be exact credential-free HTTP origins", () => {
-  for (const value of [
-    "not-a-url",
-    "ftp://app.prompted.example",
-    "https://user:pass@app.prompted.example",
-    "https://app.prompted.example/path",
-  ]) {
+  for (
+    const value of [
+      "not-a-url",
+      "ftp://app.prompted.example",
+      "https://user:pass@app.prompted.example",
+      "https://app.prompted.example/path",
+    ]
+  ) {
     assertThrows(() => allowedOriginsForEnvironment(value, "production"));
   }
 });
@@ -45,9 +47,17 @@ Deno.test("shared responses carry private no-store cache headers", () => {
   assertEquals(headers.get("cache-control"), "private, no-store, max-age=0");
   assertEquals(headers.get("pragma"), "no-cache");
   assert(headers.get("vary")?.includes("Authorization"));
+  assert(
+    headers.get("access-control-allow-headers")?.includes(
+      "x-idempotency-key",
+    ),
+  );
 
   const response = jsonResponse({ ok: true });
-  assertEquals(response.headers.get("cache-control"), "private, no-store, max-age=0");
+  assertEquals(
+    response.headers.get("cache-control"),
+    "private, no-store, max-age=0",
+  );
 });
 
 Deno.test("forbidden browser origins fail closed including preflight", () => {

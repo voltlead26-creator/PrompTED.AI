@@ -5,6 +5,7 @@ import {
   routeRequest,
   type StrictOutputSchema,
 } from "./provider-router.ts";
+import { inheritModelCallContext } from "./model-call-context.ts";
 
 export interface ProviderWebSource {
   id: string;
@@ -36,15 +37,162 @@ export interface GroundedVacancy {
   url: string;
   source: string;
   source_id: string;
+  source_status: "source_linked_not_independently_verified";
   pay: string;
   closing: string;
   why_relevant: string;
 }
 
+export interface AuthoritativeJobRole {
+  id: string;
+  role: string;
+  industry: string;
+  demand: "very high" | "high" | "moderate";
+  typical_pay_aud: string;
+  start_speed: string;
+  data_as_of: string;
+}
+
+export type VacancySearchOutcome =
+  | {
+    status: "completed";
+    vacancies: GroundedVacancy[];
+    sources: ProviderWebSource[];
+  }
+  | {
+    status: "failed";
+    vacancies: [];
+    sources: [];
+    retryable: boolean;
+    code: "VACANCY_RESEARCH_UNAVAILABLE";
+    retryAfterSeconds?: number;
+  };
+
 export class ResearchGroundingError extends Error {
   constructor(public readonly code: string) {
     super(code);
     this.name = "ResearchGroundingError";
+  }
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function normalizeAuthoritativeJobRoles(
+  rows: unknown,
+): AuthoritativeJobRole[] {
+  if (!Array.isArray(rows)) return [];
+  const seen = new Set<string>();
+  const normalized: AuthoritativeJobRole[] = [];
+  for (const raw of rows) {
+    const row = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : null;
+    const id = typeof row?.id === "string" ? row.id.trim().toLowerCase() : "";
+    const role = typeof row?.role === "string" ? row.role.trim() : "";
+    const industry = typeof row?.industry === "string" ? row.industry.trim() : "";
+    const demand = row?.demand;
+    const typicalPay = typeof row?.typical_pay_aud === "string"
+      ? row.typical_pay_aud.trim()
+      : "";
+    const startSpeed = typeof row?.start_speed === "string"
+      ? row.start_speed.trim()
+      : "";
+    const dataAsOf = typeof row?.data_as_of === "string"
+      ? row.data_as_of.trim()
+      : "";
+    if (
+      !UUID_PATTERN.test(id) || seen.has(id) || !role || role.length > 240 ||
+      !industry || industry.length > 240 ||
+      (demand !== "very high" && demand !== "high" && demand !== "moderate") ||
+      !typicalPay || typicalPay.length > 240 || !startSpeed ||
+      startSpeed.length > 240 || !/^\d{4}-\d{2}-\d{2}/.test(dataAsOf)
+    ) {
+      continue;
+    }
+    seen.add(id);
+    normalized.push({
+      id,
+      role,
+      industry,
+      demand,
+      typical_pay_aud: typicalPay,
+      start_speed: startSpeed,
+      data_as_of: dataAsOf,
+    });
+  }
+  return normalized;
+}
+
+export async function settleVacancySearch(
+  run: () => Promise<{ vacancies: GroundedVacancy[]; sources: ProviderWebSource[] }>,
+  signal: AbortSignal,
+): Promise<VacancySearchOutcome> {
+  try {
+    const result = await run();
+    return { status: "completed", ...result };
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+    if (
+      signal.aborted ||
+      (error instanceof DOMException && error.name === "AbortError") ||
+      code.endsWith("_RECONCILIATION_REQUIRED") ||
+      code.endsWith("_ACK_UNRESOLVED")
+    ) {
+      throw error;
+    }
+    const retryable = Boolean(
+      error && typeof error === "object" && "retryable" in error &&
+        (error as { retryable?: unknown }).retryable === true,
+    );
+    const rawRetryAfter = error && typeof error === "object" &&
+        "retryAfterSeconds" in error
+      ? (error as { retryAfterSeconds?: unknown }).retryAfterSeconds
+      : undefined;
+    const retryAfterSeconds = Number.isSafeInteger(rawRetryAfter) &&
+        Number(rawRetryAfter) > 0 && Number(rawRetryAfter) <= 3_600
+      ? Number(rawRetryAfter)
+      : undefined;
+    return {
+      status: "failed",
+      vacancies: [],
+      sources: [],
+      retryable,
+      code: "VACANCY_RESEARCH_UNAVAILABLE",
+      ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+    };
+  }
+}
+
+/**
+ * Give one research operation an owned deadline without racing away from its
+ * promise. The caller does not continue until the research adapter has handled
+ * the abort and durably terminally accounted for the dispatched attempt.
+ */
+export async function awaitGroundedResearchWithTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  inheritModelCallContext(parentSignal, controller.signal);
+  const relayAbort = () => controller.abort(parentSignal.reason);
+  parentSignal.addEventListener("abort", relayAbort, { once: true });
+  if (parentSignal.aborted) relayAbort();
+  const timeout = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException("Research deadline reached", "TimeoutError"),
+      ),
+    timeoutMs,
+  );
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+    parentSignal.removeEventListener("abort", relayAbort);
   }
 }
 
@@ -257,6 +405,7 @@ export async function requestGroundedResearch(
 ): Promise<GroundedResearchResponse> {
   const result = await requestRoute({
     task: "research",
+    logicalStageKey: "research-grounding.primary",
     webSearch: true,
     systemPrompt: input.systemPrompt,
     messages: input.messages,
@@ -305,6 +454,7 @@ export function groundJobVacancies(
       url,
       source: source.title || hostname,
       source_id: source.id,
+      source_status: "source_linked_not_independently_verified" as const,
       pay: stringValue(vacancy?.pay, 240),
       closing: stringValue(vacancy?.closing, 240),
       why_relevant: stringValue(vacancy?.why_relevant, 500),
@@ -318,6 +468,7 @@ export async function requestGroundedJobVacancies(
 ): Promise<{ vacancies: GroundedVacancy[]; sources: ProviderWebSource[] }> {
   const result = await requestRoute({
     task: "research",
+    logicalStageKey: "research-grounding.job-vacancies",
     webSearch: true,
     systemPrompt: input.systemPrompt,
     messages: input.messages,
@@ -348,6 +499,8 @@ function collectUrls(value: unknown, urls: string[]): void {
 export function groundJobMatchOutput(
   parsed: unknown,
   verifiedVacancies: GroundedVacancy[],
+  authoritativeRoles: AuthoritativeJobRole[],
+  marketContext: { countryCode?: string },
 ): Record<string, unknown> {
   const result = record(parsed);
   if (!result) throw new ResearchGroundingError("JOB_MATCH_OUTPUT_INVALID");
@@ -379,11 +532,84 @@ export function groundJobMatchOutput(
       location: verified.location,
       source: verified.source,
       source_id: verified.source_id,
+      source_status: verified.source_status,
       url: verified.url,
       pay: verified.pay,
       closing: verified.closing,
     }];
   });
 
-  return { ...result, listings };
+  const roleById = new Map(authoritativeRoles.map((role) => [role.id, role]));
+  const seenRoleIds = new Set<string>();
+  const exposeAustralianMarket = marketContext.countryCode?.trim().toUpperCase() === "AU";
+  const rawRoleIdeas = Array.isArray(result.role_ideas) ? result.role_ideas : [];
+  const roleIdeas = rawRoleIdeas.flatMap((rawIdea) => {
+    const idea = record(rawIdea);
+    const roleId = typeof idea?.dataset_role_id === "string"
+      ? idea.dataset_role_id.trim().toLowerCase()
+      : "";
+    const authoritative = roleById.get(roleId);
+    if (!idea || !authoritative || seenRoleIds.has(roleId)) return [];
+    seenRoleIds.add(roleId);
+
+    const stringList = (value: unknown, limit: number): string[] =>
+      Array.isArray(value)
+        ? value.map((item) => stringValue(item, 500)).filter(Boolean).slice(0, limit)
+        : [];
+    const fitScore = typeof idea.fit_score === "number" &&
+        Number.isFinite(idea.fit_score)
+      ? Math.max(0, Math.min(100, Math.round(idea.fit_score)))
+      : undefined;
+    const rawBreakdown = record(idea.fit_breakdown);
+    const numericFit = (key: string): number | undefined => {
+      const value = rawBreakdown?.[key];
+      return typeof value === "number" && Number.isFinite(value)
+        ? Math.max(0, Math.min(100, Math.round(value)))
+        : undefined;
+    };
+    const locationFit = rawBreakdown?.location_fit === "pass" ||
+        rawBreakdown?.location_fit === "fail" || rawBreakdown?.location_fit === "flag"
+      ? rawBreakdown.location_fit
+      : undefined;
+    const fitBreakdown = rawBreakdown
+      ? {
+        ...(numericFit("skills_match") !== undefined
+          ? { skills_match: numericFit("skills_match") }
+          : {}),
+        ...(numericFit("experience_match") !== undefined
+          ? { experience_match: numericFit("experience_match") }
+          : {}),
+        ...(numericFit("work_style_fit") !== undefined
+          ? { work_style_fit: numericFit("work_style_fit") }
+          : {}),
+        ...(locationFit ? { location_fit: locationFit } : {}),
+        ...(numericFit("career_alignment") !== undefined
+          ? { career_alignment: numericFit("career_alignment") }
+          : {}),
+      }
+      : undefined;
+    return [{
+      dataset_role_id: authoritative.id,
+      role: authoritative.role,
+      industry: authoritative.industry,
+      why_fit: stringValue(idea.why_fit, 1_000),
+      ...(fitScore !== undefined ? { fit_score: fitScore } : {}),
+      ...(fitBreakdown ? { fit_breakdown: fitBreakdown } : {}),
+      evidence_to_show: stringList(idea.evidence_to_show, 6),
+      first_steps: stringList(idea.first_steps, 6),
+      application_actions: stringList(idea.application_actions, 6),
+      ...(exposeAustralianMarket
+        ? {
+          typical_pay: authoritative.typical_pay_aud,
+          demand: authoritative.demand,
+          how_fast: authoritative.start_speed,
+          market_country: "AU",
+          currency: "AUD",
+          data_as_of: authoritative.data_as_of,
+        }
+        : {}),
+    }];
+  });
+
+  return { ...result, listings, role_ideas: roleIdeas };
 }

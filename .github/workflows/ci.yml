@@ -69,7 +69,7 @@ jobs:
       - name: Setup Deno 2
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          deno-version: v2.9.5
 
       - name: Type-check every active function entry point
         shell: bash
@@ -104,7 +104,7 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
-          version: "2.84.2"
+          version: "2.114.0"
 
       - name: Validate migration names and static ordering
         run: node scripts/check-migrations.mjs

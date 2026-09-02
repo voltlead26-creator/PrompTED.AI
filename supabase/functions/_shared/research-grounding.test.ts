@@ -1,5 +1,6 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import {
+  awaitGroundedResearchWithTimeout,
   canonicalHttpsUrl,
   groundJobMatchOutput,
   groundJobVacancies,
@@ -9,8 +10,14 @@ import {
   requestGroundedResearch,
   RESEARCH_OUTPUT_SCHEMA,
   ResearchGroundingError,
+  normalizeAuthoritativeJobRoles,
+  settleVacancySearch,
 } from "./research-grounding.ts";
 import type { ProviderRequest, ProviderResponse } from "./provider-router.ts";
+import {
+  bindModelCallContext,
+  prepareLegacyModelAttempt,
+} from "./model-call-context.ts";
 
 const sources = [{
   id: "src-1",
@@ -203,6 +210,10 @@ Deno.test("job vacancies accept only captured non-aggregator URLs", () => {
   assertEquals(vacancies.length, 1);
   assertEquals(vacancies[0].url, sources[0].url);
   assertEquals(vacancies[0].source_id, "src-1");
+  assertEquals(
+    vacancies[0].source_status,
+    "source_linked_not_independently_verified",
+  );
 });
 
 Deno.test("job-match recommendations cannot introduce or alter vacancy URLs", () => {
@@ -227,7 +238,7 @@ Deno.test("job-match recommendations cannot introduce or alter vacancy URLs", ()
       why_fit: "Good fit",
     }],
     tips: ["Apply on the source site."],
-  }, verified);
+  }, verified, [], {});
   const listings = grounded.listings as Array<Record<string, unknown>>;
   assertEquals(listings[0].title, "Analyst");
   assertEquals(listings[0].employer, "Example Department");
@@ -237,8 +248,164 @@ Deno.test("job-match recommendations cannot introduce or alter vacancy URLs", ()
       groundJobMatchOutput({
         need_more_context: false,
         listings: [{ url: "https://invented.example/jobs/999" }],
-      }, verified),
+      }, verified, [], {}),
     ResearchGroundingError,
     "JOB_MATCH_URL_NOT_CAPTURED",
   );
+});
+
+Deno.test("job role facts are reconstructed from an exact authoritative dataset id", () => {
+  const roles = normalizeAuthoritativeJobRoles([{
+    id: "a1000000-0000-4000-8000-000000000001",
+    role: "Facilities Coordinator",
+    industry: "Property services",
+    demand: "high",
+    typical_pay_aud: "$70,000-$85,000",
+    start_speed: "Two to four weeks",
+    data_as_of: "2026-08-01",
+  }]);
+  const grounded = groundJobMatchOutput({
+    listings: [],
+    role_ideas: [{
+      dataset_role_id: roles[0].id,
+      role: "Invented executive",
+      industry: "Invented industry",
+      typical_pay: "$999,999",
+      demand: "guaranteed",
+      how_fast: "today",
+      why_fit: "Uses the user's operations background.",
+      first_steps: ["Review current vacancies"],
+      fabricated_fact: "must not survive",
+    }],
+  }, [], roles, { countryCode: "AU" });
+  const idea = (grounded.role_ideas as Array<Record<string, unknown>>)[0];
+  assertEquals(idea.role, "Facilities Coordinator");
+  assertEquals(idea.industry, "Property services");
+  assertEquals(idea.typical_pay, "$70,000-$85,000");
+  assertEquals(idea.demand, "high");
+  assertEquals(idea.how_fast, "Two to four weeks");
+  assertEquals(idea.market_country, "AU");
+  assertEquals(idea.currency, "AUD");
+  assertEquals("fabricated_fact" in idea, false);
+
+  const outsideAustralia = groundJobMatchOutput({
+    listings: [],
+    role_ideas: [{ dataset_role_id: roles[0].id }],
+  }, [], roles, { countryCode: "US" });
+  const outsideIdea = (outsideAustralia.role_ideas as Array<Record<string, unknown>>)[0];
+  assertEquals("typical_pay" in outsideIdea, false);
+  assertEquals("demand" in outsideIdea, false);
+  assertEquals("how_fast" in outsideIdea, false);
+});
+
+Deno.test("job role normalization and selection fail closed for malformed, unknown and duplicate ids", () => {
+  const roles = normalizeAuthoritativeJobRoles([
+    {
+      id: "a1000000-0000-4000-8000-000000000001",
+      role: "Facilities Coordinator",
+      industry: "Property services",
+      demand: "high",
+      typical_pay_aud: "$70,000-$85,000",
+      start_speed: "Two to four weeks",
+      data_as_of: "2026-08-01",
+    },
+    {
+      id: "not-a-uuid",
+      role: "Invalid",
+      industry: "Invalid",
+      demand: "high",
+      typical_pay_aud: "$1",
+      start_speed: "Now",
+      data_as_of: "2026-08-01",
+    },
+  ]);
+  assertEquals(roles.length, 1);
+  const grounded = groundJobMatchOutput({
+    listings: [],
+    role_ideas: [
+      { dataset_role_id: roles[0].id },
+      { dataset_role_id: roles[0].id },
+      { dataset_role_id: "b1000000-0000-4000-8000-000000000001" },
+    ],
+  }, [], roles, { countryCode: "AU" });
+  assertEquals((grounded.role_ideas as unknown[]).length, 1);
+});
+
+Deno.test("vacancy search distinguishes validated zero results from retryable failure", async () => {
+  const signal = new AbortController().signal;
+  assertEquals(
+    await settleVacancySearch(
+      () => Promise.resolve({ vacancies: [], sources: [] }),
+      signal,
+    ),
+    { status: "completed", vacancies: [], sources: [] },
+  );
+  assertEquals(
+    await settleVacancySearch(
+      () => Promise.reject({
+        code: "OPENAI_RATE_LIMITED",
+        retryable: true,
+        retryAfterSeconds: 17,
+      }),
+      signal,
+    ),
+    {
+      status: "failed",
+      vacancies: [],
+      sources: [],
+      retryable: true,
+      code: "VACANCY_RESEARCH_UNAVAILABLE",
+      retryAfterSeconds: 17,
+    },
+  );
+  await assertRejects(
+    () => settleVacancySearch(
+      () => Promise.reject({ code: "OPENAI_MODEL_CALL_RECONCILIATION_REQUIRED" }),
+      signal,
+    ),
+  );
+});
+
+Deno.test("late research is aborted and awaited before downstream matching can begin", async () => {
+  const parent = new AbortController();
+  bindModelCallContext(parent.signal, {
+    userId: "synthetic-user",
+    admin: {} as never,
+    generationRequestId: "synthetic-job-match",
+  });
+  let researchTerminal = false;
+  let matchStarted = false;
+  const research = awaitGroundedResearchWithTimeout(
+    async (signal) => {
+      const terminal = new Promise<never>((_resolve, reject) => {
+        const rejectAborted = () => {
+          researchTerminal = true;
+          reject(signal.reason);
+        };
+        if (signal.aborted) rejectAborted();
+        else signal.addEventListener("abort", rejectAborted, { once: true });
+      });
+      void terminal.catch(() => undefined);
+      const prepared = await prepareLegacyModelAttempt(signal, {
+        logicalStageKey: "job-match:research",
+        requestSha256: "a".repeat(64),
+        attemptNumber: 1,
+      });
+      assertEquals(prepared.clientRequestId.startsWith("prompted-"), true);
+      return await terminal;
+    },
+    parent.signal,
+    1,
+  );
+
+  await assertRejects(
+    async () => {
+      await research;
+      matchStarted = true;
+    },
+    DOMException,
+    "Research deadline reached",
+  );
+  assertEquals(researchTerminal, true);
+  assertEquals(matchStarted, false);
 });

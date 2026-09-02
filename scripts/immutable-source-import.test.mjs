@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   readTargetEntries,
+  refreshReviewedTargetManifest,
   validateImmutableSourceImport,
 } from "./immutable-source-import.mjs";
 
@@ -22,14 +23,16 @@ function manifest(entry) {
     },
     rules: { reviewed: "Reviewed test rule." },
     targetNative: [],
-    entries: [{
-      path: "README.md",
-      mode: "100644",
-      sourceBlob: "b".repeat(40),
-      bytes: 12,
-      rule: "reviewed",
-      ...entry,
-    }],
+    entries: [
+      {
+        path: "README.md",
+        mode: "100644",
+        sourceBlob: "b".repeat(40),
+        bytes: 12,
+        rule: "reviewed",
+        ...entry,
+      },
+    ],
   };
 }
 
@@ -86,10 +89,7 @@ test("rejects a rewrite that records the unchanged source blob", () => {
 test("requires excluded source files to be absent", () => {
   const excluded = manifest({ decision: "exclude" });
 
-  assert.deepEqual(
-    validateImmutableSourceImport(excluded, new Map()).failures,
-    [],
-  );
+  assert.deepEqual(validateImmutableSourceImport(excluded, new Map()).failures, []);
   assert.match(
     validateImmutableSourceImport(
       excluded,
@@ -126,21 +126,20 @@ test("accepts historical and deferred exact files without treating them as activ
 test("accepts an exact, reviewed target-native inventory", () => {
   const reviewed = manifest({ decision: "retain_exact" });
   reviewed.target.entryCount = 1;
-  reviewed.targetNative = [{
-    path: "scripts/new-check.mjs",
-    mode: "100644",
-    targetBlob: "c".repeat(40),
-    bytes: 21,
-    rule: "reviewed",
-  }];
+  reviewed.targetNative = [
+    {
+      path: "scripts/new-check.mjs",
+      mode: "100644",
+      targetBlob: "c".repeat(40),
+      bytes: 21,
+      rule: "reviewed",
+    },
+  ];
 
   const result = validateImmutableSourceImport(
     reviewed,
     new Map([["README.md", { mode: "100644", blob: "b".repeat(40) }]]),
-    new Map([[
-      "scripts/new-check.mjs",
-      { mode: "100644", blob: "c".repeat(40), bytes: 21 },
-    ]]),
+    new Map([["scripts/new-check.mjs", { mode: "100644", blob: "c".repeat(40), bytes: 21 }]]),
   );
 
   assert.deepEqual(result.failures, []);
@@ -150,13 +149,15 @@ test("accepts an exact, reviewed target-native inventory", () => {
 test("rejects missing, drifted, and unrecorded target-native files", () => {
   const reviewed = manifest({ decision: "retain_exact" });
   reviewed.target.entryCount = 1;
-  reviewed.targetNative = [{
-    path: "scripts/new-check.mjs",
-    mode: "100644",
-    targetBlob: "c".repeat(40),
-    bytes: 21,
-    rule: "reviewed",
-  }];
+  reviewed.targetNative = [
+    {
+      path: "scripts/new-check.mjs",
+      mode: "100644",
+      targetBlob: "c".repeat(40),
+      bytes: 21,
+      rule: "reviewed",
+    },
+  ];
 
   const missing = validateImmutableSourceImport(reviewed, new Map(), new Map());
   assert.match(missing.failures.join("\n"), /target-native file is missing/);
@@ -164,10 +165,7 @@ test("rejects missing, drifted, and unrecorded target-native files", () => {
   const drifted = validateImmutableSourceImport(
     reviewed,
     new Map(),
-    new Map([[
-      "scripts/new-check.mjs",
-      { mode: "100644", blob: "d".repeat(40), bytes: 22 },
-    ]]),
+    new Map([["scripts/new-check.mjs", { mode: "100644", blob: "d".repeat(40), bytes: 22 }]]),
   );
   assert.match(drifted.failures.join("\n"), /target-native blob/);
   assert.match(drifted.failures.join("\n"), /target-native byte size/);
@@ -203,11 +201,9 @@ test("rejects overlapping and self-referential target-native records", () => {
     },
   ];
 
-  const failures = validateImmutableSourceImport(
-    overlapping,
-    new Map(),
-    new Map(),
-  ).failures.join("\n");
+  const failures = validateImmutableSourceImport(overlapping, new Map(), new Map()).failures.join(
+    "\n",
+  );
   assert.match(failures, /also appears in source entries/);
   assert.match(failures, /cannot hash itself/);
 });
@@ -235,5 +231,131 @@ test("refuses to read a target path outside the repository", async () => {
   await assert.rejects(
     readTargetEntries(process.cwd(), ["../outside.txt"]),
     /invalid repository-relative path/,
+  );
+});
+
+test("refresh converts only an explicitly changed retained donor file to a reviewed rewrite", () => {
+  const current = manifest({ decision: "retain_exact" });
+  current.rules.reviewed_target_rewrite = "Reviewed rewrite.";
+  current.rules.reviewed_target_native = "Reviewed target-native file.";
+  const refreshed = refreshReviewedTargetManifest(
+    current,
+    new Map([["README.md", { mode: "100644", blob: "c".repeat(40), bytes: 14 }]]),
+    new Map(),
+    new Set(["README.md"]),
+  );
+
+  assert.equal(refreshed.entries[0].decision, "rewrite_target");
+  assert.equal(refreshed.entries[0].rule, "reviewed_target_rewrite");
+  assert.equal(refreshed.entries[0].targetBlob, "c".repeat(40));
+  assert.equal(refreshed.target.entryCount, 0);
+});
+
+test("refresh rejects donor drift outside the explicitly reviewed overlay", () => {
+  const current = manifest({ decision: "retain_exact" });
+  current.rules.reviewed_target_rewrite = "Reviewed rewrite.";
+  current.rules.reviewed_target_native = "Reviewed target-native file.";
+
+  assert.throws(
+    () =>
+      refreshReviewedTargetManifest(
+        current,
+        new Map([["README.md", { mode: "100644", blob: "c".repeat(40), bytes: 14 }]]),
+        new Map(),
+        new Set(),
+      ),
+    /outside the explicitly reviewed working-tree overlay/,
+  );
+});
+
+test("refresh refuses automatic drift of historical exact evidence", () => {
+  const current = manifest({ decision: "retain_historical_exact" });
+  current.rules.reviewed_target_rewrite = "Reviewed rewrite.";
+  current.rules.reviewed_target_native = "Reviewed target-native file.";
+
+  assert.throws(
+    () =>
+      refreshReviewedTargetManifest(
+        current,
+        new Map([["README.md", { mode: "100644", blob: "c".repeat(40), bytes: 14 }]]),
+        new Map(),
+        new Set(["README.md"]),
+      ),
+    /historical_exact drift requires a manual provenance decision/,
+  );
+});
+
+test("refresh records changed and new target-native files but refuses silent removal", () => {
+  const current = manifest({ decision: "retain_exact" });
+  current.rules.reviewed_target_rewrite = "Reviewed rewrite.";
+  current.rules.reviewed_target_native = "Reviewed target-native file.";
+  current.target.entryCount = 1;
+  current.targetNative = [
+    {
+      path: "scripts/existing.mjs",
+      mode: "100644",
+      targetBlob: "d".repeat(40),
+      bytes: 10,
+      rule: "reviewed_target_native",
+    },
+  ];
+
+  const refreshed = refreshReviewedTargetManifest(
+    current,
+    new Map([["README.md", { mode: "100644", blob: "b".repeat(40), bytes: 12 }]]),
+    new Map([
+      [
+        "scripts/existing.mjs",
+        {
+          mode: "100644",
+          blob: "e".repeat(40),
+          bytes: 11,
+        },
+      ],
+      [
+        "scripts/new.mjs",
+        {
+          mode: "100755",
+          blob: "f".repeat(40),
+          bytes: 12,
+        },
+      ],
+    ]),
+    new Set(["scripts/existing.mjs", "scripts/new.mjs"]),
+  );
+
+  assert.deepEqual(
+    refreshed.targetNative.map(({ path, mode, targetBlob, bytes }) => ({
+      path,
+      mode,
+      targetBlob,
+      bytes,
+    })),
+    [
+      {
+        path: "scripts/existing.mjs",
+        mode: "100644",
+        targetBlob: "e".repeat(40),
+        bytes: 11,
+      },
+      {
+        path: "scripts/new.mjs",
+        mode: "100755",
+        targetBlob: "f".repeat(40),
+        bytes: 12,
+      },
+    ],
+  );
+  assert.equal(refreshed.target.entryCount, 2);
+
+  assert.throws(
+    () =>
+      refreshReviewedTargetManifest(
+        current,
+        new Map([["README.md", { mode: "100644", blob: "b".repeat(40), bytes: 12 }]]),
+        new Map(),
+        new Set(["scripts/existing.mjs"]),
+      ),
+    /target-native removal requires a manual provenance decision/,
   );
 });

@@ -15,14 +15,77 @@ export function validateFunctionName(name) {
 }
 
 export function getActiveFunctionNames(manifest) {
-  const names = Object.entries(manifest.functions ?? {})
-    .filter(([, entry]) => entry?.status === "active")
-    .map(([name]) => validateFunctionName(name));
+  const entries = Object.entries(manifest.functions ?? {});
+  const active = new Map(
+    entries
+      .filter(([, entry]) => entry?.status === "active")
+      .map(([name, entry]) => [validateFunctionName(name), entry]),
+  );
 
-  if (names.length === 0) {
+  if (active.size === 0) {
     throw new Error("Deployment contract contains no active functions.");
   }
-  return names;
+
+  const ordered = [];
+  const visiting = new Set();
+  const visited = new Set();
+  const visit = (name) => {
+    if (visited.has(name)) return;
+    if (visiting.has(name)) {
+      throw new Error(`Cyclic function dependency detected at "${name}".`);
+    }
+    const entry = active.get(name);
+    if (!entry) {
+      throw new Error(`Missing active function dependency "${name}".`);
+    }
+    const dependencies = entry.requiredFunctions ?? [];
+    if (!Array.isArray(dependencies)) {
+      throw new Error(`Function "${name}" has an invalid requiredFunctions contract.`);
+    }
+    visiting.add(name);
+    const uniqueDependencies = new Set();
+    for (const dependencyValue of dependencies) {
+      const dependency = validateFunctionName(dependencyValue);
+      if (uniqueDependencies.has(dependency)) {
+        throw new Error(
+          `Function "${name}" declares duplicate dependency "${dependency}".`,
+        );
+      }
+      uniqueDependencies.add(dependency);
+      if (!active.has(dependency)) {
+        throw new Error(
+          `Missing active function dependency "${dependency}" required by "${name}".`,
+        );
+      }
+      visit(dependency);
+    }
+    visiting.delete(name);
+    visited.add(name);
+    ordered.push(name);
+  };
+
+  for (const name of active.keys()) visit(name);
+  return ordered;
+}
+
+export function getActiveFunctionBatches(manifest) {
+  const ordered = getActiveFunctionNames(manifest);
+  const depths = new Map();
+  const depthOf = (name) => {
+    if (depths.has(name)) return depths.get(name);
+    const dependencies = manifest.functions[name].requiredFunctions ?? [];
+    const depth = dependencies.length === 0
+      ? 0
+      : Math.max(...dependencies.map((dependency) => depthOf(dependency))) + 1;
+    depths.set(name, depth);
+    return depth;
+  };
+  const batches = [];
+  for (const name of ordered) {
+    const depth = depthOf(name);
+    (batches[depth] ??= []).push(name);
+  }
+  return batches.filter((batch) => batch.length > 0);
 }
 
 function validateProjectRef(projectRef) {
@@ -81,9 +144,11 @@ export async function deployContractFunctions({
     );
   }
 
-  const functionNames = getActiveFunctionNames(manifest);
-  const args = buildSupabaseDeployArgs(functionNames, targetProjectRef);
-  await spawnImpl("supabase", args, { stdio: "inherit", shell: false });
+  const batches = getActiveFunctionBatches(manifest);
+  for (const functionNames of batches) {
+    const args = buildSupabaseDeployArgs(functionNames, targetProjectRef);
+    await spawnImpl("supabase", args, { stdio: "inherit", shell: false });
+  }
 }
 
 async function main() {

@@ -18,7 +18,8 @@ and no dirty overlay is part of this repository.
 
 ## First captured cohort
 
-The rebuild activates only these document contracts initially:
+The rebuild defines these document contracts as the first permitted captured
+cohort, but leaves every captured activation pointer disabled by default:
 
 1. `resume`
 2. `selection-criteria-response`
@@ -28,6 +29,13 @@ The rebuild activates only these document contracts initially:
 
 Other historical documents remain readable through compatibility paths. They
 are not silently rebound to a new ledger or provider.
+
+Captured activation remains an explicit later cohort action. It is blocked
+until an owner-controlled revisioned per-user/tenant cohort assignment exists,
+claim-level grounding/conflict fixtures pass, and the clarification,
+reload/resume, approval, and exact-revision export acceptance matrix passes for
+the selected environment and assigned users. A process-wide cohort label is
+not sufficient production activation authority.
 
 ## Workspace
 
@@ -53,6 +61,11 @@ pnpm verify:web
 pnpm dev
 ```
 
+When no public deployment binding is exported, `pnpm verify:web` uses an
+isolated test-only Supabase identity for its non-mutating production build.
+Partial or explicit bindings are never completed with synthetic values and
+must pass the same fail-closed environment validation as a direct build.
+
 Copy public browser configuration from `.env.example` into
 `apps/web/.env.local`. Keep the existing OpenAI key and Supabase service-role
 key in the protected Supabase environment; never put either secret in a browser
@@ -60,12 +73,12 @@ or Netlify build variable.
 
 ## Intelligence routes
 
-| Route | Candidate model | Purpose |
-|---|---|---|
-| `fast` | `gpt-5.6-luna` | conversation, intent, and clarification |
-| `deep` | `gpt-5.6-sol` | durable document wording and section repair |
-| `research` | `gpt-5.6-terra` | separately approved source-aware research |
-| `review` | `gpt-5.6-sol` with high reasoning | conditional high-risk review |
+| Route      | Candidate model                   | Purpose                                     |
+| ---------- | --------------------------------- | ------------------------------------------- |
+| `fast`     | `gpt-5.6-luna`                    | conversation, intent, and clarification     |
+| `deep`     | `gpt-5.6-sol`                     | durable document wording and section repair |
+| `research` | `gpt-5.6-terra`                   | separately approved source-aware research   |
+| `review`   | `gpt-5.6-sol` with high reasoning | conditional high-risk review                |
 
 These are versioned configuration candidates, not proof of hosted model access.
 There is no Anthropic or Google fallback. Deep, research, and review routes fail

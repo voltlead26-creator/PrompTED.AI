@@ -11,9 +11,9 @@ import {
   type ClariPrefs,
   type Domain,
 } from "../_shared/prompt-builder.ts";
-import { parseModelJson } from "../_shared/orchestration.ts";
 import { loadUserMemoryContext } from "../_shared/user-memory.ts";
 import { lockExplicitJobDocument } from "../_shared/job-template-lock.ts";
+import { RECOMMENDATION_OUTPUT_SCHEMA } from "../_shared/model-output-contracts.ts";
 
 interface RecommendBody {
   domain?: Domain;
@@ -157,13 +157,15 @@ Deno.serve(async (req) => {
 
     const result = await routeRequest({
       task: "recommend",
+      logicalStageKey: "recommend.primary",
+      outputSchema: RECOMMENDATION_OUTPUT_SCHEMA,
       systemPrompt,
       messages: [{ role: "user", content: `Situation: ${situation}` }],
       maxTokens: 2500,
       signal: req.signal,
     });
 
-    let parsed = parseModelJson(result.text);
+    let parsed = result.structured;
 
     // The model occasionally adds prose around the JSON or runs long on richer
     // situations (e.g. the "I need a job" bundle). Retry once with a strict
@@ -172,6 +174,8 @@ Deno.serve(async (req) => {
     if (!parsed) {
       const retry = await routeRequest({
         task: "recommend",
+        logicalStageKey: "recommend.repair",
+        outputSchema: RECOMMENDATION_OUTPUT_SCHEMA,
         systemPrompt,
         messages: [
           {
@@ -183,7 +187,7 @@ Deno.serve(async (req) => {
         maxTokens: 2500,
         signal: req.signal,
       });
-      parsed = parseModelJson(retry.text);
+      parsed = retry.structured;
     }
 
     if (!parsed) {

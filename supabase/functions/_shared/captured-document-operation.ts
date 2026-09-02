@@ -1,4 +1,10 @@
-import { CAPTURED_DOCUMENT_LEDGER } from "../../../packages/shared/src/document-ledger.ts";
+import {
+  CAPTURED_DOCUMENT_LEDGER,
+  type DeepReadonly,
+  type DocumentGenerationLedger,
+  type DocumentTemplateLedgerEntry,
+  validateDocumentGenerationLedger,
+} from "../../../packages/shared/src/document-ledger.ts";
 import {
   FIRST_CAPTURED_TEMPLATE_IDS,
   type FirstCapturedTemplateId,
@@ -15,8 +21,9 @@ const OUTPUT_STATES = [
 ] as const;
 
 export type CapturedReadySectionState = (typeof OUTPUT_STATES)[number];
-type CapturedTemplateContract =
-  (typeof CAPTURED_DOCUMENT_LEDGER.templates)[FirstCapturedTemplateId];
+export type CapturedTemplateContract = DeepReadonly<
+  DocumentTemplateLedgerEntry
+>;
 type CapturedInputContract = CapturedTemplateContract["requiredInputs"][number];
 type CapturedSectionContract = CapturedTemplateContract["sections"][number];
 
@@ -47,6 +54,21 @@ export interface CapturedInputPlan {
     material_claims_require_source_reference: true;
   };
   confirmations: Record<string, { confirmed: true; source_id: string }>;
+}
+
+export interface CapturedAcceptedInputSnapshot {
+  ledgerSchemaVersion: string;
+  ledgerVersion: string;
+  templateId: string;
+  benchmarkVersion: string;
+  ledgerTemplate: unknown;
+  inputValues: unknown;
+  sourceSnapshot: unknown;
+  evidenceSnapshot: unknown;
+  confirmations: unknown;
+  unresolvedInputKeys: unknown;
+  safeSectionKeys: unknown;
+  blockedSectionKeys: unknown;
 }
 
 export interface CapturedValidationIssue {
@@ -102,6 +124,53 @@ function hasValue(value: unknown): boolean {
 
 function snapshotSize(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length &&
+    [...expected].sort().every((key, index) => actual[index] === key);
+}
+
+function acceptedStringArray(value: unknown): string[] | null {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) =>
+      typeof item === "string" && item.length > 0 && item === item.trim()
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    return null;
+  }
+  return [...value];
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length &&
+    left.every((value) => right.includes(value));
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    const entries = Object.keys(object).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(object[key])}`
+    );
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
 }
 
 function relevantInputs(
@@ -187,6 +256,210 @@ export function planCapturedInputs(
       material_claims_require_source_reference: true,
     },
     confirmations,
+  };
+}
+
+/**
+ * Reconstructs pipeline.1 execution exclusively from the immutable accepted
+ * database snapshot. Unlike initial planning, this path never filters,
+ * defaults, or reinterprets accepted values against the currently compiled
+ * ledger.
+ */
+export function restoreCapturedInputPlan(
+  snapshot: CapturedAcceptedInputSnapshot,
+): CapturedInputPlan {
+  if (
+    !isFirstCapturedTemplateId(snapshot.templateId) ||
+    !snapshot.ledgerSchemaVersion.trim() ||
+    !snapshot.ledgerVersion.trim() ||
+    !snapshot.benchmarkVersion.trim()
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_LEDGER_IDENTITY_INVALID",
+    );
+  }
+
+  const ledgerTemplate = record(snapshot.ledgerTemplate);
+  if (!ledgerTemplate) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_LEDGER_TEMPLATE_INVALID",
+    );
+  }
+  const ledger: DocumentGenerationLedger = {
+    schemaVersion: snapshot.ledgerSchemaVersion,
+    ledgerVersion: snapshot.ledgerVersion,
+    templates: {
+      [snapshot.templateId]:
+        ledgerTemplate as unknown as DocumentTemplateLedgerEntry,
+    },
+  };
+  let ledgerIssues: ReturnType<typeof validateDocumentGenerationLedger>;
+  try {
+    ledgerIssues = validateDocumentGenerationLedger(ledger);
+  } catch {
+    ledgerIssues = [{
+      code: "invalid_runtime_shape",
+      path: `templates.${snapshot.templateId}`,
+      message: "accepted ledger template is incomplete",
+    }];
+  }
+  const template = ledger.templates[snapshot.templateId];
+  if (
+    ledgerIssues.length > 0 ||
+    !template ||
+    template.templateId !== snapshot.templateId ||
+    template.qualityBenchmark.benchmarkVersion !== snapshot.benchmarkVersion
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_LEDGER_TEMPLATE_INVALID",
+    );
+  }
+
+  const inputValues = record(snapshot.inputValues);
+  const sourceSnapshot = record(snapshot.sourceSnapshot);
+  const evidenceSnapshot = record(snapshot.evidenceSnapshot);
+  const confirmations = record(snapshot.confirmations);
+  const unresolvedInputKeys = acceptedStringArray(
+    snapshot.unresolvedInputKeys,
+  );
+  const safeSectionKeys = acceptedStringArray(snapshot.safeSectionKeys);
+  const blockedSectionKeys = acceptedStringArray(snapshot.blockedSectionKeys);
+  if (
+    !inputValues || !sourceSnapshot || !evidenceSnapshot || !confirmations ||
+    !unresolvedInputKeys || !safeSectionKeys || !blockedSectionKeys ||
+    !hasExactKeys(sourceSnapshot, ["sources"]) ||
+    !hasExactKeys(evidenceSnapshot, [
+      "material_claims_require_source_reference",
+      "permitted_source_ids",
+    ]) ||
+    snapshotSize(inputValues) > MAX_INPUT_SNAPSHOT_BYTES
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_INPUT_SNAPSHOT_INVALID",
+    );
+  }
+
+  const inputContracts = relevantInputs(template);
+  const allowedInputKeys = inputContracts.map((input) => input.key);
+  if (
+    Object.keys(inputValues).some((key) => !allowedInputKeys.includes(key)) ||
+    Object.values(inputValues).some((value) => !hasValue(value))
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_INPUT_SNAPSHOT_INVALID",
+    );
+  }
+
+  const expectedUnresolved = template.requiredInputs
+    .filter((input) => !hasValue(inputValues[input.key]))
+    .map((input) => input.key)
+    .sort();
+  const missingRequired = new Set(expectedUnresolved);
+  const expectedBlocked = template.sections
+    .filter((section) => sectionBlockers(section, missingRequired))
+    .map((section) => section.sectionKey);
+  const expectedSafe = template.sections
+    .map((section) => section.sectionKey)
+    .filter((key) => !expectedBlocked.includes(key));
+  if (
+    !sameStringSet(unresolvedInputKeys, expectedUnresolved) ||
+    !sameStringSet(blockedSectionKeys, expectedBlocked) ||
+    !sameStringSet(safeSectionKeys, expectedSafe) ||
+    safeSectionKeys.some((key) => blockedSectionKeys.includes(key))
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_SECTION_PARTITION_INVALID",
+    );
+  }
+
+  const rawSources = sourceSnapshot.sources;
+  if (
+    !Array.isArray(rawSources) ||
+    rawSources.length !== Object.keys(inputValues).length
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_SOURCE_SNAPSHOT_INVALID",
+    );
+  }
+  const sources: CapturedInputPlan["sourceSnapshot"]["sources"] = [];
+  for (const rawSource of rawSources) {
+    const source = record(rawSource);
+    if (
+      !source ||
+      !hasExactKeys(source, ["id", "input_key", "source_type", "value"]) ||
+      typeof source.input_key !== "string" ||
+      !Object.hasOwn(inputValues, source.input_key) ||
+      source.id !== `input:${source.input_key}` ||
+      source.source_type !== "confirmed_request_input" ||
+      canonicalJson(source.value) !==
+        canonicalJson(inputValues[source.input_key])
+    ) {
+      throw new CapturedOperationInputError(
+        "CAPTURED_ACCEPTED_SOURCE_SNAPSHOT_INVALID",
+      );
+    }
+    sources.push({
+      id: source.id,
+      input_key: source.input_key,
+      source_type: source.source_type,
+      value: source.value,
+    });
+  }
+  if (
+    new Set(sources.map((source) => source.input_key)).size !== sources.length
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_SOURCE_SNAPSHOT_INVALID",
+    );
+  }
+
+  const permittedSourceIds = acceptedStringArray(
+    evidenceSnapshot.permitted_source_ids,
+  );
+  const sourceIds = sources.map((source) => source.id);
+  if (
+    evidenceSnapshot.material_claims_require_source_reference !== true ||
+    !permittedSourceIds ||
+    !sameStringSet(permittedSourceIds, sourceIds) ||
+    Object.keys(confirmations).length !== Object.keys(inputValues).length
+  ) {
+    throw new CapturedOperationInputError(
+      "CAPTURED_ACCEPTED_EVIDENCE_SNAPSHOT_INVALID",
+    );
+  }
+
+  const acceptedConfirmations: CapturedInputPlan["confirmations"] = {};
+  for (const key of Object.keys(inputValues)) {
+    const confirmation = record(confirmations[key]);
+    if (
+      !confirmation ||
+      !hasExactKeys(confirmation, ["confirmed", "source_id"]) ||
+      confirmation.confirmed !== true ||
+      confirmation.source_id !== `input:${key}`
+    ) {
+      throw new CapturedOperationInputError(
+        "CAPTURED_ACCEPTED_CONFIRMATIONS_INVALID",
+      );
+    }
+    acceptedConfirmations[key] = {
+      confirmed: true,
+      source_id: confirmation.source_id,
+    };
+  }
+
+  return {
+    templateId: snapshot.templateId,
+    template: template as CapturedTemplateContract,
+    inputValues,
+    safeSectionKeys,
+    blockedSectionKeys,
+    unresolvedInputKeys,
+    sourceSnapshot: { sources },
+    evidenceSnapshot: {
+      permitted_source_ids: permittedSourceIds,
+      material_claims_require_source_reference: true,
+    },
+    confirmations: acceptedConfirmations,
   };
 }
 

@@ -1,7 +1,9 @@
 [build]
-  base    = "apps/web"
-  command = "pnpm --dir ../.. --filter @prompted/web build"
-  publish = ".next"
+  # Keep the monorepo base at the repository root. Netlify CLI's --filter
+  # selects apps/web as the package directory; setting both a package and the
+  # same subdirectory as base causes framework output to be nested twice.
+  command = "pnpm --filter @prompted/web build"
+  publish = "apps/web/.next"
 
 [build.environment]
   NODE_VERSION                    = "22.23.2"

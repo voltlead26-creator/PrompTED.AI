@@ -33,12 +33,7 @@ function section(overrides: Partial<Section>): Section {
 describe("tEdit panel", () => {
   it("offers five clear edit actions", () => {
     render(
-      <EditWithTED
-        streaming={false}
-        hasSelection={false}
-        onRun={vi.fn()}
-        onCancel={vi.fn()}
-      />,
+      <EditWithTED streaming={false} hasSelection={false} onRun={vi.fn()} onCancel={vi.fn()} />,
     );
     for (const label of ["Make clearer", "Shorten", "Expand", "Change tone", "Add detail"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
@@ -47,53 +42,44 @@ describe("tEdit panel", () => {
 
   it("runs an action when clicked", async () => {
     const onRun = vi.fn();
-    render(
-      <EditWithTED
-        streaming={false}
-        hasSelection={false}
-        onRun={onRun}
-        onCancel={vi.fn()}
-      />,
-    );
+    render(<EditWithTED streaming={false} hasSelection={false} onRun={onRun} onCancel={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Make clearer" }));
     expect(onRun).toHaveBeenCalledWith("improve", undefined);
   });
 
   it("shows the selected-wording scope", () => {
-    render(
-      <EditWithTED
-        streaming={false}
-        hasSelection
-        onRun={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
+    render(<EditWithTED streaming={false} hasSelection onRun={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.getByText("Selected wording")).toBeInTheDocument();
   });
 
   it("disables actions and shows Cancel while streaming", async () => {
     const onCancel = vi.fn();
-    render(
-      <EditWithTED
-        streaming
-        hasSelection={false}
-        onRun={vi.fn()}
-        onCancel={onCancel}
-      />,
-    );
+    render(<EditWithTED streaming hasSelection={false} onRun={vi.fn()} onCancel={onCancel} />);
     expect(screen.getByRole("button", { name: "Make clearer" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancel).toHaveBeenCalledOnce();
+    expect(screen.getByText(/Cancellation requested\. TED is reconciling/)).toBeInTheDocument();
+    expect(screen.queryByText(/Stopped\. Your existing wording/)).not.toBeInTheDocument();
   });
 
-  it("passes axe", async () => {
-    const { container } = render(
+  it("surfaces durable reconciliation and blocks another action", () => {
+    render(
       <EditWithTED
         streaming={false}
+        reconciling
         hasSelection={false}
         onRun={vi.fn()}
         onCancel={vi.fn()}
       />,
+    );
+    expect(screen.getByText("TED is reconciling the durable edit…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make clearer" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Suggest" })).toBeDisabled();
+  });
+
+  it("passes axe", async () => {
+    const { container } = render(
+      <EditWithTED streaming={false} hasSelection={false} onRun={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(await axe(container)).toHaveNoViolations();
   });
@@ -102,12 +88,7 @@ describe("tEdit panel", () => {
 describe("ExplainWithTED panel", () => {
   it("offers the explanation prompts", () => {
     render(
-      <ExplainWithTED
-        running={false}
-        hasSelection={false}
-        onRun={vi.fn()}
-        onCancel={vi.fn()}
-      />,
+      <ExplainWithTED running={false} hasSelection={false} onRun={vi.fn()} onCancel={vi.fn()} />,
     );
     for (const label of ["Plain English", "Make simpler", "Why it matters", "Watch for risks"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
@@ -116,12 +97,7 @@ describe("ExplainWithTED panel", () => {
 
   it("passes axe", async () => {
     const { container } = render(
-      <ExplainWithTED
-        running={false}
-        hasSelection
-        onRun={vi.fn()}
-        onCancel={vi.fn()}
-      />,
+      <ExplainWithTED running={false} hasSelection onRun={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(await axe(container)).toHaveNoViolations();
   });
@@ -135,14 +111,7 @@ describe("VersionHistory", () => {
 
   it("lists versions and restores the selected one", async () => {
     const onRestore = vi.fn();
-    render(
-      <VersionHistory
-        open
-        versions={versions}
-        onClose={vi.fn()}
-        onRestore={onRestore}
-      />,
-    );
+    render(<VersionHistory open versions={versions} onClose={vi.fn()} onRestore={onRestore} />);
     expect(screen.getByRole("dialog", { name: "Version history" })).toBeInTheDocument();
     expect(screen.getByText("Newest text")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Restore this version/i }));
@@ -196,7 +165,9 @@ describe("useVersionHistory", () => {
     expect(sections[0]?.content).toBe("v1");
     expect(sections[0]?.status).toBe("edited");
     expect(sections[0]?.version_history).toHaveLength(3);
-    expect(sections[0]?.version_history.some((version) => version.content === "current")).toBe(true);
+    expect(sections[0]?.version_history.some((version) => version.content === "current")).toBe(
+      true,
+    );
   });
 });
 
@@ -222,8 +193,17 @@ describe("SectionEditor", () => {
         onOpenHistory={vi.fn()}
       />,
     );
-    await waitFor(() => expect(screen.getByRole("toolbar", { name: "Formatting" })).toBeInTheDocument());
-    for (const label of ["Bold", "Italic", "Heading 2", "Heading 3", "Bullet list", "Numbered list"]) {
+    await waitFor(() =>
+      expect(screen.getByRole("toolbar", { name: "Formatting" })).toBeInTheDocument(),
+    );
+    for (const label of [
+      "Bold",
+      "Italic",
+      "Heading 2",
+      "Heading 3",
+      "Bullet list",
+      "Numbered list",
+    ]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
   });
@@ -244,9 +224,11 @@ describe("SectionEditor", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", {
-      name: /Missing information: The Issue needs your input/i,
-    })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", {
+        name: /Missing information: The Issue needs your input/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("does not allow an empty editor shell to erase a TED placeholder", () => {

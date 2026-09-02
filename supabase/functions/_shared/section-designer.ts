@@ -7,7 +7,7 @@
 // =====================================================
 
 import { routeRequest } from "./provider-router.ts";
-import { parseModelJson } from "./orchestration.ts";
+import { SECTION_DESIGN_OUTPUT_SCHEMA } from "./model-output-contracts.ts";
 import type { ResolvedTemplate, TemplateSection } from "./template-engine.ts";
 
 export interface DesignInput {
@@ -30,7 +30,11 @@ function cleanText(value: unknown, max: number): string {
   return typeof value === "string" ? value.slice(0, max).trim() : "";
 }
 
-function cleanArray(value: unknown, maxItems: number, maxLen: number): string[] | undefined {
+function cleanArray(
+  value: unknown,
+  maxItems: number,
+  maxLen: number,
+): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const items = value
     .filter((item): item is string => typeof item === "string")
@@ -41,7 +45,10 @@ function cleanArray(value: unknown, maxItems: number, maxLen: number): string[] 
 }
 
 function slugKey(label: string, index: number): string {
-  const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(
+    /^_|_$/g,
+    "",
+  );
   return key || `section_${index + 1}`;
 }
 
@@ -49,12 +56,16 @@ function slugKey(label: string, index: number): string {
  * Ask the model to design a bespoke section structure. Returns null on any
  * failure so the caller can fall back to its existing behaviour.
  */
-export async function designBespokeTemplate(input: DesignInput): Promise<ResolvedTemplate | null> {
+export async function designBespokeTemplate(
+  input: DesignInput,
+): Promise<ResolvedTemplate | null> {
   const content = [
     `The user needs a document that no catalogue template covers: "${input.documentName}".`,
     `Situation:\n${input.situation || "(not provided)"}`,
-    input.conversationContext && `Conversation context:\n${input.conversationContext.slice(0, 12000)}`,
-    input.uploadContext && `Uploaded material:\n${input.uploadContext.slice(0, 12000)}`,
+    input.conversationContext &&
+    `Conversation context:\n${input.conversationContext.slice(0, 12000)}`,
+    input.uploadContext &&
+    `Uploaded material:\n${input.uploadContext.slice(0, 12000)}`,
     [
       "Design the ideal structure for THIS specific document and situation — not a generic outline.",
       "Respond ONLY with JSON, no markdown fences, matching exactly:",
@@ -70,13 +81,15 @@ export async function designBespokeTemplate(input: DesignInput): Promise<Resolve
   try {
     const result = await routeRequest({
       task: "document",
+      logicalStageKey: "generate-document.design",
+      outputSchema: SECTION_DESIGN_OUTPUT_SCHEMA,
       systemPrompt: input.systemPrompt,
       messages: [{ role: "user", content }],
       maxTokens: 2200,
       signal: input.signal,
     });
 
-    const parsed = parseModelJson(result.text) as RawDesign | null;
+    const parsed = result.structured as RawDesign | undefined;
     if (!parsed || !Array.isArray(parsed.sections)) return null;
 
     const sections: TemplateSection[] = [];
@@ -101,13 +114,17 @@ export async function designBespokeTemplate(input: DesignInput): Promise<Resolve
     if (sections.length < 3) return null;
 
     const domainRaw = cleanText(parsed.domain, 20);
-    const domain = ["employment", "education", "business", "finance", "general"].includes(domainRaw)
-      ? domainRaw
-      : "general";
+    const domain =
+      ["employment", "education", "business", "finance", "general"].includes(
+          domainRaw,
+        )
+        ? domainRaw
+        : "general";
     const structureRaw = cleanText(parsed.structure_type, 20);
-    const structureType = structureRaw === "structured_form" || structureRaw === "checklist"
-      ? structureRaw
-      : "compose";
+    const structureType =
+      structureRaw === "structured_form" || structureRaw === "checklist"
+        ? structureRaw
+        : "compose";
 
     return {
       id: "bespoke",

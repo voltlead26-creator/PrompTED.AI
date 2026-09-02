@@ -20,14 +20,14 @@ export function initAnalytics(): void {
     persistence: "localStorage",
     // Respect user privacy: disable autocapture to avoid capturing document content.
     autocapture: false,
-    // Session recording requires explicit deployment configuration. Inputs
-    // stay masked even when recording is enabled; document text must never be
-    // added to analytics event properties.
-    disable_session_recording:
-      process.env.NEXT_PUBLIC_POSTHOG_SESSION_RECORDING !== "true",
+    // PrompTED handles document, prompt, source, and upload content. Session
+    // recording stays off in every environment, including when an obsolete
+    // public flag is present.
+    disable_session_recording: true,
     session_recording: {
-      sampleRate: 0.02,
+      sampleRate: 0,
       maskAllInputs: true,
+      maskTextSelector: "*",
       maskInputOptions: { password: true },
     } as Record<string, unknown>,
   });
@@ -37,10 +37,7 @@ export function initAnalytics(): void {
 // ── North-star funnel events ──────────────────────────────────────────────────
 
 /** Fired when a user submits their first situation on the home screen. */
-export function trackOutcomeStarted(props: {
-  domain?: string;
-  is_anonymous: boolean;
-}): void {
+export function trackOutcomeStarted(props: { domain?: string; is_anonymous: boolean }): void {
   posthog.capture("outcome_started", props);
 }
 
@@ -63,10 +60,7 @@ export function trackDocumentExported(props: {
 }
 
 /** Fired when a user completes a subscription purchase via RevenueCat. */
-export function trackSubscriptionConverted(props: {
-  plan: string;
-  from_plan: string;
-}): void {
+export function trackSubscriptionConverted(props: { plan: string; from_plan: string }): void {
   posthog.capture("subscription_converted", props);
 }
 

@@ -83,7 +83,9 @@ select is(
         'create_and_link_own_business'
       )
       and procedure_record.prosecdef
-      and array_to_string(procedure_record.proconfig, ',') = 'search_path='
+      and array_to_string(procedure_record.proconfig, ',') in (
+        'search_path=', 'search_path=""'
+      )
   ),
   3,
   'all profile and business commands are SECURITY DEFINER with an empty search path'

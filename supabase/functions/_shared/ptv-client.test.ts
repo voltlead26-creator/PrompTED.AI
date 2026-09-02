@@ -1,7 +1,11 @@
 import {
   buildPtvRequestPath,
   buildSignedPtvUrl,
+  PtvClient,
+  PtvDispatchError,
 } from "./ptv-client.ts";
+// deno-lint-ignore no-import-prefix -- repository test dependency is pinned by the Deno lockfile.
+import { assertEquals, assertRejects } from "jsr:@std/assert@1";
 
 Deno.test("buildPtvRequestPath appends query values before developer id", () => {
   const path = buildPtvRequestPath(
@@ -40,4 +44,32 @@ Deno.test("buildSignedPtvUrl produces a deterministic uppercase SHA-1 signature"
   if (url !== expected) {
     throw new Error(`Unexpected signed URL: ${url}`);
   }
+});
+
+Deno.test("PtvClient does not expose an upstream response body", async () => {
+  const client = new PtvClient({
+    developerId: "123456",
+    apiKey: "test-key",
+    fetchImpl: () =>
+      Promise.resolve(new Response("private upstream detail", { status: 503 })),
+  });
+  const error = await assertRejects(
+    () => client.get("/v3/route_types"),
+    PtvDispatchError,
+  );
+  assertEquals(error.dispatchCertain, true);
+  assertEquals(error.message.includes("private upstream detail"), false);
+});
+
+Deno.test("PtvClient marks a transport failure as an ambiguous dispatch", async () => {
+  const client = new PtvClient({
+    developerId: "123456",
+    apiKey: "test-key",
+    fetchImpl: () => Promise.reject(new Error("network failure")),
+  });
+  const error = await assertRejects(
+    () => client.get("/v3/route_types"),
+    PtvDispatchError,
+  );
+  assertEquals(error.dispatchCertain, false);
 });

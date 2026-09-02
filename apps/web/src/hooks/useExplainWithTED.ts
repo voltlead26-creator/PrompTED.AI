@@ -3,7 +3,12 @@
 import { useCallback, useRef, useState } from "react";
 import { explainSection } from "@prompted/shared/api-client";
 import type { ExplainResult } from "@prompted/shared/orchestration";
+import { useAuth } from "@/components/providers";
 import { ensureApiConfigured } from "@/lib/api";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+} from "@/lib/browser-principal-state";
 
 export interface ExplainRequest {
   content: string;
@@ -22,6 +27,7 @@ export interface UseExplainWithTED {
 }
 
 export function useExplainWithTED(): UseExplainWithTED {
+  const { user } = useAuth();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExplainResult | null>(null);
@@ -34,12 +40,17 @@ export function useExplainWithTED(): UseExplainWithTED {
   }, []);
 
   const run = useCallback(async (req: ExplainRequest) => {
+    if (!user?.id) {
+      setError("Sign in again before asking TED to explain this section.");
+      return null;
+    }
     ensureApiConfigured();
     setError(null);
     setResult(null);
     setRunning(true);
 
     const controller = new AbortController();
+    const requestContext = captureOwnerDispatch(user.id, controller.signal);
     controllerRef.current = controller;
 
     try {
@@ -51,19 +62,22 @@ export function useExplainWithTED(): UseExplainWithTED {
           section_name: req.sectionName,
           domain: req.domain,
         },
-        controller.signal,
+        requestContext,
       );
+      requestContext.assertCurrent();
       setResult(next);
       return next;
     } catch {
-      if (controller.signal.aborted) return null;
+      if (!ownerDispatchIsCurrent(requestContext)) return null;
       setError("TED couldn't explain that section right now. Please try again.");
       return null;
     } finally {
-      setRunning(false);
-      controllerRef.current = null;
+      if (ownerDispatchIsCurrent(requestContext)) {
+        setRunning(false);
+        controllerRef.current = null;
+      }
     }
-  }, []);
+  }, [user?.id]);
 
   return { running, error, result, run, cancel };
 }

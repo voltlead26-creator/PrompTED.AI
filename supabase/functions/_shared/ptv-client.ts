@@ -14,6 +14,17 @@ export interface PtvClientConfig {
   fetchImpl?: typeof fetch;
 }
 
+export class PtvConfigurationError extends Error {}
+
+export class PtvDispatchError extends Error {
+  constructor(
+    message: string,
+    readonly dispatchCertain: boolean,
+  ) {
+    super(message);
+  }
+}
+
 function bytesToHex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes))
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -76,7 +87,7 @@ export class PtvClient {
 
   constructor(private readonly config: PtvClientConfig) {
     if (!config.developerId.trim() || !config.apiKey.trim()) {
-      throw new Error("PTV credentials are not configured.");
+      throw new PtvConfigurationError("PTV credentials are not configured.");
     }
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
@@ -92,17 +103,25 @@ export class PtvClient {
       query,
     );
 
-    const response = await this.fetchImpl(url, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`PTV request failed (${response.status}): ${body.slice(0, 300)}`);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new PtvDispatchError("PTV request outcome is uncertain.", false);
     }
 
-    return await response.json() as T;
+    if (!response.ok) {
+      throw new PtvDispatchError(`PTV returned HTTP ${response.status}.`, true);
+    }
+
+    try {
+      return await response.json() as T;
+    } catch {
+      throw new PtvDispatchError("PTV returned an invalid response.", true);
+    }
   }
 }
 

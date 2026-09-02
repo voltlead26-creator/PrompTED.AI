@@ -1,8 +1,21 @@
 import { routeRequest } from "./provider-router.ts";
-import { requestGroundedResearch } from "./research-grounding.ts";
+import {
+  canonicalHttpsUrl,
+  type GroundedResearchClaim,
+  type ProviderWebSource,
+  requestGroundedResearch,
+} from "./research-grounding.ts";
 import { validateSection } from "./draft-validator.ts";
-import { parseModelJson } from "./orchestration.ts";
 import { TED_WORKFLOW_POLICY } from "./ted-workflow-policy.ts";
+import {
+  ARTIFACT_DRAFT_OUTPUT_SCHEMA,
+  ARTIFACT_REQUIREMENTS_OUTPUT_SCHEMA,
+  artifactAuditOutputSchema,
+  type ArtifactDraftBlockOutput,
+  validateArtifactAuditOutput,
+  validateArtifactDraftOutput,
+  validateArtifactRequirementsOutput,
+} from "./model-output-contracts.ts";
 
 export type ArtifactKind =
   | "document"
@@ -62,13 +75,10 @@ export interface ArtifactPipelineInput {
   onStage?: (stage: string) => void;
 }
 
-interface ModelBlock {
-  kind?: unknown;
-  stable_key?: unknown;
-  heading?: unknown;
-  payload?: unknown;
-  due_date?: unknown;
-  references?: unknown;
+export interface ArtifactGroundingSnapshot {
+  capturedAt: string;
+  claims: GroundedResearchClaim[];
+  sources: ProviderWebSource[];
 }
 
 interface ValidationIssue {
@@ -76,65 +86,70 @@ interface ValidationIssue {
   message: string;
 }
 
-function safeKey(value: string, index: number): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")
-    .slice(0, 72) || `block_${index + 1}`;
+export function bindArtifactReferencesToGrounding(
+  references: ArtifactDraftBlockOutput["references"],
+  grounding: ArtifactGroundingSnapshot | null,
+): Array<Record<string, string>> {
+  if (references.length === 0) return [];
+  if (!grounding) throw new Error("ARTIFACT_REFERENCE_NOT_CAPTURED");
+  if (Number.isNaN(Date.parse(grounding.capturedAt))) {
+    throw new Error("ARTIFACT_REFERENCE_CAPTURE_TIME_INVALID");
+  }
+
+  const sourceByUrl = new Map<string, ProviderWebSource>();
+  for (const source of grounding.sources) {
+    const url = canonicalHttpsUrl(source.url);
+    if (url) sourceByUrl.set(url, { ...source, url });
+  }
+  const seen = new Set<string>();
+  return references.map((reference) => {
+    const url = canonicalHttpsUrl(reference.url);
+    const source = url ? sourceByUrl.get(url) : undefined;
+    if (!url || !source) throw new Error("ARTIFACT_REFERENCE_NOT_CAPTURED");
+    if (seen.has(url)) throw new Error("ARTIFACT_REFERENCE_DUPLICATE");
+    seen.add(url);
+
+    const supportedClaims = grounding.claims.filter((claim) =>
+      claim.source_ids.includes(source.id) &&
+      claim.source_urls.some((claimUrl) => canonicalHttpsUrl(claimUrl) === url)
+    ).map((claim) => claim.text.trim()).filter(Boolean);
+    if (supportedClaims.length === 0) {
+      throw new Error("ARTIFACT_REFERENCE_CLAIM_REQUIRED");
+    }
+    const support = [...new Set(supportedClaims)].join("\n\n").slice(0, 4_000);
+    const publisher = new URL(url).hostname;
+    return {
+      label: source.title.trim() || publisher,
+      url,
+      publisher,
+      retrieved_at: grounding.capturedAt,
+      summary: support,
+      supports: support,
+    };
+  });
 }
 
-function parseBlocks(raw: unknown, artifactId: string): ArtifactBlock[] {
-  const value = raw && typeof raw === "object"
-    ? raw as Record<string, unknown>
-    : {};
-  if (!Array.isArray(value.blocks)) return [];
-
-  return value.blocks.flatMap((item, index) => {
-    if (!item || typeof item !== "object") return [];
-    const block = item as ModelBlock;
-    const heading = typeof block.heading === "string"
-      ? block.heading.trim()
-      : "";
-    const payload = block.payload && typeof block.payload === "object" &&
-        !Array.isArray(block.payload)
-      ? block.payload as Record<string, unknown>
-      : {};
-    const kind = [
-        "section",
-        "action",
-        "recommendation",
-        "finding",
-        "reference",
-      ].includes(String(block.kind))
-      ? String(block.kind) as ArtifactBlock["kind"]
-      : "section";
-
-    return [{
-      id: crypto.randomUUID(),
-      artifact_id: artifactId,
-      kind,
-      stable_key: safeKey(
-        typeof block.stable_key === "string" ? block.stable_key : heading,
-        index,
-      ),
-      parent_block_id: null,
-      heading,
-      order_index: index,
-      payload,
-      approval_status: "draft" as const,
-      completed_at: null,
-      due_date: typeof block.due_date === "string" &&
-          /^\d{4}-\d{2}-\d{2}$/.test(block.due_date)
-        ? block.due_date
-        : null,
-      revision: 1 as const,
-      references: Array.isArray(block.references)
-        ? block.references.filter((
-          reference,
-        ): reference is Record<string, string> =>
-          Boolean(reference) && typeof reference === "object"
-        )
-        : [],
-    }];
-  });
+function materializeBlock(
+  block: ArtifactDraftBlockOutput,
+  artifactId: string,
+  index: number,
+  grounding: ArtifactGroundingSnapshot | null,
+): ArtifactBlock {
+  return {
+    id: crypto.randomUUID(),
+    artifact_id: artifactId,
+    kind: block.kind,
+    stable_key: block.stable_key,
+    parent_block_id: null,
+    heading: block.heading,
+    order_index: index,
+    payload: { ...block.payload },
+    approval_status: "draft",
+    completed_at: null,
+    due_date: block.due_date,
+    revision: 1,
+    references: bindArtifactReferencesToGrounding(block.references, grounding),
+  };
 }
 
 function strings(value: unknown): string[] {
@@ -199,9 +214,7 @@ function validate(blocks: ArtifactBlock[]): ValidationIssue[] {
         });
       }
     } else {
-      const text = String(
-        block.payload.content ?? block.payload.summary ?? "",
-      ).trim();
+      const text = String(block.payload.content ?? "").trim();
       if (!text) {
         issues.push({
           block_key: block.stable_key,
@@ -239,23 +252,25 @@ function validate(blocks: ArtifactBlock[]): ValidationIssue[] {
 
 function outputShape(kind: ArtifactKind): string {
   if (kind === "action_plan" || kind === "checklist") {
-    return `Each block kind is "action". payload must contain title, objective, instructions[], required_inputs[], included_materials[{label,content}], dependencies[], timing ({due_date or relative_timing, rationale} or null), completion_criteria[], cautions[].`;
+    return `Each block kind is "action". payload must contain title, objective, instructions[], required_inputs[], included_materials[{label,content}], dependencies[], timing ({due_date: "YYYY-MM-DD" | null, relative_timing: string | null, rationale} or null), completion_criteria[], cautions[].`;
   }
-  return `Use section, recommendation or finding blocks as appropriate. Each payload must contain complete finished content in a "content" or "summary" field.`;
+  return `Use section, recommendation, finding or reference blocks as appropriate. Each payload must contain complete finished content in "content" and an explicit missing_vital_information[] list. Do not use action payload fields.`;
 }
 
 async function generateBlocks(
   input: ArtifactPipelineInput,
   requirements: unknown,
-  grounding: string,
+  grounding: ArtifactGroundingSnapshot | null,
   corrections: ValidationIssue[] = [],
 ): Promise<{ title: string; blocks: ArtifactBlock[] }> {
   const result = await routeRequest({
     task: input.kind === "action_plan" || input.kind === "checklist"
       ? "checklist"
       : "document",
+    logicalStageKey: "ted-artifact.draft",
+    outputSchema: ARTIFACT_DRAFT_OUTPUT_SCHEMA,
     systemPrompt:
-      `${TED_WORKFLOW_POLICY}\n\nReturn strict JSON only: {"title":"...","blocks":[{"kind":"...","stable_key":"...","heading":"...","payload":{},"due_date":null,"references":[]}]}.\n${
+      `${TED_WORKFLOW_POLICY}\n\nReturn the strict structured result: {"title":"...","blocks":[{"kind":"...","stable_key":"unique_snake_case_key","heading":"...","payload":{},"due_date":null,"references":[]}]}. Each reference is exactly {"url":"..."}; use only an exact captured source URL supplied below, and use [] when there is no captured source. The server owns all other citation metadata.\n${
         outputShape(input.kind)
       }`,
     messages: [{
@@ -265,7 +280,12 @@ async function generateBlocks(
         `Situation: ${input.situation}`,
         `Context: ${input.context}`,
         `Requirements: ${JSON.stringify(requirements)}`,
-        grounding && `Current grounded information:\n${grounding}`,
+        grounding && `Current grounded information:\n${
+          JSON.stringify({
+            claims: grounding.claims,
+            captured_sources: grounding.sources,
+          })
+        }`,
         corrections.length > 0 &&
         `Correct these validation failures without weakening or removing blocks that already satisfy the requirements:\n${
           JSON.stringify(corrections)
@@ -275,13 +295,22 @@ async function generateBlocks(
     maxTokens: 5000,
     signal: input.signal,
   });
-  const parsed = parseModelJson(result.text) as Record<string, unknown> | null;
-  return {
-    title: typeof parsed?.title === "string"
-      ? parsed.title.trim()
-      : "Your finished output",
-    blocks: parseBlocks(parsed, input.artifactId),
-  };
+  try {
+    const parsed = validateArtifactDraftOutput(
+      result.structured,
+      input.kind === "action_plan" || input.kind === "checklist",
+    );
+    return {
+      title: parsed.title,
+      blocks: parsed.blocks.map((block, index) =>
+        materializeBlock(block, input.artifactId, index, grounding)
+      ),
+    };
+  } catch {
+    // The bounded repair pass below receives a deterministic blank-output
+    // issue. No unvalidated provider field survives into the durable result.
+    return { title: "Your finished output", blocks: [] };
+  }
 }
 
 async function auditBlocks(
@@ -289,10 +318,19 @@ async function auditBlocks(
   requirements: unknown,
   draft: { title: string; blocks: ArtifactBlock[] },
 ): Promise<ValidationIssue[]> {
+  const blockKeys = draft.blocks.map((block) => block.stable_key);
+  if (blockKeys.length === 0) {
+    return [{
+      block_key: "artifact",
+      message: "The quality audit cannot approve an empty artifact.",
+    }];
+  }
   const audit = await routeRequest({
     task: "edit",
+    logicalStageKey: "ted-artifact.audit",
+    outputSchema: artifactAuditOutputSchema(blockKeys),
     systemPrompt:
-      `${TED_WORKFLOW_POLICY}\nAudit only. Return strict JSON {"passed":true|false,"issues":[{"block_key":"...","message":"..."}]}. Fail vague, incomplete, externally dependent, unsupported or instruction-like output. Use only stable block keys present in the supplied artifact.`,
+      `${TED_WORKFLOW_POLICY}\nAudit only. Return the strict structured result {"passed":true|false,"issues":[{"block_key":"...","message":"..."}]}. passed must be true exactly when issues is empty. Fail vague, incomplete, externally dependent, unsupported or instruction-like output. Use only stable block keys present in the supplied artifact.`,
     messages: [{
       role: "user",
       content: JSON.stringify({
@@ -304,31 +342,16 @@ async function auditBlocks(
     maxTokens: 1800,
     signal: input.signal,
   });
-  const auditJson = parseModelJson(audit.text) as
-    | Record<string, unknown>
-    | null;
-  if (auditJson?.passed === true) return [];
-
-  if (!Array.isArray(auditJson?.issues) || auditJson.issues.length === 0) {
+  let auditResult;
+  try {
+    auditResult = validateArtifactAuditOutput(audit.structured, blockKeys);
+  } catch {
     return [{
       block_key: "artifact",
       message: "The quality audit did not return a valid approval.",
     }];
   }
-
-  const validKeys = new Set(draft.blocks.map((block) => block.stable_key));
-  return auditJson.issues.flatMap((issue) => {
-    if (!issue || typeof issue !== "object") return [];
-    const rawKey = String(
-      (issue as Record<string, unknown>).block_key ?? "artifact",
-    );
-    return [{
-      block_key: validKeys.has(rawKey) ? rawKey : "artifact",
-      message: String(
-        (issue as Record<string, unknown>).message ?? "Quality review failed.",
-      ),
-    }];
-  });
+  return auditResult.passed ? [] : auditResult.issues;
 }
 
 function needsGrounding(input: ArtifactPipelineInput): boolean {
@@ -342,8 +365,10 @@ export async function runTedArtifactPipeline(
   input.onStage?.("requirements");
   const requirementsResult = await routeRequest({
     task: "intent",
+    logicalStageKey: "ted-artifact.requirements",
+    outputSchema: ARTIFACT_REQUIREMENTS_OUTPUT_SCHEMA,
     systemPrompt:
-      `${TED_WORKFLOW_POLICY}\nReturn strict JSON with goal, audience, outcome, confirmed_facts, constraints, urgency, missing_vital_information and required_content. Do not recommend a different output type.`,
+      `${TED_WORKFLOW_POLICY}\nReturn the strict structured result with goal, audience, outcome, confirmed_facts, constraints, urgency, missing_vital_information and required_content. Do not recommend a different output type.`,
     messages: [{
       role: "user",
       content:
@@ -352,9 +377,11 @@ export async function runTedArtifactPipeline(
     maxTokens: 1400,
     signal: input.signal,
   });
-  const requirements = parseModelJson(requirementsResult.text) ?? {};
+  const requirements = validateArtifactRequirementsOutput(
+    requirementsResult.structured,
+  );
 
-  let grounding = "";
+  let grounding: ArtifactGroundingSnapshot | null = null;
   if (needsGrounding(input)) {
     input.onStage?.("grounding");
     const grounded = await requestGroundedResearch({
@@ -368,9 +395,11 @@ export async function runTedArtifactPipeline(
       maxTokens: 1800,
       signal: input.signal,
     });
-    grounding = grounded.claims.map((claim) =>
-      `${claim.text}\nCaptured sources: ${claim.source_urls.join(", ")}`
-    ).join("\n\n");
+    grounding = {
+      capturedAt: new Date().toISOString(),
+      claims: grounded.claims,
+      sources: grounded.sources,
+    };
   }
 
   input.onStage?.("drafting");

@@ -27,12 +27,16 @@ interface ChatInputProps {
   attachError?: string | null;
   /** Disables submit while a request is in flight. */
   busy?: boolean;
+  /** Keeps a recovered situation immutable while allowing same-file reselection. */
+  textReadOnly?: boolean;
   /** Placeholder; defaults to "Ask TED". */
   placeholder?: string;
   /** Accessible label for the textarea. */
   ariaLabel?: string;
   /** Label on the send button; defaults to "Ask TED". */
   submitLabel?: string;
+  /** Enables durable uploads; embedded legacy conversations remain text-only. */
+  allowAttachment?: boolean;
 }
 
 const MAX_TEXTAREA_HEIGHT = 200;
@@ -69,9 +73,11 @@ export function ChatInput({
   onRemoveAttachment,
   attachError,
   busy = false,
+  textReadOnly = false,
   placeholder = "Ask TED",
   ariaLabel = "What are you trying to achieve?",
   submitLabel = "Ask TED",
+  allowAttachment = true,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -85,7 +91,11 @@ export function ChatInput({
     valueRef.current = value;
   }, [value]);
 
-  const canSubmit = (value.trim().length > 0 || attachment !== null) && !busy;
+  const canSubmit =
+    (textReadOnly
+      ? allowAttachment && attachment !== null
+      : value.trim().length > 0 || (allowAttachment && attachment !== null)) &&
+    !busy;
 
   // Auto-resize the textarea to fit content, up to a cap.
   const resize = useCallback(() => {
@@ -108,6 +118,7 @@ export function ChatInput({
   }, []);
 
   const toggleMic = useCallback(() => {
+    if (textReadOnly) return;
     if (listening) {
       recognitionRef.current?.stop();
       return;
@@ -137,7 +148,7 @@ export function ChatInput({
     recognitionRef.current = recognition;
     setListening(true);
     recognition.start();
-  }, [listening, onChange]);
+  }, [listening, onChange, textReadOnly]);
 
   function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
     onChange(e.target.value);
@@ -170,6 +181,8 @@ export function ChatInput({
           placeholder={placeholder}
           aria-label={ariaLabel}
           rows={1}
+          readOnly={textReadOnly}
+          aria-readonly={textReadOnly || undefined}
         />
         <div className={styles.attachCol}>
           {micSupported && (
@@ -177,7 +190,7 @@ export function ChatInput({
               type="button"
               className={`${styles.iconButton}${listening ? ` ${styles.recording}` : ""}`}
               onClick={toggleMic}
-              disabled={busy}
+              disabled={busy || textReadOnly}
               aria-label={listening ? "Stop voice input" : "Speak instead of typing"}
               aria-pressed={listening}
               title={listening ? "Stop listening" : "Speak instead of typing"}
@@ -185,25 +198,29 @@ export function ChatInput({
               <Icon name="microphone" size={20} />
             </button>
           )}
-          <button
-            type="button"
-            className={styles.uploadButton}
-            onClick={() => fileRef.current?.click()}
-            disabled={busy}
-            aria-label="Upload a document into chat"
-            title="Upload a document"
-          >
-            <span className={styles.uploadPlus} aria-hidden="true">+</span>
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            className={styles.fileInput}
-            accept={ACCEPT_ATTRIBUTE}
-            onChange={handleFileChange}
-            tabIndex={-1}
-            aria-hidden="true"
-          />
+          {allowAttachment ? (
+            <>
+              <button
+                type="button"
+                className={styles.uploadButton}
+                onClick={() => fileRef.current?.click()}
+                disabled={busy}
+                aria-label="Upload a document into chat"
+                title="Upload a document"
+              >
+                <span className={styles.uploadPlus} aria-hidden="true">+</span>
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                className={styles.fileInput}
+                accept={ACCEPT_ATTRIBUTE}
+                onChange={handleFileChange}
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+            </>
+          ) : null}
         </div>
         <Button
           variant="primary"
@@ -225,7 +242,7 @@ export function ChatInput({
         </p>
       )}
 
-      {attachment && (
+      {allowAttachment && attachment && (
         <div className={styles.attachmentChip}>
           <Icon name="file" size={16} />
           <span className={styles.attachmentName}>{attachment.name}</span>
@@ -240,7 +257,7 @@ export function ChatInput({
         </div>
       )}
 
-      {attachError && (
+      {allowAttachment && attachError && (
         <p className={styles.attachError} role="alert">
           {attachError}
         </p>

@@ -145,12 +145,19 @@ describe("LivePreview", () => {
         title="Doc"
         sections={[section({ id: "a", name: "Intro", content: "x" })]}
         brandKit={{
-          id: "bk1",
-          business_id: "biz1",
+          id: "b8000000-0000-4000-8000-000000000001",
+          business_id: "b7000000-0000-4000-8000-000000000001",
           logo_url: null,
           primary_colour: "#123456",
           secondary_colour: null,
           footer_text: "ACME Pty Ltd · ABN 123",
+          revision: 1,
+          logo_operation_id: null,
+          logo_storage_path: null,
+          logo_content_sha256: null,
+          logo_media_type: null,
+          logo_byte_length: null,
+          logo_status: "ready",
           updated_at: "2026-01-01T00:00:00.000Z",
         }}
       />,
@@ -158,6 +165,29 @@ describe("LivePreview", () => {
     expect(screen.getByText("ACME Pty Ltd · ABN 123")).toBeInTheDocument();
     const heading = screen.getByText("Doc");
     expect(heading).toHaveStyle({ color: "#123456" });
+  });
+
+  it("never describes deferred saved wording as an empty section", () => {
+    render(
+      <LivePreview
+        title="Doc"
+        sections={[
+          {
+            ...section({ id: "a", name: "Deferred details", content: "" }),
+            content_loaded: false,
+            content_sha256: "a".repeat(64),
+            content_length: 250,
+            revision: 2,
+            approved_revision: null,
+            ledger_binding_status: "legacy_unversioned",
+            section_key: null,
+            section_state: null,
+          } as Section,
+        ]}
+      />,
+    );
+    expect(screen.getByText(/Saved wording for this section has not been loaded/i)).toBeVisible();
+    expect(screen.queryByText(/This section is empty/i)).toBeNull();
   });
 
   it("passes axe", async () => {

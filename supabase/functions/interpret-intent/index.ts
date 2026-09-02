@@ -6,11 +6,15 @@
 // =====================================================
 
 import { handleOptions, jsonResponse } from "../_shared/cors.ts";
-import { guardRequest, AuthError } from "../_shared/auth-guard.ts";
+import { AuthError, guardRequest } from "../_shared/auth-guard.ts";
 import { routeRequest, USER_SAFE_ERROR } from "../_shared/provider-router.ts";
-import { buildSystemPrompt, type Domain, type ClariPrefs } from "../_shared/prompt-builder.ts";
-import { parseModelJson } from "../_shared/orchestration.ts";
+import {
+  buildSystemPrompt,
+  type ClariPrefs,
+  type Domain,
+} from "../_shared/prompt-builder.ts";
 import { loadUserMemoryContext } from "../_shared/user-memory.ts";
+import { INTENT_OUTPUT_SCHEMA } from "../_shared/model-output-contracts.ts";
 
 interface IntentBody {
   situation_text?: string;
@@ -24,14 +28,20 @@ Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: { message: "Method not allowed" } }, 405, origin);
+    return jsonResponse(
+      { error: { message: "Method not allowed" } },
+      405,
+      origin,
+    );
   }
 
   let auth;
   try {
     auth = await guardRequest(req, { enforceCap: false });
   } catch (err) {
-    if (err instanceof AuthError) return jsonResponse(err.payload, err.status, origin);
+    if (err instanceof AuthError) {
+      return jsonResponse(err.payload, err.status, origin);
+    }
     console.error("Intent auth guard failed", err);
     return jsonResponse(USER_SAFE_ERROR, 500, origin);
   }
@@ -42,7 +52,11 @@ Deno.serve(async (req) => {
     const extracted = String(body.extracted_text ?? "").slice(0, 20000).trim();
 
     if (!situation && !extracted) {
-      return jsonResponse({ error: { message: "situation_text is required" } }, 400, origin);
+      return jsonResponse(
+        { error: { message: "situation_text is required" } },
+        400,
+        origin,
+      );
     }
 
     const memory = auth.userId === "anonymous"
@@ -64,13 +78,15 @@ Deno.serve(async (req) => {
 
     const result = await routeRequest({
       task: "intent",
+      logicalStageKey: "interpret-intent.primary",
+      outputSchema: INTENT_OUTPUT_SCHEMA,
       systemPrompt,
       messages,
       maxTokens: 1200,
       signal: req.signal,
     });
 
-    let parsed = parseModelJson(result.text);
+    let parsed = result.structured;
 
     // The model sometimes answers the request directly in prose instead of
     // returning the required JSON -- usually because the request was clear
@@ -83,6 +99,8 @@ Deno.serve(async (req) => {
     if (!parsed) {
       const repair = await routeRequest({
         task: "intent",
+        logicalStageKey: "interpret-intent.repair",
+        outputSchema: INTENT_OUTPUT_SCHEMA,
         systemPrompt,
         messages: [
           ...messages,
@@ -99,7 +117,7 @@ Deno.serve(async (req) => {
         maxTokens: 1200,
         signal: req.signal,
       });
-      parsed = parseModelJson(repair.text);
+      parsed = repair.structured;
     }
 
     if (!parsed) {
@@ -112,7 +130,8 @@ Deno.serve(async (req) => {
           situation,
           confidence: 0,
           intent_clear: false,
-          question: "Could you tell me a bit more about what you're trying to create, in a sentence or two?",
+          question:
+            "Could you tell me a bit more about what you're trying to create, in a sentence or two?",
           recommendation: null,
         },
         200,

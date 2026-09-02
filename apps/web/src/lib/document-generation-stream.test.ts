@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Section } from "@prompted/shared/browser";
 import type { WorkspaceDocumentState } from "./workspace-store";
+import { testOwnerDispatchLease } from "@/test/owner-dispatch-lease";
 
 const { generateDocumentStream } = vi.hoisted(() => ({
   generateDocumentStream: vi.fn().mockResolvedValue(undefined),
@@ -72,6 +73,8 @@ describe("streamInitialDraft", () => {
 
     await streamInitialDraft({
       outcomeId: "outcome-1",
+      requestContext: testOwnerDispatchLease("user-1"),
+      generationRequestId: "stream-request-1",
       state: workspace(),
       pending,
       onSection,
@@ -115,6 +118,8 @@ describe("streamInitialDraft", () => {
 
     await streamInitialDraft({
       outcomeId: "outcome-1",
+      requestContext: testOwnerDispatchLease("user-1"),
+      generationRequestId: "stream-request-2",
       state,
       pending,
       onSection: vi.fn(),
@@ -153,6 +158,8 @@ describe("streamInitialDraft", () => {
 
     await streamInitialDraft({
       outcomeId: "outcome-1",
+      requestContext: testOwnerDispatchLease("user-1"),
+      generationRequestId: "stream-request-3",
       state,
       pending: {
         situation: state.situation,
@@ -193,6 +200,8 @@ describe("streamInitialDraft", () => {
 
     await streamInitialDraft({
       outcomeId: "outcome-1",
+      requestContext: testOwnerDispatchLease("user-1"),
+      generationRequestId: "stream-request-4",
       state: workspace(),
       pending: null,
       onSection,
@@ -236,6 +245,8 @@ describe("streamInitialDraft", () => {
 
     await streamInitialDraft({
       outcomeId: "outcome-1",
+      requestContext: testOwnerDispatchLease("user-1"),
+      generationRequestId: "stream-request-5",
       state: workspace(),
       pending: null,
       onSection: vi.fn(),
@@ -271,6 +282,8 @@ describe("streamInitialDraft", () => {
 
     await streamInitialDraft({
       outcomeId: "outcome-1",
+      requestContext: testOwnerDispatchLease("user-1"),
+      generationRequestId: "stream-request-6",
       state: workspace(),
       pending: null,
       onSection,

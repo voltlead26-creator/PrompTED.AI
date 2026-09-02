@@ -11,27 +11,19 @@
 import { handleOptions, jsonResponse } from "../_shared/cors.ts";
 import { AuthError, guardRequest } from "../_shared/auth-guard.ts";
 import { routeRequest, USER_SAFE_ERROR } from "../_shared/provider-router.ts";
-import { parseModelJson } from "../_shared/orchestration.ts";
+import { JOB_MATCH_OUTPUT_SCHEMA } from "../_shared/model-output-contracts.ts";
 import {
-  type GroundedVacancy,
+  type AuthoritativeJobRole,
+  awaitGroundedResearchWithTimeout,
   groundJobMatchOutput,
+  normalizeAuthoritativeJobRoles,
   type ProviderWebSource,
   requestGroundedJobVacancies,
+  settleVacancySearch,
+  type VacancySearchOutcome,
 } from "../_shared/research-grounding.ts";
+// deno-lint-ignore no-import-prefix -- the Edge runtime pins Supabase through JSR.
 import { createClient } from "jsr:@supabase/supabase-js@2";
-
-interface JobRole {
-  role: string;
-  industry: string;
-  demand: "very high" | "high" | "moderate";
-  typical_pay_aud: string;
-  entry_requirements: string;
-  fast_start: boolean;
-  start_speed: string;
-  where_to_apply: string[];
-  notes: string;
-  data_as_of: string;
-}
 
 interface JobMatchBody {
   situation?: string;
@@ -40,11 +32,12 @@ interface JobMatchBody {
   work_type?: string;
   distance?: string;
   role_focus?: string;
+  country_code?: string;
   history?: { role: "user" | "assistant"; content: string }[];
 }
 
 async function loadRoles(): Promise<{
-  roles: JobRole[];
+  roles: AuthoritativeJobRole[];
   source: "database" | "unavailable";
   dataAsOf: string | null;
 }> {
@@ -56,11 +49,14 @@ async function loadRoles(): Promise<{
       const { data, error } = await admin
         .from("job_market_roles")
         .select(
-          "role,industry,demand,typical_pay_aud,entry_requirements,fast_start,start_speed,where_to_apply,notes,data_as_of",
+          "id,role,industry,demand,typical_pay_aud,start_speed,data_as_of",
         )
         .limit(60);
       if (!error && Array.isArray(data) && data.length > 0) {
-        const roles = data as JobRole[];
+        const roles = normalizeAuthoritativeJobRoles(data);
+        if (roles.length === 0) {
+          return { roles: [], source: "unavailable", dataAsOf: null };
+        }
         const dates = roles
           .map((role) => role.data_as_of)
           .filter((value): value is string =>
@@ -89,37 +85,37 @@ async function liveVacancies(
   location: string,
   brief: string,
   signal: AbortSignal,
-): Promise<{ vacancies: GroundedVacancy[]; sources: ProviderWebSource[] }> {
+): Promise<VacancySearchOutcome> {
   const where = location ||
     "the location mentioned in the user's context; if no location is present, return no vacancies";
-  try {
-    return await requestGroundedJobVacancies({
-      systemPrompt: [
-        "You are a careful job-vacancy researcher. Use web search to find REAL, currently-advertised vacancies relative to the user's location.",
-        "COUNTRY: work out the user's country from their location. If no location can be determined, return an empty vacancies array.",
-        "STRICT SOURCE RULES:",
-        "- Only return vacancies from official GOVERNMENT job sites OR an employer's own careers page. Examples by country: United States - USAJOBS.gov and state / county / city *.gov career pages; Australia - Workforce Australia, APSjobs and *.gov.au state / health / education / council pages; other countries - their equivalent official government portals.",
-        "- NEVER use large job-board aggregators. Do not return any listing whose URL is on Indeed, Seek, ZipRecruiter, Monster, or Glassdoor.",
-        "- Only include a vacancy you actually found in a real search result, with its real, working source URL. If you are not sure a listing is real, leave it out.",
-        "- If you cannot find real matching vacancies, return an empty array. Never invent vacancies, employers, or URLs.",
-        "Return up to 8 of the most relevant, currently-open roles.",
-        "Return the strict structured result. Copy each exact source URL into url. Source labels are derived from captured provider sources and must not be invented.",
-      ].join("\n"),
-      messages: [
-        {
-          role: "user",
-          content:
-            `Find current real job vacancies near ${where} suited to this person. Match the seniority and skills in the resume highlights - do not suggest roles far above or below their experience level. Context:\n${
-              brief.slice(0, 3600)
-            }`,
-        },
-      ],
-      maxTokens: 1600,
-      signal,
-    });
-  } catch (_e) {
-    return { vacancies: [], sources: [] };
-  }
+  return await settleVacancySearch(
+    () =>
+      requestGroundedJobVacancies({
+        systemPrompt: [
+          "You are a careful job-vacancy researcher. Use web search to find REAL, currently-advertised vacancies relative to the user's location.",
+          "COUNTRY: work out the user's country from their location. If no location can be determined, return an empty vacancies array.",
+          "STRICT SOURCE RULES:",
+          "- Only return vacancies from official GOVERNMENT job sites OR an employer's own careers page. Examples by country: United States - USAJOBS.gov and state / county / city *.gov career pages; Australia - Workforce Australia, APSjobs and *.gov.au state / health / education / council pages; other countries - their equivalent official government portals.",
+          "- NEVER use large job-board aggregators. Do not return any listing whose URL is on Indeed, Seek, ZipRecruiter, Monster, or Glassdoor.",
+          "- Only include a vacancy you actually found in a real search result, with its real, working source URL. If you are not sure a listing is real, leave it out.",
+          "- If you cannot find real matching vacancies, return an empty array. Never invent vacancies, employers, or URLs.",
+          "Return up to 8 of the most relevant, currently-open roles.",
+          "Return the strict structured result. Copy each exact source URL into url. Source labels are derived from captured provider sources and must not be invented.",
+        ].join("\n"),
+        messages: [
+          {
+            role: "user",
+            content:
+              `Find current real job vacancies near ${where} suited to this person. Match the seniority and skills in the resume highlights - do not suggest roles far above or below their experience level. Context:\n${
+                brief.slice(0, 3600)
+              }`,
+          },
+        ],
+        maxTokens: 1600,
+        signal,
+      }),
+    signal,
+  );
 }
 
 Deno.serve(async (req) => {
@@ -153,6 +149,10 @@ Deno.serve(async (req) => {
     const workType = String(body.work_type ?? "").slice(0, 60).trim();
     const distance = String(body.distance ?? "").slice(0, 40).trim();
     const roleFocus = String(body.role_focus ?? "").slice(0, 300).trim();
+    const countryCode =
+      /^[A-Za-z]{2}$/.test(String(body.country_code ?? "").trim())
+        ? String(body.country_code).trim().toUpperCase()
+        : undefined;
     const history = Array.isArray(body.history)
       ? body.history.slice(-12).map((message) => ({
         role: message.role === "assistant"
@@ -189,24 +189,19 @@ Deno.serve(async (req) => {
       }`,
     ].filter(Boolean).join("\n");
 
-    // The vacancy hunt uses live web search and can blow the function's wall
-    // clock (observed 502s at ~85s). Race it against a hard 40s budget: role
-    // ideas from the curated dataset are always available as the fallback,
-    // so a slow search degrades results instead of killing the request.
-    const vacancyBudget = new Promise<{
-      vacancies: GroundedVacancy[];
-      sources: ProviderWebSource[];
-    }>((resolve) =>
-      setTimeout(() => resolve({ vacancies: [], sources: [] }), 40_000)
-    );
+    // The vacancy hunt owns its deadline and is awaited to terminal accounting.
+    // A Promise.race would orphan live OpenAI work and let the match call begin
+    // while the research attempt remained unaccounted.
     const [{ roles, source, dataAsOf }, liveVacancyResult] = await Promise.all([
       loadRoles(),
-      Promise.race([
-        liveVacancies(location, searchBrief, req.signal),
-        vacancyBudget,
-      ]),
+      awaitGroundedResearchWithTimeout(
+        (signal) => liveVacancies(location, searchBrief, signal),
+        req.signal,
+        40_000,
+      ),
     ]);
-    const { vacancies, sources: verifiedSources } = liveVacancyResult;
+    const vacancies = liveVacancyResult.vacancies;
+    const linkedSources: ProviderWebSource[] = liveVacancyResult.sources;
 
     const systemPrompt = [
       "You are TED, a warm but commercially rigorous careers guide inside PrompTED.",
@@ -219,8 +214,10 @@ Deno.serve(async (req) => {
         : "No reviewed market-role dataset is available. Do not state pay rates, demand levels, market statistics, agency recommendations, or current role availability unless they are directly supported by the verified live vacancies below.",
       "REVIEWED ROLE DATASET (may be empty; never fill missing facts from memory): " +
       JSON.stringify(roles),
-      "VERIFIED LIVE VACANCIES (found by a real web search just now - these are the ONLY real, current listings you may present; you may DROP unsuitable ones but you must NEVER invent or alter a vacancy or its URL): " +
-      JSON.stringify(vacancies),
+      liveVacancyResult.status === "completed"
+        ? "SOURCE-LINKED VACANCIES (captured from this search but not independently verified; these are the ONLY listings you may present, and you must not alter their URL): " +
+          JSON.stringify(vacancies)
+        : "VACANCY RESEARCH FAILED. This is not a zero-results finding. Return no listings and do not claim that no openings exist.",
       "",
       workType || distance || roleFocus
         ? "HARD USER CONSTRAINTS (do not silently ignore these - they came from explicit form fields, not just prose): " +
@@ -237,7 +234,7 @@ Deno.serve(async (req) => {
       "READINESS GATE - decide this FIRST:",
       "Before listing anything, judge whether you have enough to assess suitability: the person's LOCATION, enough BACKGROUND from resume or notes, and their SITUATION or preferences.",
       "If the resume is present but location is missing, ask for location first because live listings are location-sensitive.",
-      'If you do NOT have enough, respond with ONLY: { "need_more_context": true, "ask": "<one warm, specific question for the single most important missing detail>", "missing": ["location" | "experience" | "qualifications" | "situation" | "constraints", ...] } and nothing else.',
+      'If you do NOT have enough, respond with the complete structured object using: { "need_more_context": true, "ask": "<one warm, specific question for the single most important missing detail>", "missing": ["location" | "experience" | "qualifications" | "situation" | "constraints", ...], "urgency": null, "location_used": "", "summary": "", "resume_signals": [], "application_gaps": [], "listings": [], "role_ideas": [], "tips": [], "next_best_documents": [] }. Do not add recommendations while clarification is required.',
       "Exception: if the person urgently needs any work fast and gave a location, proceed using entry-level / no-experience roles even if qualifications are unknown.",
       "Do not ask for an exact role, exact hours, exact pay, or experience preference when the setup, resume, or clarification answers support a reasonable working assumption.",
       "Never repeat a question already present in Conversation so far. Treat every user clarification answer as registered context, even when it is short or informal.",
@@ -266,11 +263,11 @@ Deno.serve(async (req) => {
       "- Be conservative across all five: 90+ only for genuinely strong resume evidence, not optimism.",
       "",
       "When you DO have enough context, respond with ONLY this JSON:",
-      '{ "need_more_context": false, "urgency": "high" | "normal", "location_used": "...", "summary": "one or two warm sentences", "resume_signals": ["specific signal", "specific signal"], "application_gaps": ["specific fix before applying"], "listings": [ { "title": "...", "employer": "...", "location": "...", "source": "...", "url": "https://...", "pay": "", "closing": "", "fit_score": 0, "fit_breakdown": { "skills_match": 0, "experience_match": 0, "work_style_fit": 0, "location_fit": "pass|fail|flag", "career_alignment": 0 }, "why_fit": "one line tailored to this person", "risk_flags": ["constraint or mismatch to watch"], "improve_before_applying": ["resume or cover letter fix"], "application_actions": ["next action"] } ], "role_ideas": [ { "role": "...", "industry": "...", "fit_score": 0, "fit_breakdown": { "skills_match": 0, "experience_match": 0, "work_style_fit": 0, "location_fit": "pass|fail|flag", "career_alignment": 0 }, "why_fit": "...", "typical_pay": "...", "demand": "...", "how_fast": "...", "evidence_to_show": ["resume proof to highlight"], "first_steps": ["..."], "application_actions": ["..."] } ], "tips": ["..."], "next_best_documents": ["Improved resume", "Tailored cover letter", "Job-search action plan"] }',
+      '{ "need_more_context": false, "ask": null, "missing": [], "urgency": "high" | "normal", "location_used": "...", "summary": "one or two warm sentences", "resume_signals": ["specific signal", "specific signal"], "application_gaps": ["specific fix before applying"], "listings": [ { "title": "...", "employer": "...", "location": "...", "source": "...", "url": "https://...", "pay": "", "closing": "", "fit_score": 0, "fit_breakdown": { "skills_match": 0, "experience_match": 0, "work_style_fit": 0, "location_fit": "pass|fail|flag", "career_alignment": 0 }, "why_fit": "one line tailored to this person", "risk_flags": ["constraint or mismatch to watch"], "improve_before_applying": ["resume or cover letter fix"], "application_actions": ["next action"] } ], "role_ideas": [ { "dataset_role_id": "exact UUID from the reviewed dataset", "fit_score": 0, "fit_breakdown": { "skills_match": 0, "experience_match": 0, "work_style_fit": 0, "location_fit": "pass|fail|flag", "career_alignment": 0 }, "why_fit": "...", "evidence_to_show": ["resume proof to highlight"], "first_steps": ["..."], "application_actions": ["..."] } ], "tips": ["..."], "next_best_documents": ["Improved resume", "Tailored cover letter", "Job-search action plan"] }',
       "",
       "Rules for the listing response:",
       "- 'listings' may contain ONLY vacancies from VERIFIED LIVE VACANCIES, copied faithfully (same url). Rank the most suitable first and drop poor fits. If none are suitable or the list is empty, return an empty 'listings' array and rely on 'role_ideas'.",
-      "- 'role_ideas' may use only the reviewed role dataset. If it is empty, return an empty role_ideas array. Never invent demand or pay figures.",
+      "- 'role_ideas' may select only an exact dataset_role_id from the reviewed role dataset. Do not copy or author role, industry, pay, demand or start-speed fields; the server reconstructs those facts. If the dataset is empty, return an empty role_ideas array.",
       "- Each live listing and role idea must include a fit_score and at least one practical next action.",
       "- Use application_gaps for improvements that matter across the whole search. Use improve_before_applying for listing-specific fixes.",
       "- The user applies on the source site themselves - do not imply they can apply through TED.",
@@ -292,7 +289,9 @@ Deno.serve(async (req) => {
 
     const run = async (strict: boolean) => {
       const res = await routeRequest({
-        task: "recommend",
+        task: "job_match",
+        logicalStageKey: strict ? "job-match.repair" : "job-match.primary",
+        outputSchema: JOB_MATCH_OUTPUT_SCHEMA,
         systemPrompt,
         messages: [{
           role: "user",
@@ -303,13 +302,37 @@ Deno.serve(async (req) => {
         maxTokens: 2600,
         signal: req.signal,
       });
-      return parseModelJson(res.text);
+      return res.structured;
     };
 
     let parsed = await run(false);
     if (!parsed) parsed = await run(true);
     if (!parsed) return jsonResponse(USER_SAFE_ERROR, 502, origin);
-    const grounded = groundJobMatchOutput(parsed, vacancies);
+    const grounded = groundJobMatchOutput(parsed, vacancies, roles, {
+      countryCode,
+    });
+
+    const vacancySearch = liveVacancyResult.status === "completed"
+      ? {
+        status: "completed" as const,
+        source_linked_count: vacancies.length,
+      }
+      : {
+        status: "failed" as const,
+        source_linked_count: 0,
+        retryable: liveVacancyResult.retryable,
+        error: {
+          code: "VACANCY_RESEARCH_UNAVAILABLE" as const,
+          message:
+            "TED could not finish checking current vacancy sources. This is not a zero-results finding.",
+          safe_next_action: liveVacancyResult.retryable
+            ? "retry_current_openings"
+            : "review_role_ideas",
+          ...(liveVacancyResult.retryAfterSeconds
+            ? { retry_after_seconds: liveVacancyResult.retryAfterSeconds }
+            : {}),
+        },
+      };
 
     return jsonResponse(
       {
@@ -317,8 +340,13 @@ Deno.serve(async (req) => {
         data_as_of: dataAsOf,
         data_source: source,
         live_search: vacancies.length > 0,
+        vacancy_search: vacancySearch,
+        grounding_status: "source_linked_not_independently_verified",
+        source_linked_count: vacancies.length,
+        // Retained for stable clients; these sources prove URL membership,
+        // not independent entailment of every natural-language claim.
         verified_count: vacancies.length,
-        verified_sources: verifiedSources,
+        verified_sources: linkedSources,
       },
       200,
       origin,

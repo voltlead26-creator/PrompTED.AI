@@ -4,7 +4,6 @@ import { stripResidual, validateSection } from "./draft-validator.ts";
 import {
   affectedSectionKeys,
   boundedConversationSource,
-  type FactualAuditEntry,
   type FactualAuditUnit,
   findUnsupportedNumericClaims,
   groundingIssuesFromAudit,
@@ -12,7 +11,21 @@ import {
   mergeByKey,
   renderSectionRequirements,
 } from "./document-pipeline-utils.ts";
-import { parsePipelineJson } from "./document-pipeline-json.ts";
+import {
+  groundingAuditOutputSchema,
+  type IntentBriefOutput,
+  intentBriefOutputSchema,
+  type IntentSectionReadiness,
+  type QualityAuditIssue,
+  type QualityAuditOutput,
+  qualityAuditOutputSchema,
+  type SectionPlanEntry,
+  sectionPlanOutputSchema,
+  validateGroundingAuditOutput,
+  validateIntentBriefOutput,
+  validateQualityAuditOutput,
+  validateSectionPlanOutput,
+} from "./document-output-contracts.ts";
 import {
   type DocumentIntelligenceProfile,
   renderProfile,
@@ -38,40 +51,15 @@ export interface DocumentPipelineInput {
   onDraftSection?: (section: DraftSection) => void;
 }
 
-interface SectionReadiness {
-  key: string;
-  ready: boolean;
-  missing_information: string[];
-  /** Exact information keys from the resolved Enhanced DIP contract. */
-  missing_information_keys?: string[];
-}
-
-interface OutcomeBrief {
-  user_goal: string;
-  primary_outcome: string;
-  audience: string;
-  author_perspective: string;
-  tone: string[];
-  required_content: string[];
-  prohibited_content: string[];
-  known_facts: string[];
-  safe_assumptions: string[];
-  missing_critical_information: string[];
-  section_readiness: SectionReadiness[];
-  confidence: number;
-}
+type SectionReadiness = IntentSectionReadiness;
+type OutcomeBrief = IntentBriefOutput;
 
 // One entry per template section. relevant_content is the planner's sorted
 // excerpt of conversation/upload material for that section -- may be "" when
 // nothing in the source material belongs there. The same fact may legitimately
 // appear in more than one section's relevant_content; the planner does not
 // force an exclusive split.
-interface SectionContext {
-  key: string;
-  relevant_content: string;
-  /** Situation-specific display name for this section (canonical key unchanged). */
-  display_label?: string;
-}
+type SectionContext = SectionPlanEntry;
 
 interface DraftSection {
   key: string;
@@ -79,25 +67,14 @@ interface DraftSection {
   content: string;
 }
 
-interface ReviewIssue {
-  severity: "low" | "medium" | "high";
-  category:
-    | "fact"
-    | "intent"
-    | "tone"
-    | "structure"
-    | "layout"
-    | "completeness"
-    | "instruction_leakage"
-    | "blank_output";
-  section_key?: string;
-  finding: string;
-  required_correction: string;
-}
+type ReviewIssue = QualityAuditIssue;
+type ReviewResult = QualityAuditOutput;
 
-interface ReviewResult {
-  decision: "approve" | "changes_required";
-  issues: ReviewIssue[];
+function stageSegment(value: string): string {
+  const segment = value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "").slice(0, 80);
+  if (!segment) throw new DocumentGenerationError("INVALID_SECTION_STAGE_KEY");
+  return segment;
 }
 
 class DocumentGenerationError extends Error {
@@ -120,6 +97,24 @@ function resolvedProfileFor(
   return selectProfile(
     [input.template.name, input.template.id].filter(Boolean).join("\n"),
     input.template.domain,
+  );
+}
+
+function informationKeysBySection(
+  profile: DocumentIntelligenceProfile | null,
+  sectionKeys: readonly string[],
+): Readonly<Record<string, readonly string[]>> {
+  const contractSections = new Map(
+    (profile?.informationContract?.sections ?? []).map((section) => [
+      section.sectionKey,
+      section.requiredInformation.map((item) => item.key),
+    ]),
+  );
+  return Object.fromEntries(
+    sectionKeys.map((sectionKey) => [
+      sectionKey,
+      contractSections.get(sectionKey) ?? [],
+    ]),
   );
 }
 
@@ -633,6 +628,7 @@ async function interpretIntent(
   input: DocumentPipelineInput,
   profile: DocumentIntelligenceProfile | null,
 ): Promise<OutcomeBrief> {
+  const sectionKeys = input.template.sections.map((section) => section.key);
   const context = [
     `Requested document: ${input.template.name}`,
     `Document structure type: ${input.template.structureType}`,
@@ -652,6 +648,7 @@ async function interpretIntent(
 
   const result = await routeRequest({
     task: "intent",
+    logicalStageKey: "generate-document.intent",
     systemPrompt: `You are TED's Intent Architect.
 
 Product identity: PrompTED is AI for the rest of us. It exists for non-tech-savvy people so they do not get left behind. The enemy is confusion. Your job is to remove confusion before drafting starts.
@@ -684,7 +681,7 @@ section_readiness must contain one entry for every supplied section: {"key":"sec
     // section_readiness needs one entry per template section (each carrying
     // up to two missing-fact arrays), so this response scales with section
     // count the same way the later planner/review/audit stages do — but
-    // this was the only one of the four requireJson pipeline calls left at
+    // this was the only one of the four structured pipeline calls left at
     // the original 1800 budget while the others were raised to 2400-5000.
     // On templates with several sections that's tight enough to truncate
     // mid-JSON, which fails isJsonContainerResponse() and burns the whole
@@ -692,11 +689,15 @@ section_readiness must contain one entry for every supplied section: {"key":"sec
     // budget rather than the largest (audit) stage, since this JSON is
     // comparable in shape to that one, not the per-unit audit response.
     maxTokens: 3200,
-    requireJson: true,
+    outputSchema: intentBriefOutputSchema(sectionKeys),
     signal: input.signal,
   });
 
-  return parsePipelineJson<OutcomeBrief>(result.text);
+  return validateIntentBriefOutput(
+    result.structured,
+    sectionKeys,
+    informationKeysBySection(profile, sectionKeys),
+  );
 }
 
 // The Document-Generator Planner. Runs once per document, after intent is
@@ -710,6 +711,7 @@ async function planSections(
   brief: OutcomeBrief,
   profile: DocumentIntelligenceProfile | null,
 ): Promise<SectionContext[]> {
+  const sectionKeys = input.template.sections.map((section) => section.key);
   const hasSourceMaterial = Boolean(
     input.conversationContext || input.uploadContext || input.extractedText,
   );
@@ -720,6 +722,7 @@ async function planSections(
     return input.template.sections.map((section) => ({
       key: section.key,
       relevant_content: "",
+      display_label: section.label,
     }));
   }
 
@@ -741,6 +744,7 @@ async function planSections(
 
   const result = await routeRequest({
     task: "intent",
+    logicalStageKey: "generate-document.plan",
     systemPrompt: `You are TED's Document Planner.
 
 Product identity: PrompTED is AI for the rest of us. The enemy is confusion. Your job is to sort the user's conversation and uploaded material into the section it actually belongs to, so the writer for each section only sees what's relevant to that section instead of the whole document.
@@ -761,38 +765,12 @@ Return strict JSON only: {"section_context":[{"key":"section_key","relevant_cont
     // with long conversation/upload material, so this scales on two axes
     // at once rather than one.
     maxTokens: 4000,
-    requireJson: true,
+    outputSchema: sectionPlanOutputSchema(sectionKeys),
     signal: input.signal,
   });
 
-  let parsed: { section_context?: SectionContext[] };
-  try {
-    parsed = parsePipelineJson<{ section_context: SectionContext[] }>(
-      result.text,
-    );
-  } catch {
-    // Planner output didn't parse -- fall back to empty map rather than fail
-    // the whole document. writeSection still has the outcome brief's
-    // known_facts and the section hint/prefilled data to draw on.
-    return input.template.sections.map((section) => ({
-      key: section.key,
-      relevant_content: "",
-    }));
-  }
-
-  const byKey = new Map(
-    (parsed.section_context ?? []).map((item) => [item.key, item]),
-  );
-  return input.template.sections.map((section) => {
-    const item = byKey.get(section.key);
-    return {
-      key: section.key,
-      relevant_content: item?.relevant_content ?? "",
-      display_label: typeof item?.display_label === "string"
-        ? item.display_label
-        : undefined,
-    };
-  });
+  return validateSectionPlanOutput(result.structured, sectionKeys)
+    .section_context;
 }
 
 async function writeSection(
@@ -802,6 +780,7 @@ async function writeSection(
   plan: SectionContext[],
   profile: DocumentIntelligenceProfile | null,
   corrections: ReviewIssue[] = [],
+  phase = "draft",
 ): Promise<DraftSection> {
   const readiness = readinessFor(brief, section.key);
 
@@ -871,6 +850,9 @@ async function writeSection(
 
   const result = await routeRequest({
     task: "document",
+    logicalStageKey: `generate-document.section:${
+      stageSegment(section.key)
+    }:${phase}`,
     systemPrompt: input.systemPrompt,
     messages: [{ role: "user", content }],
     maxTokens: 2600,
@@ -883,7 +865,7 @@ async function writeSection(
       return writeSection(input, brief, section, plan, profile, [
         ...corrections,
         weakOutputCorrection(section),
-      ]);
+      ], `${phase}-weak-repair`);
     }
     // Second weak result: degrade to the best clean wording rather than
     // failing the whole document. enforceFinalText still validates it.
@@ -913,6 +895,7 @@ async function generateDraft(
   profile: DocumentIntelligenceProfile | null,
   corrections: ReviewIssue[] = [],
   sectionKeys?: readonly string[],
+  phase = "draft",
 ): Promise<DraftSection[]> {
   const selected = sectionKeys
     ? input.template.sections.filter((section) =>
@@ -933,6 +916,7 @@ async function generateDraft(
         plan,
         profile,
         corrections,
+        phase,
       );
       if (validateSection(written).length === 0) {
         input.onDraftSection?.(written);
@@ -947,12 +931,15 @@ async function auditDraft(
   brief: OutcomeBrief,
   sections: DraftSection[],
   profile: DocumentIntelligenceProfile | null,
+  round: number,
 ): Promise<ReviewResult> {
+  const sectionKeys = sections.map((section) => section.key);
   const profileAudit = profile
     ? renderProfile(profile, "review")
     : "No document-specific profile was selected. Apply the universal checks below.";
   const result = await routeRequest({
     task: "edit",
+    logicalStageKey: `generate-document.quality:round-${round}`,
     systemPrompt:
       `You are TED's independent document quality auditor. You do not write, rewrite, edit or replace the document.
 
@@ -985,7 +972,7 @@ ${profileAudit}
 
 Treat every failed document-specific quality rule as an issue. Compare the draft's observable structure, length, depth, specificity, tone, formality and usability with the benchmark standards described in the profile. The benchmark is a quality reference only: do not copy example wording and do not add facts merely to resemble it.
 
-Return strict JSON only: {"decision":"approve|changes_required","issues":[{"severity":"low|medium|high","category":"fact|intent|tone|structure|layout|completeness|instruction_leakage|blank_output","section_key":"canonical section key, required for section-specific issues; omit only when the finding genuinely applies to the whole document","finding":"...","required_correction":"..."}]}. Use only section keys present in the supplied complete draft.
+Return strict JSON only: {"decision":"approve|changes_required","issues":[{"severity":"low|medium|high","category":"fact|intent|tone|structure|layout|completeness|instruction_leakage|blank_output","section_key":"canonical section key, or null only when the finding genuinely applies to the whole document","finding":"...","required_correction":"..."}]}. Use only section keys present in the supplied complete draft. Return an empty issues array only when decision is approve.
 
 Do not provide corrected prose. Findings must be specific enough for the original writer to correct its own document.`,
     messages: [{
@@ -1006,11 +993,11 @@ Do not provide corrected prose. Findings must be specific enough for the origina
     // draft has across every section, so it's not bounded by a fixed shape
     // the way maxTokens: 3000 assumed. Matched to the audit stage's budget.
     maxTokens: 5000,
-    requireJson: true,
+    outputSchema: qualityAuditOutputSchema(sectionKeys),
     signal: input.signal,
   });
 
-  const reviewed = parsePipelineJson<ReviewResult>(result.text);
+  const reviewed = validateQualityAuditOutput(result.structured, sectionKeys);
   const sourceEvidence = [
     input.situation,
     input.conversationContext,
@@ -1076,6 +1063,7 @@ function factualAuditUnits(sections: DraftSection[]): FactualAuditUnit[] {
 async function auditFactualGrounding(
   input: DocumentPipelineInput,
   sections: DraftSection[],
+  round: number,
 ): Promise<ReviewResult> {
   const units = factualAuditUnits(sections);
   if (units.length === 0) {
@@ -1097,8 +1085,10 @@ async function auditFactualGrounding(
     input.extractedText,
     input.memoryContext,
   ].filter(Boolean).join("\n\n");
+  const unitIds = units.map((unit) => unit.id);
   const result = await routeRequest({
     task: "edit",
+    logicalStageKey: `generate-document.grounding:round-${round}`,
     systemPrompt:
       `You are TED's factual-grounding examiner. This is a separate hard gate from style and benchmark review.
 
@@ -1123,13 +1113,13 @@ Return exactly one entry for every unit_id and no others. Return strict JSON onl
       }`,
     }],
     maxTokens: 5000,
-    requireJson: true,
+    outputSchema: groundingAuditOutputSchema(unitIds),
     signal: input.signal,
   });
-  const parsed = parsePipelineJson<{ units: FactualAuditEntry[] }>(result.text);
+  const parsed = validateGroundingAuditOutput(result.structured, unitIds);
   const issues = groundingIssuesFromAudit(
     units,
-    Array.isArray(parsed.units) ? parsed.units : [],
+    parsed.units,
     sourceEvidence,
   );
   return {
@@ -1143,10 +1133,11 @@ async function auditDocument(
   brief: OutcomeBrief,
   sections: DraftSection[],
   profile: DocumentIntelligenceProfile | null,
+  round: number,
 ): Promise<ReviewResult> {
   const [grounding, quality] = await Promise.all([
-    auditFactualGrounding(input, sections),
-    auditDraft(input, brief, sections, profile),
+    auditFactualGrounding(input, sections, round),
+    auditDraft(input, brief, sections, profile, round),
   ]);
   const issues = [...grounding.issues, ...quality.issues];
   return {
@@ -1209,7 +1200,7 @@ async function enforceFinalText(
           "Section contained an undeclared/raw placeholder, fill-in marker, writing instruction, or section-purpose text instead of final content.",
         required_correction:
           "Rewrite as final, ready-to-use wording using only confirmed facts, safe professional conventions, approved neutral fallbacks, and any declared structured TED placeholders supplied by the resolved template. Raw bracket placeholders, generic fill-in markers, instructions, or paraphrases of the section purpose are forbidden. If this section calls for example content, include the actual questions, sample answers, or wording, not a description of what should be included.",
-      }]);
+      }], "final-repair");
       if (
         validateSection(retry).length === 0 &&
         !isWeakOrInstructionalContent(retry.content, tpl)
@@ -1276,7 +1267,7 @@ export async function runDocumentPipeline(
     await generateDraft(input, brief, plan, profile),
     profile,
   );
-  let audit = await auditDocument(input, brief, draft, profile);
+  let audit = await auditDocument(input, brief, draft, profile, 0);
 
   // Give the original section writers two bounded, targeted opportunities to
   // address the independent audit. A single repair pass was too brittle: one
@@ -1298,6 +1289,7 @@ export async function runDocumentPipeline(
       profile,
       audit.issues,
       rewriteKeys,
+      `repair-${repairRound + 1}`,
     );
     draft = ensureNoBlankSections(
       input,
@@ -1305,7 +1297,7 @@ export async function runDocumentPipeline(
       mergeByKey(draft, rewrittenSections),
       profile,
     );
-    audit = await auditDocument(input, brief, draft, profile);
+    audit = await auditDocument(input, brief, draft, profile, repairRound + 1);
   }
 
   // Medium and high failures remain a hard boundary for the section they

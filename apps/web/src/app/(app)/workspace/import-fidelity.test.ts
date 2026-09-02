@@ -43,6 +43,23 @@ describe("assessImportFidelity", () => {
     expect(report.confidenceBySectionId.one).not.toBe("high");
   });
 
+  it("classifies XLSX aliases and explains reduced spreadsheet fidelity", () => {
+    for (const mimeType of [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/zip",
+    ]) {
+      const report = assessImportFidelity({
+        fileName: "evidence.xlsx",
+        mimeType,
+        extractedText: "Sheet: Evidence\nClaim,Source\nConfirmed,Fixture",
+        sections: [section("one", "Evidence", "Confirmed evidence")],
+      });
+
+      expect(report.sourceType).toBe("xlsx");
+      expect(report.warnings.join(" ")).toMatch(/formulas.*merged cells.*visual formatting/i);
+    }
+  });
+
   it("gives high confidence when multiple structural signals are present", () => {
     const report = assessImportFidelity({
       fileName: "resume.docx",

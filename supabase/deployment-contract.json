@@ -1,6 +1,205 @@
 {
   "$comment": "Machine-readable deployment compatibility contract. scripts/check-deployment-contract.mjs validates this file against supabase/config.toml, netlify.toml, the deploy workflows, and (indirectly, via a static source scan) the Edge Function source under supabase/functions/. scripts/probe-supabase-contract.mjs re-validates the schema half of this file against a live Supabase project before functions are deployed. Do not deploy a function whose requiredMigrations are not yet applied live -- that is the exact bug class this file exists to prevent (see supabase/migrations/20260819000000_add_durable_rate_limits.sql and the consume_rate_limit RPC it defines).",
   "projectRef": "jjsykocqpjlekgsbylkd",
+  "preMigrationInventory": {
+    "$comment": "Read-only aggregate/catalog inventory that must pass before any production migration. It detects existing data, Storage, migration-ledger, and hosted-function states that an ordered db push cannot safely infer or automatically reconcile.",
+    "contractVersion": "prompted-release-inventory.2",
+    "productionBaselineMigration": "20260527111048",
+    "savedRoleMigration": "20260901105000_atomic_saved_role_actions",
+    "brandAssetsCreationMigration": "20260901106000_brand_assets_owner_storage",
+    "brandAssetsMigration": "20260902016000_brand_logo_lifecycle",
+    "brandAssets": {
+      "bucketId": "assets",
+      "name": "assets",
+      "public": true,
+      "fileSizeLimit": 5242880,
+      "allowedMimeTypes": ["image/jpeg", "image/png", "image/webp"],
+      "objectPathPattern": "^brand-kits/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(logo[.](png|jpg|webp)|logos/[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[.](png|jpg|webp))$",
+      "policies": [
+        {
+          "name": "assets_authenticated_owner_select",
+          "mode": "PERMISSIVE",
+          "command": "SELECT",
+          "roles": ["authenticated"],
+          "definitionSha256": "98b4d394af92e4b006bc4edcc71f502887106b5fd14d8f728f2381bb89ef56b6"
+        }
+      ],
+      "predecessorPolicies": [
+        {
+          "name": "assets_authenticated_access",
+          "definitionSha256": "9637ef9c66f2aa06468f9993922c878e51125cfabc7e0aa61a9d4e3a085f2032"
+        },
+        {
+          "name": "assets_authenticated_owner_boundary",
+          "definitionSha256": "2a2e2c6a0f45010e41329bb8c9e0b1c343f4f1d23bd7abeedd5da281adc6e0dd"
+        },
+        {
+          "name": "assets_no_direct_client_delete",
+          "definitionSha256": "6d6cb20a0fa671feea603fd47ce527fa10e1ff76df27c94f0572bb2ecfdb4d2b"
+        }
+      ],
+      "requiredUnrelatedPolicies": [
+        {
+          "name": "captured_exports_no_direct_client_access",
+          "definitionSha256": "48df06f778d1ae4b30c10237a66ac47eecfc0a3af6df0ed5300da4884358f050"
+        },
+        {
+          "name": "original_documents_read_own",
+          "definitionSha256": "be5289d83b63014f5a9975296fa3bce99371b4657b7939c87b673a01758f277b"
+        }
+      ]
+    },
+    "forbidUndeclaredHostedFunctions": true,
+    "dormantFunctionsMustBeAbsent": true
+  },
+  "schemaAttestation": {
+    "$comment": "After migrations are applied, the production release probes this service-role-only metadata RPC to verify exact authenticated and service-role object privileges without reading application rows.",
+    "requiredMigration": "20260901050000_release_schema_attestation",
+    "argumentTypesRequiredMigration": "20260901091000_ingest_upload_exact_replay",
+    "rpc": "attest_prompted_release_schema"
+  },
+  "capacityAttestation": {
+    "$comment": "Function deployment is blocked until each active OpenAI semantic route is enabled with the exact operator-approved production capacity fingerprint. Fingerprints contain no secret or raw allocation values, but remain protected release inputs so configuration changes require explicit review.",
+    "requiredMigration": "20260901107000_openai_capacity_release_attestation",
+    "rpc": "attest_openai_capacity_configuration",
+    "environment": "production",
+    "fingerprintEnvironmentVariables": {
+      "fast": "PROD_OPENAI_FAST_CAPACITY_FINGERPRINT",
+      "deep": "PROD_OPENAI_DEEP_CAPACITY_FINGERPRINT",
+      "research": "PROD_OPENAI_RESEARCH_CAPACITY_FINGERPRINT",
+      "review": "PROD_OPENAI_REVIEW_CAPACITY_FINGERPRINT"
+    }
+  },
+  "routingAttestation": {
+    "$comment": "Function deployment is also blocked until each semantic route matches one enabled, unexpired, operator-approved model and evaluation result. This is intentionally separate from capacity attestation because evaluated suitability and funded throughput have different evidence lifecycles.",
+    "requiredMigration": "20260902017000_openai_routing_release_attestation",
+    "rpc": "attest_openai_routing_configuration",
+    "environment": "production",
+    "routingVersionEnvironmentVariable": "PROD_OPENAI_ROUTING_VERSION",
+    "evaluationSuiteEnvironmentVariable": "PROD_OPENAI_EVALUATION_SUITE_VERSION",
+    "minimumValiditySeconds": 86400,
+    "routes": {
+      "fast": {
+        "reasoningEffort": "low",
+        "modelEnvironmentVariable": "PROD_OPENAI_FAST_MODEL",
+        "evaluationFingerprintEnvironmentVariable": "PROD_OPENAI_FAST_EVALUATION_FINGERPRINT"
+      },
+      "deep": {
+        "reasoningEffort": "medium",
+        "modelEnvironmentVariable": "PROD_OPENAI_DEEP_MODEL",
+        "evaluationFingerprintEnvironmentVariable": "PROD_OPENAI_DEEP_EVALUATION_FINGERPRINT"
+      },
+      "research": {
+        "reasoningEffort": "medium",
+        "modelEnvironmentVariable": "PROD_OPENAI_RESEARCH_MODEL",
+        "evaluationFingerprintEnvironmentVariable": "PROD_OPENAI_RESEARCH_EVALUATION_FINGERPRINT"
+      },
+      "review": {
+        "reasoningEffort": "high",
+        "modelEnvironmentVariable": "PROD_OPENAI_REVIEW_MODEL",
+        "evaluationFingerprintEnvironmentVariable": "PROD_OPENAI_REVIEW_EVALUATION_FINGERPRINT"
+      }
+    }
+  },
+  "requiredRpcSignatures": {
+    "activate_brand_logo_operation": "uuid, uuid, uuid, text",
+    "accept_assigned_captured_document_operation": "uuid, uuid, uuid, text, text, text, text, text, text, integer, text, jsonb, jsonb, jsonb, text, text, text[], text[], text[], jsonb, integer",
+    "accept_captured_document_operation": "uuid, uuid, uuid, text, text, text, text, text, text, text, integer, text, jsonb, jsonb, jsonb, text, text, text[], text[], text[], jsonb, integer",
+    "advance_captured_document_operation": "uuid, integer, uuid, text, jsonb, text, text, text",
+    "advance_upload_ingest": "uuid, uuid, text, uuid, text, text",
+    "attach_own_upload_to_outcome": "uuid, uuid",
+    "attest_openai_capacity_configuration": "text, text[]",
+    "attest_openai_routing_configuration": "text, text[]",
+    "apply_legacy_section_edit": "uuid, integer, text, text",
+    "apply_revenuecat_webhook_event": "jsonb",
+    "approve_captured_document_revision": "uuid, integer, uuid, integer",
+    "begin_account_deletion_fence": "uuid",
+    "begin_own_home_upload_intake_v1": "uuid, uuid, text, text, text, integer, text",
+    "begin_upload_extraction_attempt": "uuid, uuid, text, uuid",
+    "cancel_captured_document_operation": "uuid, integer, uuid, text",
+    "cancel_own_home_upload_intake_v1": "uuid, integer",
+    "claim_brand_logo_operation": "uuid, uuid, uuid, bigint, text, text, text, text, text, text, integer, text",
+    "claim_captured_document_operation": "uuid, integer, text, integer",
+    "claim_legacy_pdf_export": "uuid, uuid, jsonb",
+    "claim_openai_capacity_lease": "uuid, text, text, text, integer, uuid",
+    "claim_persisted_pdf_export": "uuid, uuid, jsonb",
+    "claim_upload_ingest": "uuid, uuid, text, text, text, integer, text, text",
+    "claim_user_external_egress": "uuid, text, text, text, uuid",
+    "claim_user_storage_dispatch": "uuid, uuid, text, text, text, uuid",
+    "commit_document_import": "uuid, uuid, uuid, text, text, jsonb, jsonb",
+    "commit_guest_workspace_import": "text, uuid, uuid, text, text, jsonb, uuid, text, jsonb",
+    "commit_own_home_upload_intake_v1": "uuid, integer, text, jsonb",
+    "complete_brand_logo_operation": "uuid, uuid, uuid, text",
+    "complete_captured_document_export": "uuid, uuid, integer, text, text, text, jsonb",
+    "complete_captured_document_provider_attempt": "uuid, uuid, text, integer, text, text, text, text, text, text, integer, integer, text, text, timestamp with time zone, timestamp with time zone, text, jsonb",
+    "complete_legacy_pdf_export": "uuid, uuid, text",
+    "complete_legacy_section_edit": "uuid, uuid, text, text, text, jsonb, jsonb",
+    "complete_user_external_egress": "uuid, text, text, text, uuid, text",
+    "complete_user_storage_dispatch": "uuid, uuid, text, text, text, uuid",
+    "confirm_own_home_upload_intake_v1": "uuid, integer, text",
+    "consume_rate_limit": "uuid, text, integer, integer",
+    "create_and_link_own_business": "text, text, text, text, text, text",
+    "defer_captured_document_operation_for_capacity": "uuid, integer, uuid, text, integer",
+    "discard_legacy_section_edit": "uuid, text",
+    "edit_captured_document_section": "uuid, integer, uuid, integer, text, integer, text, text",
+    "finalize_captured_document_operation": "uuid, integer, uuid, jsonb, jsonb",
+    "get_captured_document_export_receipt": "uuid, uuid, uuid",
+    "get_captured_document_operation": "uuid",
+    "get_captured_document_resume_payload": "uuid, uuid",
+    "load_legacy_export_snapshot": "uuid, uuid, uuid",
+    "get_legacy_pdf_export_binding": "uuid, uuid",
+    "get_latest_captured_document_operation": "uuid",
+    "get_latest_legacy_section_edit": "uuid",
+    "get_own_home_upload_intake_v1": "uuid",
+    "get_upload_extraction_checkpoint": "uuid, uuid, text, uuid",
+    "get_workspace_section_body_v1": "uuid, uuid, integer, integer",
+    "get_workspace_snapshot_v1": "uuid, uuid",
+    "load_upload_extraction_snapshot": "uuid, uuid, text, uuid",
+    "mark_brand_logo_reconciliation": "uuid, uuid, uuid, text, integer, text",
+    "mark_legacy_model_attempt_dispatched": "uuid, text, uuid, text, text, text, integer, uuid, uuid, uuid",
+    "mark_legacy_pdf_export_reconciliation": "uuid, uuid, text, text",
+    "mark_legacy_section_edit_dispatched": "uuid, uuid, text",
+    "mark_openai_capacity_lease_dispatched": "uuid, uuid, uuid",
+    "prepare_legacy_section_edit": "uuid, uuid, uuid, uuid, integer, text, text, jsonb",
+    "promote_profile_resume": "uuid, text",
+    "read_legacy_model_call_checkpoint": "uuid, text, uuid, text, text, text, integer, uuid, boolean",
+    "reconcile_captured_document_provider_attempt": "uuid, integer, uuid, text",
+    "reconcile_upload_ingest_storage": "uuid, uuid, text, text, text",
+    "reconcile_user_external_egress": "uuid, text, text, text, text, text",
+    "reconcile_user_storage_dispatch": "uuid, uuid, text, text, text, text",
+    "record_brand_logo_storage_verified": "uuid, uuid, uuid, text, text, integer, text",
+    "record_captured_export_storage_recovery": "uuid, uuid, uuid, integer, text, text, integer, text, jsonb, uuid",
+    "record_captured_document_provider_attempt": "uuid, integer, uuid, text, integer, text, text, text, text, text, text, integer, integer, text, text, timestamp with time zone, timestamp with time zone, text, jsonb",
+    "record_legacy_pdf_export_artifact": "uuid, uuid, text, text, integer, text, jsonb",
+    "record_upload_extraction_snapshot": "uuid, uuid, text, uuid, text, text, text, text, boolean, text",
+    "record_legacy_model_call_attempt": "uuid, text, text, text, text, integer, text, text, text, text, integer, integer, timestamp with time zone, timestamp with time zone, text, text, text, text, text, uuid, jsonb, uuid",
+    "release_document_allowance": "uuid, uuid, text, text",
+    "release_openai_capacity_lease": "uuid, uuid, uuid, text",
+    "renew_captured_document_operation_lease": "uuid, uuid, integer",
+    "replace_own_checklist": "uuid, text, timestamp with time zone, jsonb",
+    "request_captured_document_cancellation": "uuid, integer, text",
+    "request_captured_document_export": "uuid, integer, uuid, integer, text, text",
+    "reserve_document_allowance_with_result": "uuid, text, text, text, text, integer, integer",
+    "restore_previous_profile_resume": "",
+    "resolve_brand_logo_reconciliation": "uuid, uuid, uuid, text, text",
+    "resume_captured_document_operation_from_capacity": "uuid, integer, text, integer",
+    "save_legacy_section": "uuid, integer, text, text, text",
+    "save_own_legacy_workspace_v1": "text, uuid, uuid, integer, jsonb, jsonb, jsonb",
+    "save_own_role_with_default_actions": "text, text, text, integer, text, text, text, text",
+    "save_own_outcome_conversation": "uuid, integer, text, jsonb",
+    "save_ted_artifact": "jsonb, jsonb",
+    "save_ted_artifact_block_revision": "uuid, integer, integer, jsonb, text",
+    "set_ted_block_completed": "uuid, boolean, integer",
+    "settle_document_allowance_with_result": "uuid, uuid, text, text, text, integer, integer, jsonb",
+    "settle_legacy_section_edit": "uuid, uuid, text, text, text",
+    "settle_upload_ingest": "uuid, uuid, text, text, integer, jsonb, text, jsonb, text, uuid",
+    "update_own_checklist_item": "uuid, uuid, uuid, boolean, text",
+    "update_own_outcome": "uuid, jsonb",
+    "update_own_profile_details": "text, text, text, text, date, text, text, text, text, text, text",
+    "update_own_role_action_item": "uuid, uuid, text",
+    "upsert_own_outcome": "uuid, text, jsonb, text",
+    "upsert_own_outcome_with_upload": "uuid, text, jsonb, text, uuid"
+  },
   "sharedSecrets": [
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
@@ -12,14 +211,44 @@
     "OPENAI_RESEARCH_MODEL",
     "OPENAI_REVIEW_MODEL",
     "OPENAI_ROUTING_VERSION",
-    "PROMPTED_DEPLOYMENT_ENV",
-    "PROMPTED_CAPTURED_COHORT"
+    "PROMPTED_DEPLOYMENT_ENV"
   ],
   "sharedRequestGuard": {
-    "$comment": "Every function with usesSharedRequestGuard=true imports supabase/functions/_shared/auth-guard.ts, directly or transitively through _shared/openai-proxy.ts. That guard calls the consume_rate_limit RPC before any provider routing happens, and reads the subscriptions/usage_ledger tables for entitlement + cost tracking. These requirements are implicit for every such function and are merged into its effective contract by the checker instead of being repeated per function.",
-    "requiredMigrations": ["20260819000000_add_durable_rate_limits"],
-    "requiredRpcs": ["consume_rate_limit"],
-    "requiredTables": ["subscriptions", "usage_ledger"]
+    "$comment": "Every function with usesSharedRequestGuard=true enters the protected shared runtime. This union covers its rate limit, entitlement, usage telemetry, user-memory, and upload-context Data API closures. Requirements are merged by the static checker and role-aware live probe instead of being copied across every function.",
+    "requiredMigrations": [
+      "20260819000000_add_durable_rate_limits",
+      "20260901040000_protected_compute_privileges",
+      "20260901060000_legacy_model_accounting_and_replay",
+      "20260901091000_ingest_upload_exact_replay",
+      "20260901093000_openai_capacity_leases"
+    ],
+    "requiredRpcs": [
+      "consume_rate_limit",
+      "claim_openai_capacity_lease",
+      "claim_user_external_egress",
+      "complete_user_external_egress",
+      "mark_openai_capacity_lease_dispatched",
+      "mark_legacy_model_attempt_dispatched",
+      "read_legacy_model_call_checkpoint",
+      "record_legacy_model_call_attempt",
+      "release_openai_capacity_lease"
+    ],
+    "requiredTables": [
+      "businesses",
+      "company_profile",
+      "profiles",
+      "subscriptions",
+      "uploads",
+      "usage_ledger"
+    ],
+    "requiredTablePrivileges": {
+      "businesses": ["select"],
+      "company_profile": ["select", "insert", "update"],
+      "profiles": ["select", "update"],
+      "subscriptions": ["select"],
+      "uploads": ["select"],
+      "usage_ledger": ["select", "insert"]
+    }
   },
   "webRequirements": {
     "$comment": "Direct browser-to-Supabase schema dependencies. These are validated read-only before any production mutation because Netlify can build successfully while an RPC or table required by the progressively rendered workspace is still missing from the hosted Data API.",
@@ -34,7 +263,29 @@
       "20260812161709_profile_personal_resources",
       "20260831090000_profile_tenant_boundary",
       "20260831100000_dormant_captured_document_operations",
-      "20260831110000_atomic_guest_workspace_import"
+      "20260831110000_atomic_guest_workspace_import",
+      "20260831120000_browser_data_api_privileges",
+      "20260901000000_security_release_hardening",
+      "20260901080000_atomic_checklist_replacement",
+      "20260901090000_legacy_section_edit_cas",
+      "20260901093000_openai_capacity_leases",
+      "20260901094000_workspace_snapshot_v1",
+      "20260901103000_checklist_item_cas",
+      "20260901104000_upload_outcome_provenance",
+      "20260901105000_atomic_saved_role_actions",
+      "20260901106000_brand_assets_owner_storage",
+      "20260901108000_ted_artifact_revision_commands",
+      "20260901109000_outcome_conversation_cas",
+      "20260901110000_atomic_legacy_workspace_save",
+      "20260901111000_home_upload_intake_v1",
+      "20260902000000_export_revision_authority",
+      "20260902010000_workflow_revision_truth",
+      "20260902011000_source_linked_role_actions",
+      "20260902012000_checklist_aggregate_truth",
+      "20260902013000_upload_extraction_snapshot",
+      "20260902014000_upload_extraction_checkpoint",
+      "20260902015000_upload_extraction_checkpoint_conflict_precedence",
+      "20260902016000_brand_logo_lifecycle"
     ],
     "requiredRpcs": [
       "get_latest_captured_document_operation",
@@ -43,18 +294,41 @@
       "request_captured_document_export",
       "commit_document_import",
       "commit_guest_workspace_import",
+      "upsert_own_outcome",
+      "upsert_own_outcome_with_upload",
+      "attach_own_upload_to_outcome",
+      "update_own_outcome",
+      "update_own_checklist_item",
       "save_ted_artifact",
+      "save_ted_artifact_block_revision",
       "set_ted_block_completed",
       "update_own_profile_details",
       "promote_profile_resume",
       "restore_previous_profile_resume",
-      "create_and_link_own_business"
+      "create_and_link_own_business",
+      "replace_own_checklist",
+      "save_legacy_section",
+      "save_own_legacy_workspace_v1",
+      "begin_own_home_upload_intake_v1",
+      "get_own_home_upload_intake_v1",
+      "confirm_own_home_upload_intake_v1",
+      "cancel_own_home_upload_intake_v1",
+      "commit_own_home_upload_intake_v1",
+      "apply_legacy_section_edit",
+      "discard_legacy_section_edit",
+      "get_latest_legacy_section_edit",
+      "get_workspace_snapshot_v1",
+      "get_workspace_section_body_v1",
+      "save_own_role_with_default_actions",
+      "save_own_outcome_conversation",
+      "update_own_role_action_item"
     ],
     "requiredTables": [
       "brand_kits",
       "businesses",
       "checklist_items",
       "documents",
+      "memberships",
       "outcomes",
       "profile_resume_versions",
       "profiles",
@@ -65,9 +339,30 @@
       "subscriptions",
       "ted_artifact_blocks",
       "ted_artifact_references",
+      "ted_artifact_versions",
       "ted_artifacts",
       "usage_ledger"
-    ]
+    ],
+    "requiredTablePrivileges": {
+      "brand_kits": ["select"],
+      "businesses": ["select", "update"],
+      "checklist_items": ["select"],
+      "documents": ["select", "insert", "update"],
+      "memberships": ["select"],
+      "outcomes": ["select", "insert", "update"],
+      "profile_resume_versions": ["select"],
+      "profiles": ["select"],
+      "role_action_items": ["select", "insert", "update"],
+      "role_outcomes": ["select", "insert"],
+      "saved_roles": ["select", "insert", "update"],
+      "sections": ["select", "insert", "update"],
+      "subscriptions": ["select"],
+      "ted_artifact_blocks": ["select"],
+      "ted_artifact_references": ["select"],
+      "ted_artifact_versions": [],
+      "ted_artifacts": ["select"],
+      "usage_ledger": ["select"]
+    }
   },
   "functions": {
     "clarify": {
@@ -122,6 +417,7 @@
       "requiredMigrations": ["20260612070000_job_market_roles"],
       "requiredRpcs": [],
       "requiredTables": ["job_market_roles"],
+      "requiredTablePrivileges": { "job_market_roles": ["select"] },
       "requiredSecrets": [],
       "smokeProbe": { "kind": "table", "name": "job_market_roles" }
     },
@@ -134,10 +430,17 @@
         "20260707000000_generation_logs",
         "20260722080500_usage_ledger_generation_idempotency",
         "20260805000000_usage_ledger_model_calls",
-        "20260817070051_usage_ledger_model_call_unique_constraint"
+        "20260817070051_usage_ledger_model_call_unique_constraint",
+        "20260901020000_atomic_allowance_reservations",
+        "20260901060000_legacy_model_accounting_and_replay"
       ],
-      "requiredRpcs": [],
+      "requiredRpcs": [
+        "release_document_allowance",
+        "reserve_document_allowance_with_result",
+        "settle_document_allowance_with_result"
+      ],
       "requiredTables": ["generation_logs"],
+      "requiredTablePrivileges": { "generation_logs": ["insert"] },
       "requiredSecrets": [],
       "smokeProbe": { "kind": "table", "name": "generation_logs" }
     },
@@ -147,24 +450,39 @@
       "clientRoute": "/api/document-operation",
       "usesSharedRequestGuard": true,
       "requiredMigrations": [
-        "20260831100000_dormant_captured_document_operations"
+        "20260831100000_dormant_captured_document_operations",
+        "20260901010000_durable_background_execution",
+        "20260901020000_atomic_allowance_reservations",
+        "20260901070000_forward_expired_operation_reconciliation",
+        "20260901092000_user_bound_captured_rollout",
+        "20260901093000_openai_capacity_leases",
+        "20260901095000_captured_provider_attempt_budget"
       ],
       "requiredRpcs": [
+        "accept_assigned_captured_document_operation",
         "accept_captured_document_operation",
         "advance_captured_document_operation",
         "cancel_captured_document_operation",
         "claim_captured_document_operation",
+        "complete_captured_document_provider_attempt",
+        "defer_captured_document_operation_for_capacity",
         "finalize_captured_document_operation",
+        "get_captured_document_resume_payload",
+        "reconcile_captured_document_provider_attempt",
+        "record_captured_document_provider_attempt",
+        "renew_captured_document_operation_lease",
+        "resume_captured_document_operation_from_capacity"
+      ],
+      "requiredAuthenticatedRpcs": [
         "get_captured_document_operation",
         "get_latest_captured_document_operation",
-        "record_captured_document_provider_attempt",
         "request_captured_document_cancellation"
       ],
       "requiredTables": ["outcomes", "documents", "sections"],
       "requiredSecrets": ["OPENAI_API_KEY"],
       "smokeProbe": {
         "kind": "rpc",
-        "name": "get_captured_document_operation"
+        "name": "complete_captured_document_provider_attempt"
       }
     },
     "generate-checklist": {
@@ -172,8 +490,15 @@
       "authMode": "anon",
       "clientRoute": "/api/generate-checklist",
       "usesSharedRequestGuard": true,
-      "requiredMigrations": [],
-      "requiredRpcs": [],
+      "requiredMigrations": [
+        "20260901020000_atomic_allowance_reservations",
+        "20260901060000_legacy_model_accounting_and_replay"
+      ],
+      "requiredRpcs": [
+        "release_document_allowance",
+        "reserve_document_allowance_with_result",
+        "settle_document_allowance_with_result"
+      ],
       "requiredTables": [],
       "requiredSecrets": [],
       "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
@@ -183,9 +508,17 @@
       "authMode": "anon",
       "clientRoute": "/api/generate-artifact",
       "usesSharedRequestGuard": true,
-      "requiredMigrations": [],
-      "requiredRpcs": [],
-      "requiredTables": [],
+      "requiredMigrations": [
+        "20260901020000_atomic_allowance_reservations",
+        "20260901060000_legacy_model_accounting_and_replay"
+      ],
+      "requiredRpcs": [
+        "release_document_allowance",
+        "reserve_document_allowance_with_result",
+        "settle_document_allowance_with_result"
+      ],
+      "requiredTables": ["outcomes"],
+      "requiredTablePrivileges": { "outcomes": ["select"] },
       "requiredSecrets": [],
       "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
     },
@@ -194,8 +527,15 @@
       "authMode": "anon",
       "clientRoute": "/api/generate-report",
       "usesSharedRequestGuard": true,
-      "requiredMigrations": [],
-      "requiredRpcs": [],
+      "requiredMigrations": [
+        "20260901020000_atomic_allowance_reservations",
+        "20260901060000_legacy_model_accounting_and_replay"
+      ],
+      "requiredRpcs": [
+        "release_document_allowance",
+        "reserve_document_allowance_with_result",
+        "settle_document_allowance_with_result"
+      ],
       "requiredTables": [],
       "requiredSecrets": [],
       "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
@@ -205,8 +545,13 @@
       "authMode": "anon",
       "clientRoute": "/api/edit-section",
       "usesSharedRequestGuard": true,
-      "requiredMigrations": [],
-      "requiredRpcs": [],
+      "requiredMigrations": ["20260901090000_legacy_section_edit_cas"],
+      "requiredRpcs": [
+        "mark_legacy_section_edit_dispatched",
+        "prepare_legacy_section_edit",
+        "complete_legacy_section_edit",
+        "settle_legacy_section_edit"
+      ],
       "requiredTables": [],
       "requiredSecrets": [],
       "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
@@ -233,16 +578,76 @@
       "requiredSecrets": [],
       "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
     },
+    "extract-upload": {
+      "status": "active",
+      "authMode": "internal-service-role",
+      "clientRoute": null,
+      "usesSharedRequestGuard": false,
+      "internalServiceRole": true,
+      "requiredMigrations": [
+        "20260901091000_ingest_upload_exact_replay",
+        "20260902013000_upload_extraction_snapshot"
+      ],
+      "requiredRpcs": ["load_upload_extraction_snapshot"],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": {
+        "kind": "none",
+        "name": null,
+        "allowMethodNotAllowed": true
+      }
+    },
     "ingest-upload": {
       "status": "active",
       "authMode": "anon",
       "clientRoute": "/api/ingest-upload",
       "usesSharedRequestGuard": true,
-      "requiredMigrations": ["20260608000000_prompted_v1_schema"],
-      "requiredRpcs": [],
+      "requiredFunctions": ["extract-upload"],
+      "requiredMigrations": [
+        "20260608000000_prompted_v1_schema",
+        "20260901091000_ingest_upload_exact_replay",
+        "20260902013000_upload_extraction_snapshot",
+        "20260902014000_upload_extraction_checkpoint",
+        "20260902015000_upload_extraction_checkpoint_conflict_precedence"
+      ],
+      "requiredRpcs": [
+        "advance_upload_ingest",
+        "begin_upload_extraction_attempt",
+        "claim_upload_ingest",
+        "get_upload_extraction_checkpoint",
+        "reconcile_upload_ingest_storage",
+        "record_upload_extraction_snapshot",
+        "settle_upload_ingest"
+      ],
       "requiredTables": ["uploads"],
+      "requiredTablePrivileges": { "uploads": ["select"] },
       "requiredSecrets": [],
       "smokeProbe": { "kind": "table", "name": "uploads" }
+    },
+    "brand-logo": {
+      "status": "active",
+      "authMode": "anon",
+      "clientRoute": "/api/brand-logo",
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": [
+        "20260608000000_prompted_v1_schema",
+        "20260901091000_ingest_upload_exact_replay",
+        "20260902016000_brand_logo_lifecycle",
+        "20260902018000_captured_export_brand_recovery"
+      ],
+      "requiredRpcs": [
+        "activate_brand_logo_operation",
+        "claim_brand_logo_operation",
+        "claim_user_storage_dispatch",
+        "complete_brand_logo_operation",
+        "complete_user_storage_dispatch",
+        "mark_brand_logo_reconciliation",
+        "record_brand_logo_storage_verified",
+        "resolve_brand_logo_reconciliation"
+      ],
+      "requiredTables": [],
+      "requiredSecrets": [],
+      "smokeProbe": { "kind": "table", "name": "brand_kits" }
     },
     "render-export": {
       "status": "active",
@@ -253,14 +658,42 @@
         "20260527111048_prompted_documents_auth",
         "20260718061340_unified_ted_artifacts",
         "20260718062256_backfill_unified_ted_artifacts",
-        "20260831100000_dormant_captured_document_operations"
+        "20260831100000_dormant_captured_document_operations",
+        "20260901091000_ingest_upload_exact_replay",
+        "20260902000000_export_revision_authority",
+        "20260902016000_brand_logo_lifecycle",
+        "20260902018000_captured_export_brand_recovery"
       ],
-      "requiredRpcs": ["complete_captured_document_export"],
-      "requiredTables": ["ted_artifacts", "ted_artifact_blocks", "export_history"],
-      "requiredSecrets": [
-        "RENDER_SERVICE_URL",
-        "RENDER_SERVICE_ALLOWED_ORIGIN"
+      "requiredRpcs": [
+        "claim_legacy_pdf_export",
+        "claim_persisted_pdf_export",
+        "claim_user_storage_dispatch",
+        "complete_legacy_pdf_export",
+        "complete_captured_document_export",
+        "complete_user_storage_dispatch",
+        "get_captured_document_export_receipt",
+        "load_legacy_export_snapshot",
+        "get_legacy_pdf_export_binding",
+        "mark_legacy_pdf_export_reconciliation",
+        "record_captured_export_storage_recovery",
+        "record_legacy_pdf_export_artifact",
+        "reconcile_user_storage_dispatch"
       ],
+      "requiredTables": [
+        "documents",
+        "sections",
+        "ted_artifacts",
+        "ted_artifact_blocks",
+        "export_history"
+      ],
+      "requiredTablePrivileges": {
+        "documents": ["select"],
+        "sections": ["select"],
+        "ted_artifacts": ["select"],
+        "ted_artifact_blocks": ["select"],
+        "export_history": ["insert"]
+      },
+      "requiredSecrets": ["RENDER_SERVICE_URL", "RENDER_SERVICE_ALLOWED_ORIGIN"],
       "smokeProbe": { "kind": "table", "name": "ted_artifacts" }
     },
     "live-source": {
@@ -271,7 +704,7 @@
       "requiredMigrations": [],
       "requiredRpcs": [],
       "requiredTables": [],
-      "requiredSecrets": ["OPENAI_API_KEY"],
+      "requiredSecrets": [],
       "smokeProbe": { "kind": "rpc", "name": "consume_rate_limit" }
     },
     "openai-chat": {
@@ -325,9 +758,9 @@
       "status": "active",
       "authMode": "jwt",
       "clientRoute": null,
-      "usesSharedRequestGuard": false,
-      "requiredMigrations": [],
-      "requiredRpcs": [],
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": ["20260901091000_ingest_upload_exact_replay"],
+      "requiredRpcs": ["claim_user_external_egress", "complete_user_external_egress"],
       "requiredTables": [],
       "requiredSecrets": [],
       "smokeProbe": { "kind": "none", "name": null }
@@ -336,9 +769,9 @@
       "status": "active",
       "authMode": "jwt",
       "clientRoute": null,
-      "usesSharedRequestGuard": false,
-      "requiredMigrations": [],
-      "requiredRpcs": [],
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": ["20260901091000_ingest_upload_exact_replay"],
+      "requiredRpcs": ["claim_user_external_egress", "complete_user_external_egress"],
       "requiredTables": [],
       "requiredSecrets": ["PTV_DEVELOPER_ID", "PTV_TIMETABLE_KEY"],
       "smokeProbe": { "kind": "none", "name": null }
@@ -348,9 +781,31 @@
       "authMode": "anon",
       "clientRoute": "/api/account-delete",
       "usesSharedRequestGuard": false,
-      "requiredMigrations": ["20260608000000_prompted_v1_schema"],
-      "requiredRpcs": [],
-      "requiredTables": ["profiles", "brand_kits", "uploads", "audit_logs"],
+      "requiredMigrations": [
+        "20260608000000_prompted_v1_schema",
+        "20260901000000_security_release_hardening",
+        "20260901040000_protected_compute_privileges",
+        "20260901091000_ingest_upload_exact_replay"
+      ],
+      "requiredRpcs": [
+        "begin_account_deletion_fence",
+        "reconcile_upload_ingest_storage",
+        "reconcile_user_external_egress",
+        "reconcile_user_storage_dispatch"
+      ],
+      "requiredTables": [
+        "profiles",
+        "brand_kits",
+        "uploads",
+        "audit_logs",
+        "businesses",
+        "memberships"
+      ],
+      "requiredTablePrivileges": {
+        "audit_logs": ["insert"],
+        "businesses": ["select"],
+        "memberships": ["select"]
+      },
       "requiredSecrets": [],
       "smokeProbe": { "kind": "table", "name": "profiles" }
     },
@@ -359,11 +814,18 @@
       "authMode": "anon",
       "clientRoute": "/api/webhooks/revenuecat",
       "usesSharedRequestGuard": false,
-      "requiredMigrations": ["20260608000000_prompted_v1_schema"],
-      "requiredRpcs": [],
-      "requiredTables": ["subscriptions", "audit_logs"],
+      "requiredMigrations": [
+        "20260608000000_prompted_v1_schema",
+        "20260901030000_atomic_revenuecat_webhook"
+      ],
+      "requiredRpcs": ["apply_revenuecat_webhook_event"],
+      "requiredTables": [],
       "requiredSecrets": ["REVENUECAT_WEBHOOK_SECRET"],
-      "smokeProbe": { "kind": "table", "name": "subscriptions" }
+      "smokeProbe": {
+        "kind": "rpc",
+        "name": "apply_revenuecat_webhook_event",
+        "allowMethodNotAllowed": true
+      }
     }
   }
 }

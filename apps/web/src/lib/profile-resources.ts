@@ -1,5 +1,7 @@
 import { ingestUpload } from "@prompted/shared/api-client";
-import { createClient } from "@/lib/supabase/client";
+import { UPLOAD_REQUIREMENT } from "@prompted/shared/ingest-upload";
+import type { OwnerDispatchLease } from "@/lib/browser-principal-state";
+import { withOwnerSupabase } from "@/lib/supabase/owner-client";
 
 export type ProfileResumeSlot = "current" | "previous";
 export type ProfileResumeSourceKind = "upload" | "ted_update" | "tailored_promotion" | "restore";
@@ -67,39 +69,6 @@ export class ProfileResourceError extends Error {
     super(message);
     this.name = "ProfileResourceError";
   }
-}
-
-/**
- * Resolve the current signed-in user without racing the Supabase SDK's own
- * background token-refresh timer. auth.getUser() makes a live network round
- * trip to Supabase Auth on every call; doing that immediately before a write
- * can collide with an in-flight background refresh and invalidate the
- * session's single-use, rotating refresh token out from under the request
- * (see apps/web/src/lib/api.ts for the same fix applied to the API client's
- * token fetch). getSession() reads the locally cached session instead, and
- * we only force a refresh when it's actually at or near expiry.
- */
-async function requireAuthedUser(
-  supabase: ReturnType<typeof createClient>,
-  message: string,
-): Promise<{ id: string; email: string | null }> {
-  const { data } = await supabase.auth.getSession();
-  let session = data.session;
-
-  const expiresSoon =
-    !session || !session.expires_at || session.expires_at * 1000 <= Date.now() + 30_000;
-  if (expiresSoon) {
-    const { data: refreshed, error } = await supabase.auth.refreshSession();
-    if (error || !refreshed.session) {
-      throw new ProfileResourceError("not_authenticated", message);
-    }
-    session = refreshed.session;
-  }
-
-  if (!session?.user) {
-    throw new ProfileResourceError("not_authenticated", message);
-  }
-  return { id: session.user.id, email: session.user.email ?? null };
 }
 
 function clean(value: unknown): string {
@@ -174,26 +143,28 @@ export function getProfileResourceAvailability(
   };
 }
 
-export async function fetchProfileResources(): Promise<ProfileResourceSnapshot> {
-  const supabase = createClient();
-  const user = await requireAuthedUser(supabase, "Sign in to open your Profile.");
-
-  const [profileResult, resumeResult] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select(
-        "display_name, full_name, preferred_name, phone, date_of_birth, address_line_1, address_line_2, suburb, state, postcode, country",
-      )
-      .eq("id", user.id)
-      .single(),
-    supabase
-      .from("profile_resume_versions")
-      .select(
-        "id, upload_id, slot, accepted_at, source_kind, uploads!inner(file_name, file_type, file_size_bytes, storage_path, extracted_text)",
-      )
-      .eq("user_id", user.id)
-      .order("accepted_at", { ascending: false }),
-  ]);
+export async function fetchProfileResources(
+  lease: OwnerDispatchLease,
+  email = "",
+): Promise<ProfileResourceSnapshot> {
+  const [profileResult, resumeResult] = await withOwnerSupabase(lease, async (supabase) =>
+    await Promise.all([
+      supabase
+        .from("profiles")
+        .select(
+          "display_name, full_name, preferred_name, phone, date_of_birth, address_line_1, address_line_2, suburb, state, postcode, country",
+        )
+        .eq("id", lease.expectedUserId)
+        .single(),
+      supabase
+        .from("profile_resume_versions")
+        .select(
+          "id, upload_id, slot, accepted_at, source_kind, uploads!inner(file_name, file_type, file_size_bytes, storage_path, extracted_text)",
+        )
+        .eq("user_id", lease.expectedUserId)
+        .order("accepted_at", { ascending: false }),
+    ]),
+  );
 
   if (profileResult.error) {
     throw new ProfileResourceError("fetch_failed", "TED couldn't load your Profile details. Please try again.");
@@ -209,32 +180,34 @@ export async function fetchProfileResources(): Promise<ProfileResourceSnapshot> 
   return {
     details: normaliseProfileDetails(
       profileResult.data as Record<string, unknown> | null,
-      user.email ?? "",
+      email,
     ),
     currentResume: resumes.find((row) => row.slot === "current") ?? null,
     previousResume: resumes.find((row) => row.slot === "previous") ?? null,
   };
 }
 
-export async function saveProfileDetails(details: ProfileDetails): Promise<void> {
-  const supabase = createClient();
-  await requireAuthedUser(supabase, "Sign in to save your Profile.");
-
+export async function saveProfileDetails(
+  details: ProfileDetails,
+  lease: OwnerDispatchLease,
+): Promise<void> {
   const preferred = details.preferredName.trim();
   const fullName = details.fullName.trim();
-  const { error } = await supabase.rpc("update_own_profile_details", {
-    p_display_name: preferred || fullName || null,
-    p_full_name: fullName || null,
-    p_preferred_name: preferred || null,
-    p_phone: details.phone.trim() || null,
-    p_date_of_birth: details.dateOfBirth.trim() || null,
-    p_address_line_1: details.addressLine1.trim() || null,
-    p_address_line_2: details.addressLine2.trim() || null,
-    p_suburb: details.suburb.trim() || null,
-    p_state: details.state.trim() || null,
-    p_postcode: details.postcode.trim() || null,
-    p_country: details.country.trim() || null,
-  });
+  const { error } = await withOwnerSupabase(lease, async (supabase) =>
+    await supabase.rpc("update_own_profile_details", {
+      p_display_name: preferred || fullName || null,
+      p_full_name: fullName || null,
+      p_preferred_name: preferred || null,
+      p_phone: details.phone.trim() || null,
+      p_date_of_birth: details.dateOfBirth.trim() || null,
+      p_address_line_1: details.addressLine1.trim() || null,
+      p_address_line_2: details.addressLine2.trim() || null,
+      p_suburb: details.suburb.trim() || null,
+      p_state: details.state.trim() || null,
+      p_postcode: details.postcode.trim() || null,
+      p_country: details.country.trim() || null,
+    }),
+  );
 
   if (error) {
     throw new ProfileResourceError("save_failed", "Your Profile couldn't be saved. Your existing details are unchanged.");
@@ -243,52 +216,59 @@ export async function saveProfileDetails(details: ProfileDetails): Promise<void>
 
 export async function promoteMasterResume(
   uploadId: string,
+  lease: OwnerDispatchLease,
   sourceKind: ProfileResumeSourceKind = "upload",
 ): Promise<void> {
-  const supabase = createClient();
-  const { error } = await supabase.rpc("promote_profile_resume", {
-    p_upload_id: uploadId,
-    p_source_kind: sourceKind,
-  });
+  const { error } = await withOwnerSupabase(lease, async (supabase) =>
+    await supabase.rpc("promote_profile_resume", {
+      p_upload_id: uploadId,
+      p_source_kind: sourceKind,
+    }),
+  );
   if (error) {
     throw new ProfileResourceError("promote_failed", "The resume was read, but TED couldn't make it your Current resume.");
   }
 }
 
-export async function uploadMasterResume(file: File): Promise<void> {
+export async function uploadMasterResume(file: File, lease: OwnerDispatchLease): Promise<void> {
   let result: Awaited<ReturnType<typeof ingestUpload>>;
   try {
     result = await ingestUpload(
       file,
       "Save this as my master resume resource. Extract readable resume text while retaining the original file for Profile use.",
+      lease,
     );
   } catch {
-    throw new ProfileResourceError("upload_failed", "TED couldn't read that resume. Try a PDF, DOCX, TXT, Markdown or CSV file under 8MB.");
+    throw new ProfileResourceError("upload_failed", `TED couldn't read that resume. ${UPLOAD_REQUIREMENT}`);
   }
 
   if (!String(result.extracted_text ?? "").trim()) {
     throw new ProfileResourceError("resume_empty", "TED couldn't find readable resume text, so your Current resume was not changed.");
   }
 
-  await promoteMasterResume(result.upload_id, "upload");
+  lease.assertCurrent();
+  await promoteMasterResume(result.upload_id, lease, "upload");
 }
 
-export async function restorePreviousResume(): Promise<void> {
-  const supabase = createClient();
-  const { error } = await supabase.rpc("restore_previous_profile_resume");
+export async function restorePreviousResume(lease: OwnerDispatchLease): Promise<void> {
+  const { error } = await withOwnerSupabase(lease, async (supabase) =>
+    await supabase.rpc("restore_previous_profile_resume"),
+  );
   if (error) {
     throw new ProfileResourceError("restore_failed", "TED couldn't restore the Previous resume. Your Current resume is unchanged.");
   }
 }
 
-export async function createResumeDownloadUrl(resource: ProfileResumeResource): Promise<string> {
+export async function createResumeDownloadUrl(
+  resource: ProfileResumeResource,
+  lease: OwnerDispatchLease,
+): Promise<string> {
   if (!resource.storagePath || resource.storagePath.startsWith("unretained/")) {
     throw new ProfileResourceError("download_failed", "The original file isn't available for download.");
   }
-  const supabase = createClient();
-  const { data, error } = await supabase.storage
-    .from("original-documents")
-    .createSignedUrl(resource.storagePath, 60);
+  const { data, error } = await withOwnerSupabase(lease, async (supabase) =>
+    await supabase.storage.from("original-documents").createSignedUrl(resource.storagePath, 60),
+  );
   if (error || !data?.signedUrl) {
     throw new ProfileResourceError("download_failed", "TED couldn't prepare that resume file for download.");
   }

@@ -8,5 +8,16 @@ export default async function OutcomePage({
 }) {
   const { id } = await params;
   const initialState = await loadWorkspaceInitialState(id);
-  return <WorkspaceScreen outcomeId={id} initialState={initialState} />;
+  const workspaceIdentity = [
+    initialState.truth.ownerUserId ?? "anonymous",
+    id,
+    initialState.truth.documentId ?? initialState.workspace?.documentId ?? "new",
+  ].join(":");
+  return (
+    <WorkspaceScreen
+      key={workspaceIdentity}
+      outcomeId={id}
+      initialState={initialState}
+    />
+  );
 }

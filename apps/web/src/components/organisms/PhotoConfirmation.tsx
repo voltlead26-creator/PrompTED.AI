@@ -23,9 +23,13 @@ interface PhotoConfirmationProps {
   /** Optional file name shown to help the user confirm the source. */
   fileName?: string;
   /** Confirm the (possibly edited) text and proceed. */
-  onConfirm: (text: string) => void;
+  onConfirm: (text: string) => void | Promise<void>;
   /** Allow the user to go back and change the upload. */
-  onCancel?: () => void;
+  onCancel?: () => void | Promise<void>;
+  /** Locks every transition while a durable acknowledgement is unresolved. */
+  busy?: boolean;
+  /** The shown wording was already confirmed durably and is no longer editable. */
+  confirmed?: boolean;
 }
 
 /**
@@ -41,6 +45,8 @@ export function PhotoConfirmation({
   fileName,
   onConfirm,
   onCancel,
+  busy = false,
+  confirmed = false,
 }: PhotoConfirmationProps) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(extractedText);
@@ -73,6 +79,7 @@ export function PhotoConfirmation({
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={6}
+          disabled={busy}
         />
       ) : hasStructure ? (
         /* Mirror the document's own structure — like the Master Workspace —
@@ -101,22 +108,33 @@ export function PhotoConfirmation({
           <Button
             variant="ghost"
             size="md"
-            onClick={onCancel}
+            onClick={() => void onCancel()}
+            disabled={busy}
             leadingIcon={<Icon name="arrow-left" size={16} />}
           >
             Back
           </Button>
         )}
+        {!confirmed ? (
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={() => setEditing((e) => !e)}
+            disabled={busy}
+            leadingIcon={<Icon name={editing ? "check" : "edit"} size={16} />}
+          >
+            {editing ? "Done editing" : "Looks wrong? Edit"}
+          </Button>
+        ) : null}
         <Button
-          variant="ghost"
+          variant="primary"
           size="md"
-          onClick={() => setEditing((e) => !e)}
-          leadingIcon={<Icon name={editing ? "check" : "edit"} size={16} />}
+          onClick={() => void onConfirm(text.trim())}
+          disabled={busy || !text.trim()}
+          loading={busy}
+          loadingLabel={confirmed ? "Continuing" : "Saving confirmation"}
         >
-          {editing ? "Done editing" : "Looks wrong? Edit"}
-        </Button>
-        <Button variant="primary" size="md" onClick={() => onConfirm(text.trim())}>
-          That&rsquo;s right — continue
+          {confirmed ? "Continue with confirmed text" : "That’s right — continue"}
         </Button>
       </div>
     </section>

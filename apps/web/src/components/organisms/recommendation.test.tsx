@@ -127,6 +127,21 @@ describe("PhotoConfirmation", () => {
     );
     expect(onConfirm).toHaveBeenCalledWith("fixed");
   });
+
+  it("locks every transition while a durable confirmation is pending", () => {
+    render(
+      <PhotoConfirmation
+        extractedText="Retain this text"
+        onConfirm={() => {}}
+        onCancel={() => {}}
+        busy
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Looks wrong/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Saving confirmation/i })).toBeDisabled();
+  });
 });
 
 describe("BundleSelector", () => {

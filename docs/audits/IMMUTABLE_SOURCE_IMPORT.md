@@ -1,16 +1,18 @@
 # Immutable Source Import Audit
 
-- **Status:** Complete local immutable-source decision record; application and
-  release acceptance remain separate gates.
+- **Status:** Complete local immutable-source decision record; the offline
+  committed-SHA Netlify adapter gate and hosted acceptance remain separate.
 - **Target repository:** `https://github.com/voltlead26-creator/PrompTED.AI.git`
 - **Target worktree:** `/Users/kaichurchw/PrompTED.AI`
 - **Target branch and starting HEAD:** `main` at
   `ea0fa46029e87ecd69f40147ebc72d55ae5b158c`
+- **Final reviewed-overlay base HEAD:**
+  `68124981a0f481f2a79a4c2a2bd09537e8afcbdc`
 - **Source repository:** `https://github.com/voltlead26-creator/PrompTED.git`
 - **Immutable source commit:**
   `3a9a7bc7afa26c66fcbfa56266302c148d9dfc37`
 - **Source commit subject:** `revert: remove accidental repair-plan placeholder`
-- **Reviewed on:** 2026-08-31, Australia/Melbourne
+- **Reviewed on:** 2026-09-02, Australia/Melbourne
 - **Runtime for local audit checks:** Node `22.23.2`
 
 This audit controls the selective import of the committed `ClaudeTED.AI`
@@ -24,13 +26,13 @@ repository is eligible for import.
 Every one of the 599 source-tree entries receives one exact manifest row and one
 of these decisions:
 
-| Decision | Meaning | Required target state |
-|---|---|---|
-| `retain_exact` | Reviewed source file remains an active foundation file | Target mode and blob equal the immutable source |
-| `retain_historical_exact` | Useful evidence or compatibility history, not active authority | Target mode and blob equal the immutable source |
-| `defer_exact` | Preserved but explicitly outside the web-first acceptance boundary | Target mode and blob equal the immutable source |
-| `rewrite_target` | Useful role or interface, but source content is unsafe, stale, or architecturally incompatible | Reviewed target blob exists, differs from source, and is recorded |
-| `exclude` | Generated, dead, duplicate, unsafe, obsolete, or irrelevant to the target | Source path is absent from the target |
+| Decision                  | Meaning                                                                                        | Required target state                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `retain_exact`            | Reviewed source file remains an active foundation file                                         | Target mode and blob equal the immutable source                   |
+| `retain_historical_exact` | Useful evidence or compatibility history, not active authority                                 | Target mode and blob equal the immutable source                   |
+| `defer_exact`             | Preserved but explicitly outside the web-first acceptance boundary                             | Target mode and blob equal the immutable source                   |
+| `rewrite_target`          | Useful role or interface, but source content is unsafe, stale, or architecturally incompatible | Reviewed target blob exists, differs from source, and is recorded |
+| `exclude`                 | Generated, dead, duplicate, unsafe, obsolete, or irrelevant to the target                      | Source path is absent from the target                             |
 
 `pending` exists only as a fail-closed intermediate value. The verifier rejects
 it. An exact source match proves only provenance; it does not prove security,
@@ -62,14 +64,14 @@ At the explicit final-writer barrier, the target snapshot resolved all 599
 immutable source paths with no missing manifest row, `pending` decision, or
 unclassified absence:
 
-| Decision | Count |
-|---|---:|
-| `retain_exact` | 395 |
-| `retain_historical_exact` | 56 |
-| `defer_exact` | 0 |
-| `rewrite_target` | 116 |
-| `exclude` | 32 |
-| **Total source paths** | **599** |
+| Decision                  |   Count |
+| ------------------------- | ------: |
+| `retain_exact`            |     315 |
+| `retain_historical_exact` |      56 |
+| `defer_exact`             |       0 |
+| `rewrite_target`          |     196 |
+| `exclude`                 |      32 |
+| **Total source paths**    | **599** |
 
 The 32 exclusions are the exact previously reviewed set:
 
@@ -79,11 +81,18 @@ The 32 exclusions are the exact previously reviewed set:
 - 2 legacy provider/data seams;
 - 3 stale generated or one-shot seed-authority paths.
 
-The manifest also records 61 Git-versionable target-native files with exact
+The manifest also records 245 Git-versionable target-native files with exact
 mode, byte size, and Git blob ID. The manifest cannot hash itself without a
 circular identity, so `docs/audits/immutable-source-import.json` is the sole
 explicit self-exclusion. Ignored coordination state, dependencies, caches, and
 build output are not target source and are not included.
+
+The final refresh is bound to the named branch, exact pre-commit base HEAD, and
+the explicitly counted working-tree overlay. Its fail-closed refresh helper may
+reclassify an active exact donor path only when that path is present in the
+reviewed overlay. It refuses automatic changes to historical/deferred evidence,
+excluded donor restoration, silent target-native removal, target-native drift
+outside the overlay, and manifest self-hashing.
 
 The 56 historical exact rows are inert plan, audit, handoff, benchmark, or ADR
 evidence. The runtime-imported section-key compatibility JSON and its
@@ -255,6 +264,14 @@ Run under the required runtime:
   --source-repository \
   '/Users/kaichurchw/PrompTED - Historical/GitHub/PrompTED'
 ```
+
+The final local rebuild gate also passed under Node `22.23.2`: 135 existing
+release-contract tests plus 16 immutable-import tests, 185 shared tests, 496
+web tests, lint, type-check, the Next.js 15 production build, and the
+progressive-bundle check. Separately, all 499 Edge Function tests and all 999
+fresh-schema pgTAP assertions passed, the 44 migrations applied from an empty
+local database, and database lint reported no schema errors. These are local
+implementation and build facts, not hosted or production evidence.
 
 The local provenance gate proves the manifest identities and classifications
 above. It does not promote the broader integrated, hosted, signed-in,

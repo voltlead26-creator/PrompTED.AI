@@ -19,7 +19,17 @@ import {
 import { runDocumentPipeline } from "../_shared/document-pipeline.ts";
 import { assertDeliverableSections } from "../_shared/document-delivery-guard.ts";
 import { designBespokeTemplate } from "../_shared/section-designer.ts";
-import { trackDocumentCreated } from "../_shared/cost-tracker.ts";
+import {
+  type AllowanceReservation,
+  AllowanceReservationError,
+  holdDocumentAllowanceForReconciliation,
+  isProviderReconciliationRequired,
+  RECONCILIATION_REQUIRED_PAYLOAD,
+  releaseDocumentAllowance,
+  reserveDocumentAllowance,
+  resolveAllowanceRequestIdentity,
+  settleDocumentAllowance,
+} from "../_shared/allowance-reservations.ts";
 import {
   SSE_HEADERS,
   sseDone,
@@ -27,6 +37,10 @@ import {
   sseHeartbeat,
 } from "../_shared/orchestration.ts";
 import { resolveRetainedUploadContext } from "../_shared/upload-context.ts";
+import {
+  setModelCallCheckpointContext,
+  setModelCallRequestIdentity,
+} from "../_shared/model-call-context.ts";
 
 interface GenerateBody {
   template_id?: string;
@@ -146,7 +160,10 @@ Deno.serve(async (req) => {
 
   let auth;
   try {
-    auth = await guardRequest(req);
+    // Authentication/rate limiting happens here. Atomic allowance admission
+    // occurs below, after deterministic request validation and before the first
+    // provider call.
+    auth = await guardRequest(req, { enforceCap: false });
   } catch (err) {
     if (err instanceof AuthError) {
       return jsonResponse(err.payload, err.status, origin);
@@ -163,6 +180,24 @@ Deno.serve(async (req) => {
       400,
       origin,
     );
+  }
+
+  let generationRequestId: string;
+  try {
+    generationRequestId = (await resolveAllowanceRequestIdentity(
+      body.generation_request_id,
+      {
+        userId: auth.userId,
+        routeKey: "generate-document",
+        body: auth.body ?? {},
+      },
+    )).requestId;
+    setModelCallRequestIdentity(req.signal, generationRequestId);
+  } catch (err) {
+    if (err instanceof AllowanceReservationError) {
+      return jsonResponse(err.payload, err.status, origin);
+    }
+    return jsonResponse(USER_SAFE_ERROR, 500, origin);
   }
 
   const templateId = String(body.template_id ?? "").trim();
@@ -213,29 +248,94 @@ Deno.serve(async (req) => {
   );
   const memoryContext = await loadUserMemoryContext(auth.admin, auth.userId);
 
+  let reservation: AllowanceReservation;
+  try {
+    reservation = await reserveDocumentAllowance(auth.admin, {
+      userId: auth.userId,
+      requestId: generationRequestId,
+      routeKey: "generate-document",
+      body: auth.body ?? {},
+      plan: auth.plan,
+      monthlyCap: auth.monthlyDocumentCap,
+      ttlSeconds: 7200,
+    });
+  } catch (err) {
+    if (err instanceof AllowanceReservationError) {
+      return jsonResponse(err.payload, err.status, origin);
+    }
+    return jsonResponse(USER_SAFE_ERROR, 500, origin);
+  }
+
+  if (reservation.replayResult) {
+    const events = reservation.replayResult.payload.events;
+    if (
+      reservation.replayResult.transport !== "sse" || !Array.isArray(events)
+    ) return jsonResponse(USER_SAFE_ERROR, 500, origin);
+    const replay = new ReadableStream({
+      start(controller) {
+        for (const event of events) controller.enqueue(sseEvent(event));
+        controller.enqueue(sseDone());
+        controller.close();
+      },
+    });
+    return new Response(replay, {
+      headers: { ...corsHeaders(origin), ...SSE_HEADERS },
+    });
+  }
+
+  setModelCallCheckpointContext(req.signal, {
+    scope: "generate-document",
+    originReservationId: reservation.reservationId,
+    executionClaimToken: reservation.executionClaimToken!,
+  });
+
   // Bespoke path: no catalogue template matched, so design a structure
   // specific to this situation. The designed sections carry vital/improver
   // criteria and run through the exact same pipeline as catalogue templates.
   let designedTemplate: Awaited<ReturnType<typeof designBespokeTemplate>> =
     null;
-  if (body.design_bespoke === true) {
-    designedTemplate = await designBespokeTemplate({
-      documentName:
-        String(body.document_name ?? templateId).slice(0, 160).trim() ||
-        "Document",
-      situation,
-      conversationContext,
-      uploadContext,
-      systemPrompt: buildSystemPrompt({
-        task: "intent",
-        domain: "general" as never,
-        clari: body.clari as never,
-        adviceBoundary: "light",
-        profileHint: situation,
-        extra: "",
-      }),
-      signal: req.signal,
+  try {
+    if (body.design_bespoke === true) {
+      designedTemplate = await designBespokeTemplate({
+        documentName:
+          String(body.document_name ?? templateId).slice(0, 160).trim() ||
+          "Document",
+        situation,
+        conversationContext,
+        uploadContext,
+        systemPrompt: buildSystemPrompt({
+          task: "intent",
+          domain: "general" as never,
+          clari: body.clari as never,
+          adviceBoundary: "light",
+          profileHint: situation,
+          extra: "",
+        }),
+        signal: req.signal,
+      });
+    }
+  } catch (error) {
+    if (isProviderReconciliationRequired(error)) {
+      try {
+        await holdDocumentAllowanceForReconciliation(auth.admin, {
+          userId: auth.userId,
+          reservation,
+        });
+      } catch {
+        return jsonResponse(USER_SAFE_ERROR, 500, origin);
+      }
+      return jsonResponse(RECONCILIATION_REQUIRED_PAYLOAD, 409, origin);
+    }
+    await releaseDocumentAllowance(auth.admin, {
+      userId: auth.userId,
+      reservation,
+      releaseCode: req.signal.aborted ? "request_cancelled" : "provider_failed",
     });
+    return jsonResponse(
+      USER_SAFE_ERROR,
+      req.signal.aborted ? 504 : 500,
+      origin,
+    );
   }
 
   // profileHint and extra deliberately carry template/identity-level context
@@ -303,22 +403,17 @@ Deno.serve(async (req) => {
 
   const stream = new ReadableStream({
     async start(controller) {
+      let settlementStarted = false;
       try {
         const effectiveTemplate = designedTemplate
           ? applyPreFill(designedTemplate, body.profile ?? {})
           : template;
-
-        if (designedTemplate) {
-          controller.enqueue(sseEvent({
-            type: "document_design",
-            name: effectiveTemplate.name,
-            sections: effectiveTemplate.sections.map((section) => ({
-              key: section.key,
-              label: section.label,
-              required: section.required,
-            })),
-          }));
-        }
+        const draftSections: Array<{
+          type: "draft_section";
+          key: string;
+          label: string;
+          content: string;
+        }> = [];
 
         const effectiveSystemPrompt = designedTemplate
           ? buildSystemPrompt({
@@ -369,12 +464,12 @@ Deno.serve(async (req) => {
             systemPrompt: effectiveSystemPrompt,
             signal: req.signal,
             onDraftSection: (section) => {
-              controller.enqueue(sseEvent({
+              draftSections.push({
                 type: "draft_section",
                 key: section.key,
                 label: section.label,
                 content: section.content,
-              }));
+              });
             },
           });
         } finally {
@@ -388,58 +483,71 @@ Deno.serve(async (req) => {
 
         assertDeliverableSections(reviewedSections);
 
+        // The usage-ledger row and reservation settle in one DB transaction.
+        // Do not expose reviewed sections or a stream completion marker until
+        // that durable write succeeds.
+        const responseEvents: Array<Record<string, unknown>> = [];
+        if (designedTemplate) {
+          responseEvents.push({
+            type: "document_design",
+            name: effectiveTemplate.name,
+            sections: effectiveTemplate.sections.map((section) => ({
+              key: section.key,
+              label: section.label,
+              required: section.required,
+            })),
+          });
+        }
+        for (const section of draftSections) {
+          responseEvents.push(section);
+        }
+
         for (const section of reviewedSections) {
-          controller.enqueue(sseEvent({
+          responseEvents.push({
             type: "section",
             key: section.key,
             label: section.label,
             content: section.content,
-          }));
+          });
         }
 
         if (unresolvedPlaceholders.length > 0) {
-          controller.enqueue(sseEvent({
+          responseEvents.push({
             type: "unresolved_placeholders",
             placeholders: unresolvedPlaceholders,
-          }));
+          });
         }
 
         if (missingInfo.length > 0) {
-          controller.enqueue(sseEvent({
+          responseEvents.push({
             type: "missing_info",
             sections: missingInfo,
-          }));
+          });
         }
 
         const finalBoundary = designedTemplate
           ? designedTemplate.adviceBoundary
           : template.adviceBoundary;
         if (finalBoundary !== "none") {
-          controller.enqueue(sseEvent({
+          responseEvents.push({
             type: "advice_boundary",
             level: finalBoundary,
-          }));
-        }
-
-        controller.enqueue(sseDone());
-
-        // Charge the document credit only after the pipeline has produced
-        // sections successfully - failed generations must not burn credits.
-        if (auth.userId !== "anonymous" && reviewedSections.length > 0) {
-          const generationRequestId =
-            typeof body.generation_request_id === "string" &&
-              body.generation_request_id.trim()
-              ? body.generation_request_id.trim().slice(0, 64)
-              : undefined;
-          trackDocumentCreated(auth.admin, {
-            userId: auth.userId,
-            task: "document",
-            provider: "gateway",
-            inputTokens: 0,
-            outputTokens: 0,
-            generationRequestId,
           });
         }
+
+        settlementStarted = true;
+        await settleDocumentAllowance(auth.admin, {
+          userId: auth.userId,
+          reservation,
+          task: "document",
+          result: {
+            contract_version: "allowance-result.1",
+            route_key: "generate-document",
+            transport: "sse",
+            payload: { events: responseEvents },
+          },
+        });
+        for (const event of responseEvents) controller.enqueue(sseEvent(event));
 
         logGeneration({
           sectionCount: reviewedSections.length,
@@ -449,13 +557,40 @@ Deno.serve(async (req) => {
           missingItems: unresolvedPlaceholders.length,
           status: "ok",
         });
+        controller.enqueue(sseDone());
       } catch (err) {
+        const reconciliationRequired = isProviderReconciliationRequired(err);
+        if (!settlementStarted && reconciliationRequired) {
+          try {
+            await holdDocumentAllowanceForReconciliation(auth.admin, {
+              userId: auth.userId,
+              reservation,
+            });
+            controller.enqueue(sseEvent({
+              type: "error",
+              error: RECONCILIATION_REQUIRED_PAYLOAD.error,
+              http_status: 409,
+            }));
+          } catch {
+            controller.enqueue(sseEvent({ type: "error", ...USER_SAFE_ERROR }));
+          }
+        } else if (!settlementStarted) {
+          await releaseDocumentAllowance(auth.admin, {
+            userId: auth.userId,
+            reservation,
+            releaseCode: req.signal.aborted
+              ? "request_cancelled"
+              : "provider_failed",
+          });
+        }
         const message = err instanceof Error ? err.message : "unknown";
-        controller.enqueue(sseEvent({
-          type: "error",
-          ...USER_SAFE_ERROR,
-          detail_code: /abort/i.test(message) ? "aborted" : "failed",
-        }));
+        if (!reconciliationRequired) {
+          controller.enqueue(sseEvent({
+            type: "error",
+            ...USER_SAFE_ERROR,
+            detail_code: /abort/i.test(message) ? "aborted" : "failed",
+          }));
+        }
         logGeneration({
           sectionCount: 0,
           missingSections: 0,

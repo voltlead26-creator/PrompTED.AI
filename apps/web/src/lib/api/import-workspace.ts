@@ -1,5 +1,6 @@
 import type { Section } from "@prompted/shared/browser";
-import { createClient } from "@/lib/supabase/client";
+import type { OwnerDispatchLease } from "@/lib/browser-principal-state";
+import { withOwnerSupabase } from "@/lib/supabase/owner-client";
 
 export interface CommitDocumentImportInput {
   uploadId: string;
@@ -32,17 +33,19 @@ export interface CommitGuestWorkspaceImportInput {
 
 export async function commitDocumentImport(
   input: CommitDocumentImportInput,
+  lease: OwnerDispatchLease,
 ): Promise<CommitDocumentImportResult> {
-  const supabase = createClient();
-  const { data, error } = await supabase.rpc("commit_document_import", {
-    p_upload_id: input.uploadId,
-    p_outcome_id: input.outcomeId,
-    p_document_id: input.documentId,
-    p_title: input.title,
-    p_situation_text: input.situationText,
-    p_recommendation_payload: input.recommendationPayload,
-    p_sections: input.sections,
-  });
+  const { data, error } = await withOwnerSupabase(lease, async (supabase) =>
+    await supabase.rpc("commit_document_import", {
+      p_upload_id: input.uploadId,
+      p_outcome_id: input.outcomeId,
+      p_document_id: input.documentId,
+      p_title: input.title,
+      p_situation_text: input.situationText,
+      p_recommendation_payload: input.recommendationPayload,
+      p_sections: input.sections,
+    }),
+  );
 
   if (error) throw error;
   if (!data || typeof data !== "object") throw new Error("IMPORT_COMMIT_EMPTY_RESPONSE");
@@ -56,19 +59,21 @@ export async function commitDocumentImport(
  */
 export async function commitGuestWorkspaceImport(
   input: CommitGuestWorkspaceImportInput,
+  lease: OwnerDispatchLease,
 ): Promise<CommitDocumentImportResult> {
-  const supabase = createClient();
-  const { data, error } = await supabase.rpc("commit_guest_workspace_import", {
-    p_idempotency_key: input.idempotencyKey,
-    p_outcome_id: input.outcomeId,
-    p_document_id: input.documentId,
-    p_title: input.title,
-    p_situation_text: input.situationText,
-    p_recommendation_payload: input.recommendationPayload,
-    p_template_id: input.templateId,
-    p_document_status: input.documentStatus,
-    p_sections: input.sections,
-  });
+  const { data, error } = await withOwnerSupabase(lease, async (supabase) =>
+    await supabase.rpc("commit_guest_workspace_import", {
+      p_idempotency_key: input.idempotencyKey,
+      p_outcome_id: input.outcomeId,
+      p_document_id: input.documentId,
+      p_title: input.title,
+      p_situation_text: input.situationText,
+      p_recommendation_payload: input.recommendationPayload,
+      p_template_id: input.templateId,
+      p_document_status: input.documentStatus,
+      p_sections: input.sections,
+    }),
+  );
 
   if (error) throw error;
   if (!data || typeof data !== "object") {

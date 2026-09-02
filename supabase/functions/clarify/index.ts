@@ -6,11 +6,14 @@
 // =====================================================
 
 import { handleOptions, jsonResponse } from "../_shared/cors.ts";
-import { guardRequest, AuthError } from "../_shared/auth-guard.ts";
+import { AuthError, guardRequest } from "../_shared/auth-guard.ts";
 import { routeRequest, USER_SAFE_ERROR } from "../_shared/provider-router.ts";
-import { buildSystemPrompt, type ClariPrefs } from "../_shared/prompt-builder.ts";
-import { parseModelJson } from "../_shared/orchestration.ts";
+import {
+  buildSystemPrompt,
+  type ClariPrefs,
+} from "../_shared/prompt-builder.ts";
 import { loadUserMemoryContext } from "../_shared/user-memory.ts";
+import { CLARIFY_OUTPUT_SCHEMA } from "../_shared/model-output-contracts.ts";
 
 interface ClarifyTurn {
   role: "user" | "assistant";
@@ -32,13 +35,18 @@ const MAX_CLARIFY_QUESTIONS = 4;
 
 /** Normalise a question for repeat detection. */
 function normaliseQuestion(q: string): string {
-  return q.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  return q.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Token-overlap similarity between two questions (0..1). */
 function questionSimilarity(a: string, b: string): number {
-  const ta = new Set(normaliseQuestion(a).split(" ").filter((w) => w.length > 2));
-  const tb = new Set(normaliseQuestion(b).split(" ").filter((w) => w.length > 2));
+  const ta = new Set(
+    normaliseQuestion(a).split(" ").filter((w) => w.length > 2),
+  );
+  const tb = new Set(
+    normaliseQuestion(b).split(" ").filter((w) => w.length > 2),
+  );
   if (ta.size === 0 || tb.size === 0) return 0;
   let overlap = 0;
   for (const w of ta) if (tb.has(w)) overlap++;
@@ -58,7 +66,7 @@ const FORCED_COMMIT_INSTRUCTION =
   "that most plausibly fits everything the user has said and any uploaded document content. " +
   "If several outputs are plausible, pick the strongest as the recommendation. " +
   "You are committing without having asked about every fact you would ideally want — list each plain-language " +
-  "fact you still don't have in \"missing_information\". Never invent a fact to avoid listing it there. " +
+  'fact you still don\'t have in "missing_information". Never invent a fact to avoid listing it there. ' +
   "Respond ONLY with the JSON object described in your instructions.";
 
 Deno.serve(async (req) => {
@@ -67,14 +75,20 @@ Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: { message: "Method not allowed" } }, 405, origin);
+    return jsonResponse(
+      { error: { message: "Method not allowed" } },
+      405,
+      origin,
+    );
   }
 
   let auth;
   try {
     auth = await guardRequest(req, { enforceCap: false });
   } catch (err) {
-    if (err instanceof AuthError) return jsonResponse(err.payload, err.status, origin);
+    if (err instanceof AuthError) {
+      return jsonResponse(err.payload, err.status, origin);
+    }
     return jsonResponse(USER_SAFE_ERROR, 500, origin);
   }
 
@@ -85,7 +99,11 @@ Deno.serve(async (req) => {
     const extracted = String(body.extracted_text ?? "").slice(0, 20000).trim();
 
     if (history.length === 0 && !answer) {
-      return jsonResponse({ error: { message: "history or answer is required" } }, 400, origin);
+      return jsonResponse(
+        { error: { message: "history or answer is required" } },
+        400,
+        origin,
+      );
     }
 
     const memory = await loadUserMemoryContext(auth.admin, auth.userId);
@@ -98,21 +116,32 @@ Deno.serve(async (req) => {
     // Build the conversation: prior turns + the latest answer.
     const messages: ClarifyTurn[] = [
       ...history.map((t) => ({
-        role: t.role === "assistant" ? ("assistant" as const) : ("user" as const),
+        role: t.role === "assistant"
+          ? ("assistant" as const)
+          : ("user" as const),
         content: String(t.content ?? "").slice(0, 8000),
       })),
     ];
     if (answer) messages.push({ role: "user", content: answer });
 
     // Prepend situation context as the first user turn if not already present.
-    if (body.situation && !messages.some((m) => m.content.includes(String(body.situation)))) {
-      messages.unshift({ role: "user", content: `Situation: ${body.situation}` });
+    if (
+      body.situation &&
+      !messages.some((m) => m.content.includes(String(body.situation)))
+    ) {
+      messages.unshift({
+        role: "user",
+        content: `Situation: ${body.situation}`,
+      });
     }
 
     // Uploaded document content gets its own turn with its own length budget.
     // History turns are sliced to 8k each, so a document folded into the
     // first turn was being truncated; this keeps up to 20k of it in play.
-    if (extracted && !messages.some((m) => m.content.includes(extracted.slice(0, 200)))) {
+    if (
+      extracted &&
+      !messages.some((m) => m.content.includes(extracted.slice(0, 200)))
+    ) {
       messages.unshift({
         role: "user",
         content: `Attached document content:\n${extracted}`,
@@ -131,13 +160,15 @@ Deno.serve(async (req) => {
 
     const result = await routeRequest({
       task: "clarify",
+      logicalStageKey: "clarify.primary",
+      outputSchema: CLARIFY_OUTPUT_SCHEMA,
       systemPrompt,
       messages,
       maxTokens: 1200,
       signal: req.signal,
     });
 
-    let parsed = parseModelJson(result.text);
+    let parsed = result.structured;
 
     // Same repair pattern as interpret-intent: a prose answer instead of the
     // required JSON usually means the conversation had become clear enough
@@ -148,6 +179,8 @@ Deno.serve(async (req) => {
     if (!parsed) {
       const repair = await routeRequest({
         task: "clarify",
+        logicalStageKey: "clarify.repair",
+        outputSchema: CLARIFY_OUTPUT_SCHEMA,
         systemPrompt,
         messages: [
           ...messages,
@@ -164,7 +197,7 @@ Deno.serve(async (req) => {
         maxTokens: 1200,
         signal: req.signal,
       });
-      parsed = parseModelJson(repair.text);
+      parsed = repair.structured;
     }
 
     if (!parsed) {
@@ -174,7 +207,8 @@ Deno.serve(async (req) => {
       return jsonResponse(
         {
           intent_clear: false,
-          question: "Could you tell me a little more about what you're trying to create?",
+          question:
+            "Could you tell me a little more about what you're trying to create?",
           recommendation: null,
           missing_information: [],
         },
@@ -188,32 +222,34 @@ Deno.serve(async (req) => {
     //   1. The model asked ANOTHER question after the forced-commit cap.
     //   2. The model's question is a near-repeat of one it already asked.
     const parsedRecord = parsed as Record<string, unknown>;
-    const proposedQuestion =
-      typeof parsedRecord.question === "string" ? parsedRecord.question : "";
-    const stuck =
-      parsedRecord.intent_clear !== true &&
-      (mustCommit || (proposedQuestion && isRepeatQuestion(proposedQuestion, history)));
+    const proposedQuestion = typeof parsedRecord.question === "string"
+      ? parsedRecord.question
+      : "";
+    const stuck = parsedRecord.intent_clear !== true &&
+      (mustCommit ||
+        (proposedQuestion && isRepeatQuestion(proposedQuestion, history)));
 
     if (stuck) {
       const forced = await routeRequest({
         task: "clarify",
+        logicalStageKey: "clarify.forced-commit",
+        outputSchema: CLARIFY_OUTPUT_SCHEMA,
         systemPrompt,
         messages: [
           ...messages,
           { role: "assistant", content: result.text },
           {
             role: "user",
-            content:
-              (mustCommit
-                ? "You were told to commit and asked another question anyway. "
-                : "You are repeating a question the user has already answered. ") +
+            content: (mustCommit
+              ? "You were told to commit and asked another question anyway. "
+              : "You are repeating a question the user has already answered. ") +
               FORCED_COMMIT_INSTRUCTION,
           },
         ],
         maxTokens: 1200,
         signal: req.signal,
       });
-      const forcedParsed = parseModelJson(forced.text) as Record<string, unknown> | null;
+      const forcedParsed = forced.structured;
       if (
         forcedParsed &&
         forcedParsed.intent_clear === true &&
@@ -229,7 +265,9 @@ Deno.serve(async (req) => {
           intent_clear: true,
           question: null,
           recommendation: null,
-          missing_information: ["TED could not confirm enough detail to make a recommendation"],
+          missing_information: [
+            "TED could not confirm enough detail to make a recommendation",
+          ],
         },
         200,
         origin,

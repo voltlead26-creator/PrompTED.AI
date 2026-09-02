@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MasterWorkspaceImport } from "./MasterWorkspaceImport";
+import { recordBrowserPrincipal } from "@/lib/browser-principal-state";
 
 const auth = vi.hoisted(() => ({ user: null as null | { id: string }, loading: true }));
 const mocks = vi.hoisted(() => ({
@@ -39,6 +40,7 @@ vi.mock("@/lib/workspace-store", async () => {
 
 describe("MasterWorkspaceImport", () => {
   beforeEach(() => {
+    recordBrowserPrincipal(undefined);
     vi.clearAllMocks();
     auth.loading = true;
     auth.user = null;
@@ -48,6 +50,8 @@ describe("MasterWorkspaceImport", () => {
     });
     mocks.commitDocumentImport.mockResolvedValue(undefined);
   });
+
+  afterEach(() => recordBrowserPrincipal(undefined));
 
   it("keeps the destination heading and disables the upload surface while auth loads", () => {
     render(<MasterWorkspaceImport />);
@@ -73,6 +77,7 @@ describe("MasterWorkspaceImport", () => {
   it("reviews a successful ingest before committing and navigating", async () => {
     auth.loading = false;
     auth.user = { id: "user-1" };
+    recordBrowserPrincipal("user-1");
     const { container } = render(<MasterWorkspaceImport />);
     const input = container.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
@@ -91,9 +96,39 @@ describe("MasterWorkspaceImport", () => {
     expect(mocks.push).toHaveBeenCalledWith(expect.stringMatching(/^\/outcomes\//));
   });
 
+  it("accepts XLSX and rejects oversized text before ingest", async () => {
+    auth.loading = false;
+    auth.user = { id: "user-1" };
+    recordBrowserPrincipal("user-1");
+    const { container } = render(<MasterWorkspaceImport />);
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).toHaveAttribute("accept", expect.stringContaining(".xlsx"));
+    const workbook = new File(["workbook"], "Evidence.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    fireEvent.change(input!, { target: { files: [workbook] } });
+    await screen.findByRole("region", { name: "Review imported document" });
+    expect(mocks.ingestUpload).toHaveBeenCalledWith(
+      workbook,
+      expect.any(String),
+      expect.objectContaining({ expectedUserId: "user-1" }),
+    );
+
+    mocks.ingestUpload.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Choose another file" }));
+    const oversized = new File(["not read"], "Evidence.csv", { type: "text/csv" });
+    Object.defineProperty(oversized, "size", { value: 1024 * 1024 + 1 });
+    fireEvent.change(input!, { target: { files: [oversized] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "TXT, Markdown and CSV files need to be 1MB or smaller.",
+    );
+    expect(mocks.ingestUpload).not.toHaveBeenCalled();
+  });
+
   it("does not persist or navigate when the authenticated commit fails", async () => {
     auth.loading = false;
     auth.user = { id: "user-1" };
+    recordBrowserPrincipal("user-1");
     mocks.commitDocumentImport.mockRejectedValueOnce(new Error("sync failed"));
     const { container } = render(<MasterWorkspaceImport />);
 

@@ -52,7 +52,7 @@ export default function PlansPage() {
             Back to plans
           </Link>
         </header>
-        <ManualPlanEditor planId={planId} />
+        <ManualPlanEditor planId={planId} ownerUserId={user?.id} />
       </section>
     );
   }
@@ -81,7 +81,7 @@ export default function PlansPage() {
       ) : null}
 
       <PlansCreatePanel />
-      <ManualPlansLibrary />
+      <ManualPlansLibrary ownerUserId={user?.id} />
 
       {user && dueItems.length > 0 ? <WhatsDue items={dueItems} /> : null}
 

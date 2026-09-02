@@ -12,6 +12,7 @@ export interface TedChangeReviewProps {
   onApply: () => void;
   onRetry: () => void;
   onDiscard: () => void;
+  busy?: boolean;
 }
 
 export function TedChangeReview({
@@ -21,6 +22,7 @@ export function TedChangeReview({
   onApply,
   onRetry,
   onDiscard,
+  busy = false,
 }: TedChangeReviewProps) {
   return (
     <section className={styles.review} aria-labelledby="ted-change-review-title">
@@ -50,14 +52,14 @@ export function TedChangeReview({
       </div>
 
       <footer className={styles.actions}>
-        <button type="button" className={styles.reject} onClick={onDiscard}>
+        <button type="button" className={styles.reject} onClick={onDiscard} disabled={busy}>
           Discard
         </button>
-        <button type="button" className={styles.reject} onClick={onRetry}>
+        <button type="button" className={styles.reject} onClick={onRetry} disabled={busy}>
           Try again
         </button>
-        <button type="button" className={styles.accept} onClick={onApply}>
-          Apply
+        <button type="button" className={styles.accept} onClick={onApply} disabled={busy}>
+          {busy ? "Applying…" : "Apply"}
         </button>
       </footer>
     </section>

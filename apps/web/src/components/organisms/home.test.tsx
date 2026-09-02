@@ -8,7 +8,11 @@ import { ExampleChips } from "./ExampleChips";
 import { dailyChipSeed } from "./ExampleChips";
 import { FastLane } from "./FastLane";
 import { ChatResponsiveClarify, type ClarifyMessage } from "./ChatResponsiveClarify";
-import { useFileAttachment, MAX_FILE_BYTES } from "@/hooks/useFileAttachment";
+import { useFileAttachment } from "@/hooks/useFileAttachment";
+import {
+  MAX_TEXT_UPLOAD_BYTES,
+  MAX_UPLOAD_BYTES,
+} from "@prompted/shared/ingest-upload";
 import { renderHook, act } from "@testing-library/react";
 
 // next/link stub for FastLane
@@ -121,6 +125,24 @@ describe("ChatInput", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/isn't supported/);
   });
 
+  it("removes attachment capability from embedded text-only conversations", () => {
+    render(
+      <ChatInput
+        value="Continue this conversation"
+        onChange={noop}
+        onSubmit={noop}
+        attachment={null}
+        onAttachFile={noop}
+        onRemoveAttachment={noop}
+        allowAttachment={false}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /Upload a document into chat/i })).toBeNull();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    expect(screen.getByRole("button", { name: /Ask TED/i })).toBeEnabled();
+  });
+
   it("passes axe", async () => {
     const { container } = render(
       <ChatInput
@@ -220,22 +242,51 @@ describe("useFileAttachment", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("accepts an XLSX workbook", () => {
+    const { result } = renderHook(() => useFileAttachment());
+    act(() => {
+      result.current.attach(makeFile(
+        "evidence.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        1_000,
+      ));
+    });
+    expect(result.current.attachment?.name).toBe("evidence.xlsx");
+    expect(result.current.error).toBeNull();
+  });
+
   it("rejects an unsupported type with a plain message", () => {
     const { result } = renderHook(() => useFileAttachment());
     act(() => {
       result.current.attach(makeFile("virus.exe", "application/x-msdownload", 100));
     });
     expect(result.current.attachment).toBeNull();
-    expect(result.current.error).toMatch(/PDF, DOCX, TXT, Markdown or CSV/i);
+    expect(result.current.error).toMatch(/PDF, DOCX, XLSX, TXT, Markdown or CSV/i);
   });
 
-  it("rejects files over 20MB with a plain message", () => {
+  it("rejects PDF files above the exact 8MB limit", () => {
     const { result } = renderHook(() => useFileAttachment());
     act(() => {
-      result.current.attach(makeFile("big.pdf", "application/pdf", MAX_FILE_BYTES + 1));
+      result.current.attach(makeFile("big.pdf", "application/pdf", MAX_UPLOAD_BYTES + 1));
     });
     expect(result.current.attachment).toBeNull();
-    expect(result.current.error).toMatch(/too big/);
+    expect(result.current.error).toMatch(/8MB or smaller/i);
+  });
+
+  it("rejects text files above 1MB without replacing the existing attachment", () => {
+    const { result } = renderHook(() => useFileAttachment());
+    act(() => {
+      result.current.attach(makeFile("current.pdf", "application/pdf", 1_000));
+    });
+    act(() => {
+      result.current.attach(makeFile(
+        "oversized.csv",
+        "text/csv",
+        MAX_TEXT_UPLOAD_BYTES + 1,
+      ));
+    });
+    expect(result.current.attachment?.name).toBe("current.pdf");
+    expect(result.current.error).toMatch(/1MB or smaller/i);
   });
 
   it("clears an attachment", () => {

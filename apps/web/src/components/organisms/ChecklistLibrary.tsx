@@ -1,9 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
 import { ProgressBar } from "@/components/atoms/ProgressBar";
+import { listSavedLocalChecklists } from "@/lib/local-checklist-store";
+import {
+  currentDeviceDataScope,
+  deviceDataOwnerToken,
+  type DeviceDataScope,
+} from "@/lib/owner-bound-device-store";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+} from "@/lib/browser-principal-state";
+import { withOwnerSupabase } from "@/lib/supabase/owner-client";
 import styles from "./ChecklistLibrary.module.css";
 
 interface Summary {
@@ -13,79 +23,66 @@ interface Summary {
   done: number;
 }
 
-interface StoredGuestItem {
-  done?: boolean;
-}
-
-function loadGuestPlans(): Summary[] {
-  const prefix = "prompted:guest-checklist:";
-  const savedPrefix = "prompted:guest-checklist-saved:";
-  const plans: Summary[] = [];
-
-  try {
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const key = window.localStorage.key(index);
-      if (!key?.startsWith(prefix) || key.startsWith(savedPrefix)) continue;
-
-      const outcomeId = key.slice(prefix.length);
-      const explicitlySaved = window.localStorage.getItem(`${savedPrefix}${outcomeId}`) === "true";
-      if (!explicitlySaved) continue;
-
-      const raw = window.localStorage.getItem(key);
-      const items = raw ? JSON.parse(raw) as StoredGuestItem[] : [];
-      plans.push({
-        outcomeId,
-        title: "Saved checklist or action plan",
-        total: items.length,
-        done: items.filter((item) => item.done).length,
-      });
-    }
-  } catch {
-    return [];
-  }
-
-  return plans;
+function loadGuestPlans(scope: DeviceDataScope): Summary[] {
+  return listSavedLocalChecklists(scope).map(({ outcomeId, items }) => ({
+    outcomeId,
+    title: "Saved checklist or action plan",
+    total: items.length,
+    done: items.filter((item) => item.done).length,
+  }));
 }
 
 export function ChecklistLibrary({ userId }: { userId?: string }) {
+  const deviceScope = useMemo(() => currentDeviceDataScope(userId), [userId]);
+  const ownerToken = deviceDataOwnerToken(deviceScope);
   const [items, setItems] = useState<Summary[]>([]);
+  const [itemsOwner, setItemsOwner] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
+      setLoading(true);
+      setError(null);
+      setItemsOwner(ownerToken);
+      setItems([]);
       if (!userId) {
         if (!cancelled) {
-          setItems(loadGuestPlans());
+          setItems(loadGuestPlans(deviceScope));
           setLoading(false);
         }
         return;
       }
 
-      const supabase = createClient();
-      const { data: rows } = await supabase
-        .from("checklist_items")
-        .select("outcome_id, done")
-        .eq("user_id", userId);
-      const raw = (rows ?? []) as Array<{ outcome_id: string; done: boolean }>;
-      const ids = Array.from(new Set(raw.map((row) => row.outcome_id)));
+      const requestContext = captureOwnerDispatch(userId);
+      const { raw, outcomes } = await withOwnerSupabase(
+        requestContext,
+        async (supabase) => {
+          const { data: rows, error: rowsError } = await supabase
+            .from("checklist_items")
+            .select("outcome_id, done")
+            .eq("user_id", userId);
+          if (rowsError) throw rowsError;
+          const rawRows = (rows ?? []) as Array<{ outcome_id: string; done: boolean }>;
+          const ids = Array.from(new Set(rawRows.map((row) => row.outcome_id)));
 
-      if (ids.length === 0) {
-        if (!cancelled) {
-          setItems([]);
-          setLoading(false);
-        }
-        return;
-      }
+          if (ids.length === 0) return { raw: rawRows, outcomes: [] };
 
-      const { data: outcomes } = await supabase
-        .from("outcomes")
-        .select("id, situation_text, recommendation_payload, is_saved")
-        .in("id", ids)
-        .eq("is_saved", true);
+          const { data: outcomeRows, error: outcomesError } = await supabase
+            .from("outcomes")
+            .select("id, situation_text, recommendation_payload, is_saved")
+            .in("id", ids)
+            .eq("is_saved", true)
+            .eq("user_id", userId);
+          if (outcomesError) throw outcomesError;
+          return { raw: rawRows, outcomes: outcomeRows ?? [] };
+        },
+      );
 
-      const next = ((outcomes ?? []) as Array<{
+      const next = (outcomes as Array<{
         id: string;
         situation_text: string;
         recommendation_payload: { primary?: { reason?: string } } | null;
@@ -99,27 +96,43 @@ export function ChecklistLibrary({ userId }: { userId?: string }) {
         };
       });
 
-      if (!cancelled) {
+      if (!cancelled && ownerDispatchIsCurrent(requestContext)) {
         setItems(next);
         setLoading(false);
       }
     }
 
-    void load();
+    void load().catch(() => {
+      if (!cancelled) {
+        setItems([]);
+        setError("PrompTED could not load your saved plans. Try again.");
+        setLoading(false);
+      }
+    });
     return () => { cancelled = true; };
-  }, [userId]);
+  }, [deviceScope, ownerToken, retryToken, userId]);
+
+  const visibleItems = itemsOwner === ownerToken ? items : [];
+  const visibleLoading = itemsOwner === ownerToken ? loading : true;
 
   return (
     <section className={styles.section}>
       <h2 className={styles.heading}>Saved plans and checklists</h2>
       <p className={styles.description}>Reopen an interactive plan and continue tracking your progress.</p>
-      {loading ? (
+      {visibleLoading ? (
         <div className={styles.empty}>Loading your saved plans…</div>
-      ) : items.length === 0 ? (
+      ) : error ? (
+        <div className={styles.empty} role="alert">
+          <p>{error}</p>
+          <button type="button" onClick={() => setRetryToken((value) => value + 1)}>
+            Try again
+          </button>
+        </div>
+      ) : visibleItems.length === 0 ? (
         <div className={styles.empty}>Saved checklists and action plans will appear here.</div>
       ) : (
         <div className={styles.grid}>
-          {items.map((item) => {
+          {visibleItems.map((item) => {
             const progress = item.total ? item.done / item.total : 0;
             return (
               <Link key={item.outcomeId} href={`/outcomes/${item.outcomeId}/checklist`} className={styles.card}>

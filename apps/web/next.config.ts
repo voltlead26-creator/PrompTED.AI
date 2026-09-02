@@ -12,8 +12,8 @@ if (!deploymentContract.projectRef || !/^[a-z0-9]{20}$/.test(deploymentContract.
   throw new Error("supabase/deployment-contract.json must name the reviewed production project.");
 }
 
-function configuredSupabaseConnectSources(): string[] {
-  const raw = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+function configuredSupabaseConnectSources(rawValue?: string): string[] {
+  const raw = rawValue?.trim();
   if (!raw) return [];
   try {
     const url = new URL(raw);
@@ -25,17 +25,40 @@ function configuredSupabaseConnectSources(): string[] {
   }
 }
 
-const connectSources = [
-  "'self'",
-  ...configuredSupabaseConnectSources(),
-  "https://*.ingest.sentry.io",
-  "https://*.posthog.com",
-];
-const upgradeInsecureRequests = ["production", "preview", "deploy-preview", "staging"].includes(
-  process.env.NEXT_PUBLIC_APP_ENV?.trim().toLowerCase() ?? "",
-)
-  ? "; upgrade-insecure-requests"
-  : "";
+export function contentSecurityPolicy(options: {
+  appEnvironment?: string;
+  nodeEnvironment?: string;
+  supabaseUrl?: string;
+} = {}): string {
+  const appEnvironment = (
+    options.appEnvironment ?? process.env.NEXT_PUBLIC_APP_ENV ?? ""
+  ).trim().toLowerCase();
+  const nodeEnvironment = options.nodeEnvironment ?? process.env.NODE_ENV ?? "";
+  const supabaseUrl = options.supabaseUrl ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const connectSources = [
+    "'self'",
+    ...configuredSupabaseConnectSources(supabaseUrl),
+    "https://*.ingest.sentry.io",
+    "https://*.posthog.com",
+  ];
+  const developmentEval = nodeEnvironment === "development" ? " 'unsafe-eval'" : "";
+  const upgradeInsecureRequests = [
+    "production",
+    "preview",
+    "deploy-preview",
+    "staging",
+  ].includes(appEnvironment)
+    ? "; upgrade-insecure-requests"
+    : "";
+
+  return (
+    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; " +
+    `script-src 'self' 'unsafe-inline'${developmentEval}; ` +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; " +
+    `connect-src ${connectSources.join(" ")}${upgradeInsecureRequests}`
+  );
+}
 
 const SECURITY_HEADERS = [
   { key: "X-Frame-Options", value: "DENY" },
@@ -44,9 +67,7 @@ const SECURITY_HEADERS = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
   {
     key: "Content-Security-Policy",
-    value:
-      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src " +
-      `${connectSources.join(" ")}${upgradeInsecureRequests}`,
+    value: contentSecurityPolicy(),
   },
 ];
 

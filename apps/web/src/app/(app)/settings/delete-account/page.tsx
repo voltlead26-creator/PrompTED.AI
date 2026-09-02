@@ -8,13 +8,12 @@ import { Input } from "@/components/atoms/Input";
 import { useToast } from "@/components/atoms/Toast";
 import { useAuth } from "@/components/providers";
 import { createClient } from "@/lib/supabase/client";
+import { purgeBrowserDataForUser } from "@/lib/browser-owner-data";
 import {
   accountDeletionFailureMessage,
   isCompleteAccountDeletion,
 } from "./deletion-feedback";
 import styles from "../settings.module.css";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 
 export default function DeleteAccountPage() {
   const router = useRouter();
@@ -23,7 +22,6 @@ export default function DeleteAccountPage() {
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   if (loading) return null;
 
   if (!user) {
@@ -40,6 +38,7 @@ export default function DeleteAccountPage() {
     );
   }
 
+  const ownerUserId = user.id;
   const confirmed = confirmText.trim().toUpperCase() === "DELETE";
 
   async function handleDelete() {
@@ -50,14 +49,14 @@ export default function DeleteAccountPage() {
       const supabase = createClient();
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
-      if (!token) {
+      if (!token || data.session?.user.id !== ownerUserId) {
         setError(
           "Your session has expired. Sign in again, then try once more.",
         );
         setDeleting(false);
         return;
       }
-      const res = await fetch(`${API_BASE}/account-delete`, {
+      const res = await fetch("/api/account-delete", {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -73,16 +72,34 @@ export default function DeleteAccountPage() {
         setDeleting(false);
         return;
       }
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        // The server has already confirmed account deletion. Local session
-        // cleanup failure must not turn that confirmed outcome into a false
-        // partial-deletion message.
+      let browserDataCleared = purgeBrowserDataForUser(ownerUserId);
+      let localSessionCleared = true;
+      const { data: currentData } = await supabase.auth.getSession();
+      const currentOwnerUserId = currentData.session?.user.id ?? null;
+      if (currentOwnerUserId && currentOwnerUserId !== ownerUserId) {
+        // The destructive server result belongs to the captured owner, but a
+        // different account now controls this browser. Never sign out, toast,
+        // or navigate that newer principal from the stale component.
+        return;
       }
+      if (currentOwnerUserId === ownerUserId) {
+        try {
+          const signOutResult = await supabase.auth.signOut();
+          localSessionCleared = !signOutResult?.error;
+        } catch {
+          localSessionCleared = false;
+        }
+      }
+      // Signing out remounts the principal-bound tree. Its unmount cleanups may
+      // flush same-owner editor state, so purge the deleted owner once more
+      // after the session transition has settled.
+      browserDataCleared = purgeBrowserDataForUser(ownerUserId) && browserDataCleared;
+      const localCleanupComplete = browserDataCleared && localSessionCleared;
       showToast({
-        tone: "success",
-        message: "Your account and data have been deleted.",
+        tone: localCleanupComplete ? "success" : "error",
+        message: localCleanupComplete
+          ? "Your account and data have been deleted."
+          : "Your account was deleted, but this browser could not clear every local cache. Clear this site's browser data before another person uses this device.",
       });
       router.replace("/");
     } catch {

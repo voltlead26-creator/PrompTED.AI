@@ -2,23 +2,36 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { axe } from "vitest-axe";
 
-const navigationMock = vi.hoisted(() => ({ pathname: "/home" }));
+const navigationMock = vi.hoisted(() => ({
+  pathname: "/home",
+  router: { refresh: vi.fn() },
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigationMock.pathname,
+  useRouter: () => navigationMock.router,
 }));
 
 vi.mock("next/link", () => ({
   default: ({
     href,
     children,
+    onClick,
     ...rest
   }: {
     href: string;
     children: React.ReactNode;
+    onClick?: React.MouseEventHandler<HTMLAnchorElement>;
     [key: string]: unknown;
   }) => (
-    <a href={href} {...rest}>
+    <a
+      href={href}
+      {...rest}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick?.(event);
+      }}
+    >
       {children}
     </a>
   ),
@@ -86,7 +99,7 @@ describe("AppNav", () => {
   it("closes the mobile drawer when a destination is selected", () => {
     const onClose = vi.fn();
     render(<AppNav mobileOpen onClose={onClose} />);
-    fireEvent.click(screen.getByRole("link", { name: "Profile" }));
+    expect(fireEvent.click(screen.getByRole("link", { name: "Profile" }))).toBe(false);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

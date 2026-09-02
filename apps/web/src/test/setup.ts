@@ -3,6 +3,17 @@ import { afterEach, expect, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 import * as axeMatchers from "vitest-axe/matchers";
 
+// Components may import the real provider tree while a focused unit test mocks
+// only the behaviour it exercises. Keep the production configuration fail-
+// closed, but give the Vitest process an explicit synthetic public Supabase
+// identity before test modules are evaluated. public-config.ts permits this
+// origin only when NODE_ENV=test, so these values cannot make a deployable
+// build accept a placeholder backend.
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://example.supabase.co";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "public-anon-key-for-test-only";
+process.env.NEXT_PUBLIC_PRODUCTION_SUPABASE_PROJECT_REF ??=
+  "jjsykocqpjlekgsbylkd";
+
 // Register vitest-axe's accessibility matchers (e.g. toHaveNoViolations).
 expect.extend(axeMatchers);
 
