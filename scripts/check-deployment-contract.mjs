@@ -237,8 +237,11 @@ export function validateNetlifySecretScanConfig(text) {
 
 function parseWorkflowEnvironmentValue(workflowBlock, key) {
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const value =
-    workflowBlock.match(new RegExp(`^\\s+${escapedKey}:\\s*([^\\n#]+?)\\s*$`, "m"))?.[1] ?? null;
+  const values = [
+    ...workflowBlock.matchAll(new RegExp(`^\\s+${escapedKey}:\\s*([^\\n#]+?)\\s*$`, "gm")),
+  ].map((match) => match[1]);
+  if (values.length !== 1) return null;
+  const [value] = values;
   if (
     value &&
     value.length >= 2 &&
@@ -541,25 +544,37 @@ export function validateProductionWorkflow(workflowText) {
   }
 
   if (webJob) {
+    const launcherFragment = "node scripts/deploy-netlify-production.mjs";
+    const launcherCount = [...webJob.matchAll(new RegExp(launcherFragment, "g"))].length;
+    const launcherStep =
+      launcherCount === 1 ? workflowStepContaining(webJob, launcherFragment) : "";
     if (!/npm install -g netlify-cli@27\.3\.0/.test(webJob)) {
       failures.push(
         "Production web deployment must install the pinned netlify-cli@27.3.0 release.",
       );
     }
-    if (!/node scripts\/deploy-netlify-production\.mjs\b/.test(webJob)) {
+    if (launcherCount !== 1) {
       failures.push(
-        "Production web deployment must use the validated shell-free Netlify production launcher.",
+        "Production web deployment must use exactly one validated shell-free Netlify production launcher.",
       );
     }
     if (/\bnetlify\s+deploy\b/.test(webJob)) {
       failures.push("Production workflow must not invoke netlify deploy through raw shell syntax.");
     }
-    if (parseWorkflowEnvironmentValue(webJob, "NEXT_PUBLIC_APP_ENV") !== "production") {
+    if (parseWorkflowEnvironmentValue(launcherStep, "NEXT_PUBLIC_APP_ENV") !== "production") {
       failures.push("Production web deployment must set NEXT_PUBLIC_APP_ENV to production.");
+    }
+    if (
+      parseWorkflowEnvironmentValue(launcherStep, "NETLIFY_SITE_ID") !==
+      "${{ secrets.NETLIFY_PROD_SITE_ID }}"
+    ) {
+      failures.push(
+        "Production web deployment must hand NETLIFY_PROD_SITE_ID to the launcher as NETLIFY_SITE_ID.",
+      );
     }
 
     const omitKeys = new Set(
-      (parseWorkflowEnvironmentValue(webJob, "SECRETS_SCAN_OMIT_KEYS") ?? "")
+      (parseWorkflowEnvironmentValue(launcherStep, "SECRETS_SCAN_OMIT_KEYS") ?? "")
         .split(",")
         .map((key) => key.trim())
         .filter(Boolean),
@@ -579,19 +594,15 @@ export function validateProductionWorkflow(workflowText) {
       }
     }
 
-    if (parseWorkflowEnvironmentValue(webJob, "SECRETS_SCAN_ENABLED") !== "true") {
+    if (parseWorkflowEnvironmentValue(launcherStep, "SECRETS_SCAN_ENABLED") !== "true") {
       failures.push(
         "Production web deployment must explicitly keep Netlify secret scanning enabled.",
       );
     }
 
-    const omitPaths = (parseWorkflowEnvironmentValue(webJob, "SECRETS_SCAN_OMIT_PATHS") ?? "")
-      .split(",")
-      .map((path) => path.trim())
-      .filter(Boolean);
-    if (omitPaths.length > 0) {
+    if (parseWorkflowEnvironmentValue(launcherStep, "SECRETS_SCAN_OMIT_PATHS") !== "") {
       failures.push(
-        "Production web deployment must not omit any generated path from secret scanning.",
+        "Production web deployment must set SECRETS_SCAN_OMIT_PATHS exactly once to an empty value and must not omit any generated path from secret scanning.",
       );
     }
   }

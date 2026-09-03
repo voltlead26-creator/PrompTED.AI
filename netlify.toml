@@ -10,9 +10,9 @@
   PNPM_VERSION                    = "10.33.0"
   SECRETS_SCAN_ENABLED            = "true"
   SECRETS_SCAN_OMIT_PATHS         = ""
-  # These are intentionally non-confidential public client values and deployment
-  # identifiers. Keep every credential and database connection value scanned.
-  SECRETS_SCAN_OMIT_KEYS          = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_REVENUECAT_WEB_KEY,NEXT_PUBLIC_SENTRY_DSN,NEXT_PUBLIC_POSTHOG_KEY,NEXT_SUPABASE_PROJECT_ID,NEXT_SUPABASE_URL,NETLIFY_SITE_ID"
+  # These are intentionally non-confidential browser values. Keep every
+  # credential, database connection, stale alias, and deployment ID scanned.
+  SECRETS_SCAN_OMIT_KEYS          = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_REVENUECAT_WEB_KEY,NEXT_PUBLIC_SENTRY_DSN,NEXT_PUBLIC_POSTHOG_KEY"
 
 # Stable /api/* paths are owned by the reviewed Next.js catch-all route. It
 # derives its allowlist from supabase/deployment-contract.json and resolves the

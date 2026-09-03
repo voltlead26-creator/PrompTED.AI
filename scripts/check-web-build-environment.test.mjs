@@ -15,6 +15,15 @@ import {
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_SUPABASE_PROJECT_REF = "abcdefghijklmnopqrst";
+const SYNTHETIC_NETLIFY_SITE_ID = "11111111-2222-4333-8444-555555555555";
+const NETLIFY_HOSTED_BUILD_ENVIRONMENT = {
+  NETLIFY: "true",
+  CI: "true",
+  CONTEXT: "production",
+  BUILD_ID: "a".repeat(24),
+  DEPLOY_ID: "b".repeat(24),
+  SITE_ID: SYNTHETIC_NETLIFY_SITE_ID,
+};
 
 function fakeSupabaseJwt({ role = "anon", projectRef = PUBLIC_SUPABASE_PROJECT_REF } = {}) {
   const encode = (value) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -28,9 +37,7 @@ const PUBLIC_BUILD_ENVIRONMENT = {
   NEXT_PUBLIC_REVENUECAT_WEB_KEY: "rcb_public_web_key",
   NEXT_PUBLIC_SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
   NEXT_PUBLIC_POSTHOG_KEY: "phc_public_project_key",
-  NEXT_SUPABASE_PROJECT_ID: PUBLIC_SUPABASE_PROJECT_REF,
-  NEXT_SUPABASE_URL: `https://${PUBLIC_SUPABASE_PROJECT_REF}.supabase.co`,
-  NETLIFY_SITE_ID: "f278cbcf-0161-43f7-a132-fd224aef2d9f",
+  SECRETS_SCAN_ENABLED: "true",
   SECRETS_SCAN_OMIT_KEYS: APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS.join(","),
 };
 
@@ -41,15 +48,158 @@ test("Netlify scanning exempts only reviewed public identifiers found in source 
     "NEXT_PUBLIC_REVENUECAT_WEB_KEY",
     "NEXT_PUBLIC_SENTRY_DSN",
     "NEXT_PUBLIC_POSTHOG_KEY",
-    "NEXT_SUPABASE_PROJECT_ID",
-    "NEXT_SUPABASE_URL",
-    "NETLIFY_SITE_ID",
   ]);
 });
 
 test("web build environment allows intentional browser identifiers", () => {
   assert.deepEqual(
     validateWebBuildEnvironment({ environment: PUBLIC_BUILD_ENVIRONMENT, dotEnvSources: [] }),
+    [],
+  );
+});
+
+test("Netlify-hosted web builds reject obsolete Supabase aliases and custom site IDs", () => {
+  const obsoleteProjectRef = "zyxwvutsrqponmlkjihg";
+  const obsoleteUrl = `https://${obsoleteProjectRef}.supabase.co`;
+  const obsoleteSiteId = SYNTHETIC_NETLIFY_SITE_ID;
+  const failures = validateWebBuildEnvironment({
+    environment: {
+      ...PUBLIC_BUILD_ENVIRONMENT,
+      ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
+      NEXT_SUPABASE_PROJECT_ID: obsoleteProjectRef,
+      NEXT_SUPABASE_URL: obsoleteUrl,
+      NETLIFY_SITE_ID: obsoleteSiteId,
+    },
+    dotEnvSources: [],
+  });
+  const message = failures.join("\n");
+
+  assert.match(message, /NEXT_SUPABASE_PROJECT_ID/);
+  assert.match(message, /NEXT_SUPABASE_URL/);
+  assert.match(message, /NETLIFY_SITE_ID/);
+  assert.equal(message.includes(obsoleteProjectRef), false);
+  assert.equal(message.includes(obsoleteUrl), false);
+  assert.equal(message.includes(obsoleteSiteId), false);
+});
+
+test("genuine Netlify-hosted builds rely on scanning for non-public parent secrets", () => {
+  const confidentialValue = "hosted-secret-value-must-never-appear";
+  assert.deepEqual(
+    validateWebBuildEnvironment({
+      environment: {
+        ...PUBLIC_BUILD_ENVIRONMENT,
+        ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
+        OPENAI_API_KEY: confidentialValue,
+        SUPABASE_SERVICE_ROLE_KEY: confidentialValue,
+      },
+      dotEnvSources: [],
+    }),
+    [],
+  );
+
+  const incompleteMarkerFailures = validateWebBuildEnvironment({
+    environment: {
+      ...PUBLIC_BUILD_ENVIRONMENT,
+      NETLIFY: "true",
+      CI: "true",
+      CONTEXT: "production",
+      OPENAI_API_KEY: confidentialValue,
+    },
+    dotEnvSources: [],
+  }).join("\n");
+  assert.match(incompleteMarkerFailures, /OPENAI_API_KEY/);
+  assert.equal(incompleteMarkerFailures.includes(confidentialValue), false);
+
+  const githubFailures = validateWebBuildEnvironment({
+    environment: {
+      ...PUBLIC_BUILD_ENVIRONMENT,
+      ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
+      GITHUB_ACTIONS: "true",
+      OPENAI_API_KEY: confidentialValue,
+    },
+    dotEnvSources: [],
+  }).join("\n");
+  assert.match(githubFailures, /OPENAI_API_KEY/);
+
+  const unscannedHostedFailures = validateWebBuildEnvironment({
+    environment: {
+      ...PUBLIC_BUILD_ENVIRONMENT,
+      ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
+      SECRETS_SCAN_ENABLED: "",
+      OPENAI_API_KEY: confidentialValue,
+    },
+    dotEnvSources: [],
+  }).join("\n");
+  assert.match(unscannedHostedFailures, /SECRETS_SCAN_ENABLED/);
+});
+
+test("only attested Netlify-hosted builds tolerate the Netlify-owned skew-protection token", () => {
+  const platformValue = "netlify-platform-value-must-never-appear";
+  const customValue = "custom-secret-value-must-never-appear";
+
+  assert.deepEqual(
+    validateWebBuildEnvironment({
+      environment: {
+        ...PUBLIC_BUILD_ENVIRONMENT,
+        ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
+        NETLIFY_SKEW_PROTECTION_TOKEN: platformValue,
+      },
+      dotEnvSources: [],
+    }),
+    [],
+  );
+
+  assert.deepEqual(
+    validateWebBuildEnvironment({
+      environment: {
+        ...PUBLIC_BUILD_ENVIRONMENT,
+        ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
+        NETLIFY_SKEW_PROTECTION_TOKEN: platformValue,
+        OPENAI_API_KEY: customValue,
+      },
+      dotEnvSources: [],
+    }),
+    [],
+  );
+
+  const incompleteMarkerFailures = validateWebBuildEnvironment({
+    environment: {
+      ...PUBLIC_BUILD_ENVIRONMENT,
+      NETLIFY: "true",
+      NETLIFY_SKEW_PROTECTION_TOKEN: platformValue,
+      OPENAI_API_KEY: customValue,
+    },
+    dotEnvSources: [],
+  }).join("\n");
+  assert.match(incompleteMarkerFailures, /NETLIFY_SKEW_PROTECTION_TOKEN/);
+  assert.match(incompleteMarkerFailures, /OPENAI_API_KEY/);
+  assert.equal(incompleteMarkerFailures.includes(platformValue), false);
+  assert.equal(incompleteMarkerFailures.includes(customValue), false);
+
+  const localFailures = validateWebBuildEnvironment({
+    environment: {
+      ...PUBLIC_BUILD_ENVIRONMENT,
+      NETLIFY_SKEW_PROTECTION_TOKEN: platformValue,
+    },
+    dotEnvSources: [],
+  }).join("\n");
+  assert.match(localFailures, /NETLIFY_SKEW_PROTECTION_TOKEN/);
+  assert.equal(localFailures.includes(platformValue), false);
+});
+
+test("the GitHub release handoff may carry a synthetic Netlify site ID outside hosted builds", () => {
+  assert.deepEqual(
+    validateWebBuildEnvironment({
+      environment: {
+        ...PUBLIC_BUILD_ENVIRONMENT,
+        CI: "true",
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        NETLIFY: "true",
+        NETLIFY_SITE_ID: SYNTHETIC_NETLIFY_SITE_ID,
+      },
+      dotEnvSources: [],
+    }),
     [],
   );
 });
@@ -105,6 +255,7 @@ test("web build environment rejects public names that imply confidential data", 
   const failures = validateWebBuildEnvironment({
     environment: {
       ...PUBLIC_BUILD_ENVIRONMENT,
+      ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
       NEXT_PUBLIC_SUPABASE_DATABASE_URL: "not-inspected",
       NEXT_PUBLIC_INTERNAL_WEBHOOK_SECRET: "not-inspected",
     },
@@ -135,20 +286,36 @@ test("reviewed public names reject secret-role keys and credential-bearing URLs"
 });
 
 test("web build environment rejects disabled or broadened Netlify secret scanning", () => {
+  const untrustedOmitEntry = "must-never-appear-in-an-error";
   const failures = validateWebBuildEnvironment({
     environment: {
       ...PUBLIC_BUILD_ENVIRONMENT,
       SECRETS_SCAN_ENABLED: "invalid",
       SECRETS_SCAN_OMIT_PATHS: ".next/**,.netlify/**",
       SECRETS_SCAN_OMIT_KEYS:
-        PUBLIC_BUILD_ENVIRONMENT.SECRETS_SCAN_OMIT_KEYS + ",NEXT_PUBLIC_SUPABASE_DATABASE_URL",
+        PUBLIC_BUILD_ENVIRONMENT.SECRETS_SCAN_OMIT_KEYS + "," + untrustedOmitEntry,
+    },
+    dotEnvSources: [],
+  });
+  const message = failures.join("\n");
+
+  assert.match(message, /SECRETS_SCAN_ENABLED/);
+  assert.match(message, /SECRETS_SCAN_OMIT_PATHS/);
+  assert.match(message, /not reviewed public identifiers/);
+  assert.equal(message.includes(untrustedOmitEntry), false);
+});
+
+test("Netlify-hosted builds require the exact reviewed secret-scan omission set", () => {
+  const failures = validateWebBuildEnvironment({
+    environment: {
+      ...PUBLIC_BUILD_ENVIRONMENT,
+      ...NETLIFY_HOSTED_BUILD_ENVIRONMENT,
+      SECRETS_SCAN_OMIT_KEYS: APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS.slice(0, -1).join(","),
     },
     dotEnvSources: [],
   });
 
-  assert.match(failures.join("\n"), /SECRETS_SCAN_ENABLED/);
-  assert.match(failures.join("\n"), /SECRETS_SCAN_OMIT_PATHS/);
-  assert.match(failures.join("\n"), /NEXT_PUBLIC_SUPABASE_DATABASE_URL/);
+  assert.match(failures.join("\n"), /exactly the reviewed public identifiers/);
 });
 
 test("dotenv parsing returns names only and the build check covers production dotenv files", async () => {
@@ -162,7 +329,10 @@ test("dotenv parsing returns names only and the build check covers production do
   const root = await mkdtemp(join(tmpdir(), "prompted-web-build-env-"));
   try {
     await mkdir(join(root, "apps/web"), { recursive: true });
-    await writeFile(join(root, "apps/web/.env.production"), "OPENAI_API_KEY=private-value\n");
+    await writeFile(
+      join(root, "apps/web/.env.production"),
+      "OPENAI_API_KEY=private-value\nNETLIFY_SKEW_PROTECTION_TOKEN=platform-private-value\n",
+    );
 
     await assert.rejects(
       assertWebBuildEnvironmentSafe({
@@ -171,7 +341,9 @@ test("dotenv parsing returns names only and the build check covers production do
       }),
       (error) => {
         assert.match(error.message, /OPENAI_API_KEY/);
+        assert.match(error.message, /NETLIFY_SKEW_PROTECTION_TOKEN/);
         assert.equal(error.message.includes("private-value"), false);
+        assert.equal(error.message.includes("platform-private-value"), false);
         return true;
       },
     );

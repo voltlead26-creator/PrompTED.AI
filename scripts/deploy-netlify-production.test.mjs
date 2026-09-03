@@ -28,7 +28,7 @@ function fakeSupabaseJwt({ projectRef = SUPABASE_PROJECT_REF, role = "anon" } = 
 }
 
 const SAFE_INPUT = {
-  siteId: "f278cbcf-0161-43f7-a132-fd224aef2d9f",
+  siteId: "11111111-2222-4333-8444-555555555555",
   gitSha: "5574dee72e02f44507b22bd3c761dfc9d3c3bd51",
   baseUrl: "https://app.prompted.example",
   expectedBaseUrl: "https://app.prompted.example",

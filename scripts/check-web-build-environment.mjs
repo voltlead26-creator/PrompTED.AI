@@ -11,12 +11,17 @@ export const APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS = Object.freeze([
   "NEXT_PUBLIC_REVENUECAT_WEB_KEY",
   "NEXT_PUBLIC_SENTRY_DSN",
   "NEXT_PUBLIC_POSTHOG_KEY",
+]);
+
+export const OBSOLETE_NETLIFY_HOSTED_BUILD_VARIABLE_NAMES = Object.freeze([
   "NEXT_SUPABASE_PROJECT_ID",
   "NEXT_SUPABASE_URL",
   "NETLIFY_SITE_ID",
 ]);
 
 const APPROVED_OMIT_KEY_SET = new Set(APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS);
+const OBSOLETE_HOSTED_BUILD_VARIABLE_SET = new Set(OBSOLETE_NETLIFY_HOSTED_BUILD_VARIABLE_NAMES);
+const NETLIFY_HOSTED_CONTEXTS = new Set(["production", "deploy-preview", "branch-deploy"]);
 const BUILD_DOTENV_FILES = Object.freeze([
   ".env",
   ".env.local",
@@ -30,11 +35,32 @@ const SUPABASE_PUBLISHABLE_KEY_PATTERN = /^sb_publishable_[A-Za-z0-9_-]{16,512}$
 const JWT_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
 const NETLIFY_SITE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const NETLIFY_DEPLOY_ID_PATTERN = /^[0-9a-f]{24}$/i;
 const LOCAL_SUPABASE_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const LOCAL_APP_ENVIRONMENTS = new Set(["local", "development", "test"]);
 
 function present(value) {
   return value != null && String(value).trim().length > 0;
+}
+
+function isTrue(value) {
+  return (
+    String(value ?? "")
+      .trim()
+      .toLowerCase() === "true"
+  );
+}
+
+function isGenuineNetlifyHostedBuild(environment) {
+  return Boolean(
+    isTrue(environment.NETLIFY) &&
+    isTrue(environment.CI) &&
+    !isTrue(environment.GITHUB_ACTIONS) &&
+    NETLIFY_HOSTED_CONTEXTS.has(String(environment.CONTEXT ?? "").trim()) &&
+    NETLIFY_DEPLOY_ID_PATTERN.test(String(environment.BUILD_ID ?? "").trim()) &&
+    NETLIFY_DEPLOY_ID_PATTERN.test(String(environment.DEPLOY_ID ?? "").trim()) &&
+    NETLIFY_SITE_ID_PATTERN.test(String(environment.SITE_ID ?? "").trim()),
+  );
 }
 
 export function isConfidentialWebBuildVariableName(name, { allowOuterNetlifyToken = false } = {}) {
@@ -142,38 +168,22 @@ function validateApprovedPublicIdentifierValues(environment) {
   const appEnvironment = String(environment.NEXT_PUBLIC_APP_ENV ?? "")
     .trim()
     .toLowerCase();
-  const origins = new Map();
-  for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_SUPABASE_URL"]) {
-    if (!present(environment[name])) continue;
+  let publicOrigin = null;
+  if (present(environment.NEXT_PUBLIC_SUPABASE_URL)) {
     try {
-      origins.set(name, validateSupabaseOrigin(environment[name], { appEnvironment, label: name }));
+      publicOrigin = validateSupabaseOrigin(environment.NEXT_PUBLIC_SUPABASE_URL, {
+        appEnvironment,
+        label: "NEXT_PUBLIC_SUPABASE_URL",
+      });
     } catch {
-      failures.push(`${name} is not a credential-free approved Supabase origin.`);
-    }
-  }
-
-  const publicOrigin = origins.get("NEXT_PUBLIC_SUPABASE_URL");
-  const integrationOrigin = origins.get("NEXT_SUPABASE_URL");
-  if (publicOrigin && integrationOrigin && publicOrigin.origin !== integrationOrigin.origin) {
-    failures.push("NEXT_PUBLIC_SUPABASE_URL and NEXT_SUPABASE_URL must identify the same origin.");
-  }
-
-  const projectId = present(environment.NEXT_SUPABASE_PROJECT_ID)
-    ? String(environment.NEXT_SUPABASE_PROJECT_ID).trim()
-    : null;
-  if (projectId && !/^[a-z0-9]{20}$/.test(projectId)) {
-    failures.push("NEXT_SUPABASE_PROJECT_ID must be a canonical public project reference.");
-  }
-  for (const [name, origin] of origins) {
-    if (projectId && origin.projectRef && origin.projectRef !== projectId) {
-      failures.push(`${name} must match NEXT_SUPABASE_PROJECT_ID.`);
+      failures.push("NEXT_PUBLIC_SUPABASE_URL is not a credential-free approved Supabase origin.");
     }
   }
 
   if (present(environment.NEXT_PUBLIC_SUPABASE_ANON_KEY)) {
     try {
       validateSupabasePublicAnonKey(environment.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-        expectedProjectRef: publicOrigin?.projectRef ?? integrationOrigin?.projectRef ?? undefined,
+        expectedProjectRef: publicOrigin?.projectRef ?? undefined,
       });
     } catch {
       failures.push("NEXT_PUBLIC_SUPABASE_ANON_KEY must be a public anon credential.");
@@ -231,9 +241,26 @@ export function validateWebBuildEnvironment({
   const environmentNames = Object.entries(environment)
     .filter(([, value]) => present(value))
     .map(([name]) => name);
+  const netlifyHostedBuild = isGenuineNetlifyHostedBuild(environment);
+  const obsoleteEnvironmentNames = sortedUnique(
+    environmentNames.filter(
+      (name) =>
+        OBSOLETE_HOSTED_BUILD_VARIABLE_SET.has(name) &&
+        (name !== "NETLIFY_SITE_ID" || netlifyHostedBuild),
+    ),
+  );
+  if (obsoleteEnvironmentNames.length > 0) {
+    failures.push(
+      "Obsolete variables must not enter the Netlify-hosted web build environment: " +
+        obsoleteEnvironmentNames.join(", ") +
+        ".",
+    );
+  }
   const confidentialEnvironmentNames = sortedUnique(
-    environmentNames.filter((name) =>
-      isConfidentialWebBuildVariableName(name, { allowOuterNetlifyToken }),
+    environmentNames.filter(
+      (name) =>
+        isConfidentialWebBuildVariableName(name, { allowOuterNetlifyToken }) &&
+        (!netlifyHostedBuild || name.startsWith("NEXT_PUBLIC_")),
     ),
   );
   if (confidentialEnvironmentNames.length > 0) {
@@ -246,10 +273,14 @@ export function validateWebBuildEnvironment({
   failures.push(...validateApprovedPublicIdentifierValues(environment));
 
   const confidentialDotEnvNames = [];
+  const obsoleteDotEnvNames = [];
   for (const source of dotEnvSources) {
     for (const name of source.names ?? []) {
       if (isConfidentialWebBuildVariableName(name)) {
         confidentialDotEnvNames.push(`${name} (${source.path})`);
+      }
+      if (OBSOLETE_HOSTED_BUILD_VARIABLE_SET.has(name)) {
+        obsoleteDotEnvNames.push(`${name} (${source.path})`);
       }
     }
     const sourceFailures = validateApprovedPublicIdentifierValues(source.environment ?? {});
@@ -262,30 +293,50 @@ export function validateWebBuildEnvironment({
         ".",
     );
   }
+  if (obsoleteDotEnvNames.length > 0) {
+    failures.push(
+      "Obsolete Netlify-hosted variables must not be stored in web build dotenv files: " +
+        sortedUnique(obsoleteDotEnvNames).join(", ") +
+        ".",
+    );
+  }
 
   const secretScanEnabled = String(environment.SECRETS_SCAN_ENABLED ?? "")
     .trim()
     .toLowerCase();
-  if (secretScanEnabled && secretScanEnabled !== "true") {
-    failures.push("SECRETS_SCAN_ENABLED must be exactly true when it is configured.");
+  if (
+    (netlifyHostedBuild && secretScanEnabled !== "true") ||
+    (secretScanEnabled && secretScanEnabled !== "true")
+  ) {
+    failures.push(
+      "SECRETS_SCAN_ENABLED must be exactly true for Netlify-hosted builds and whenever configured.",
+    );
   }
 
   if (present(environment.SECRETS_SCAN_OMIT_PATHS)) {
     failures.push("SECRETS_SCAN_OMIT_PATHS must be empty so every generated artifact is scanned.");
   }
 
-  const unsupportedOmitKeys = sortedUnique(
-    String(environment.SECRETS_SCAN_OMIT_KEYS ?? "")
-      .split(",")
-      .map((name) => name.trim())
-      .filter(Boolean)
-      .filter((name) => !APPROVED_OMIT_KEY_SET.has(name)),
-  );
+  const configuredOmitKeys = String(environment.SECRETS_SCAN_OMIT_KEYS ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const configuredOmitKeySet = new Set(configuredOmitKeys);
+  const unsupportedOmitKeys = configuredOmitKeys.filter((name) => !APPROVED_OMIT_KEY_SET.has(name));
   if (unsupportedOmitKeys.length > 0) {
     failures.push(
-      "SECRETS_SCAN_OMIT_KEYS contains variables that are not reviewed public identifiers: " +
-        unsupportedOmitKeys.join(", ") +
-        ".",
+      "SECRETS_SCAN_OMIT_KEYS contains one or more values that are not reviewed public identifiers.",
+    );
+  }
+  if (
+    netlifyHostedBuild &&
+    (configuredOmitKeys.length !== APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS.length ||
+      APPROVED_NETLIFY_SECRET_SCAN_OMIT_KEYS.some(
+        (approvedKey) => !configuredOmitKeySet.has(approvedKey),
+      ))
+  ) {
+    failures.push(
+      "SECRETS_SCAN_OMIT_KEYS must contain exactly the reviewed public identifiers for Netlify-hosted builds.",
     );
   }
 
