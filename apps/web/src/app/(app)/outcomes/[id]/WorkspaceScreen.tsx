@@ -35,7 +35,7 @@ import type { ProofreadPanelHandle } from "@/components/organisms/ProofreadPanel
 import { DraftingIndicator } from "@/components/organisms/DraftingIndicator";
 import { WorkflowTruth } from "@/components/organisms/WorkflowTruth";
 import { useAuth } from "@/components/providers";
-import { AUTH_SECTION_ID, PAYWALL_SECTION_ID } from "@/hooks/useDocument";
+import { AUTH_SECTION_ID } from "@/hooks/useDocument";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useExport } from "@/hooks/useExport";
 import { useDeferredTour } from "@/hooks/useDeferredTour";

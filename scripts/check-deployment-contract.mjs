@@ -182,8 +182,24 @@ function parseNetlifyBuildEnvironmentValue(text, key) {
   );
 }
 
+function parseNetlifyBuildValue(text, key) {
+  const sectionMarker = "[build]";
+  const sectionStart = text.indexOf(sectionMarker);
+  if (sectionStart === -1) return null;
+
+  const sectionRemainder = text.slice(sectionStart + sectionMarker.length);
+  const nextSectionOffset = sectionRemainder.search(/^\s*\[/m);
+  const sectionBody =
+    nextSectionOffset === -1 ? sectionRemainder : sectionRemainder.slice(0, nextSectionOffset);
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return sectionBody.match(new RegExp(`^\\s*${escapedKey}\\s*=\\s*"([^"]*)"\\s*$`, "m"))?.[1] ?? null;
+}
+
 export function validateNetlifySecretScanConfig(text) {
   const failures = [];
+  if (parseNetlifyBuildValue(text, "base") !== ".") {
+    failures.push('netlify.toml must explicitly set the repository-root build base to ".".');
+  }
   if (parseNetlifyBuildEnvironmentValue(text, "NODE_VERSION") !== "22.23.2") {
     failures.push('netlify.toml must pin NODE_VERSION to "22.23.2".');
   }
