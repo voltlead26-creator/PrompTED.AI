@@ -12,7 +12,7 @@
     "build": "pnpm --filter @prompted/web build",
     "type-check": "pnpm -r type-check",
     "lint": "node scripts/check-agent-instructions.mjs && node scripts/check-text-encoding.mjs && node scripts/check-product-promises.mjs && node scripts/check-migrations.mjs && pnpm -r lint",
-    "test": "node --test scripts/backend-release-baseline.test.mjs scripts/check-agent-instructions.test.mjs scripts/check-deployment-contract.test.mjs scripts/check-progressive-bundles.test.mjs scripts/check-supabase-secret-names.test.mjs scripts/check-web-build-environment.test.mjs scripts/deploy-contract-functions.test.mjs scripts/deploy-netlify-production.test.mjs scripts/immutable-source-import.test.mjs scripts/probe-supabase-contract.test.mjs scripts/verify-live-document-generation.test.mjs scripts/verify-live-document-review.test.mjs scripts/verify-web-release.test.mjs && pnpm -r test",
+    "test": "node --test scripts/backend-release-baseline.test.mjs scripts/check-agent-instructions.test.mjs scripts/check-deployment-contract.test.mjs scripts/check-progressive-bundles.test.mjs scripts/check-supabase-secret-names.test.mjs scripts/check-web-build-environment.test.mjs scripts/deploy-contract-functions.test.mjs scripts/deploy-netlify-production.test.mjs scripts/immutable-source-import.test.mjs scripts/probe-supabase-contract.test.mjs scripts/run-netlify-web-build.test.mjs scripts/verify-live-document-generation.test.mjs scripts/verify-live-document-review.test.mjs scripts/verify-web-release.test.mjs && pnpm -r test",
     "check:instructions": "node scripts/check-agent-instructions.mjs",
     "check:encoding": "node scripts/check-text-encoding.mjs",
     "check:promises": "node scripts/check-product-promises.mjs",

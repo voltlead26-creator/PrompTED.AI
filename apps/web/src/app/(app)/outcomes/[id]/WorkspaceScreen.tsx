@@ -12,6 +12,7 @@ import {
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
+  ApiError,
   ingestUpload,
   type CapturedDocumentOperationStatus,
   type DocumentExportFormat,
@@ -86,6 +87,24 @@ const CapturedAdmission = dynamic(
     loading: () => <p role="status">Loading the verified document contract…</p>,
   },
 );
+
+function uploadFailureMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const message = String(
+      (error.payload as { error?: { message?: unknown } })?.error?.message ?? "",
+    ).trim();
+    if (message) return message;
+  }
+  if (error instanceof Error) {
+    if (error.message === "WORKSPACE_CACHE_OWNER_UNAVAILABLE") {
+      return "TED could not confirm this workspace owner. Refresh the page and attach the file again.";
+    }
+    if (error.message === "OUTCOME_UPLOAD_BINDING_UNCONFIRMED") {
+      return "TED read the file, but could not attach it to this saved outcome yet.";
+    }
+  }
+  return "That file didn't upload. Try another, or continue without it.";
+}
 
 interface WorkspaceScreenProps {
   outcomeId: string;
@@ -249,38 +268,65 @@ export function WorkspaceScreen({ outcomeId, initialState }: WorkspaceScreenProp
           : loadPendingOutcome(cacheScope, outcomeId);
         const result = await ingestUpload(file, pending?.situation ?? "", requestContext);
         requestContext.assertCurrent();
+
+        const merged = result.extracted_text.trim();
+        const fallbackPending: PendingOutcome = {
+          situation: pending?.situation ?? "",
+          templateName: pending?.templateName ?? docName,
+          templateId: pending?.templateId,
+          conversationContext: pending?.conversationContext ?? "",
+          uploadContext: merged,
+          uploadId: result.upload_id,
+          conversation: pending?.conversation,
+          alternateFormats: pending?.alternateFormats,
+        };
+        savePendingOutcome(cacheScope, outcomeId, fallbackPending);
+        setDurableIntakeOverride({
+          outcomeId,
+          situation: fallbackPending.situation,
+          templateName: fallbackPending.templateName,
+          templateId: fallbackPending.templateId ?? null,
+          conversationContext: fallbackPending.conversationContext ?? "",
+          uploadContext: merged,
+          uploadId: result.upload_id,
+        });
+
+        let durableAttachFailed = false;
         if (user.id) {
-          const attached = await attachOutcomeUpload(outcomeId, result.upload_id, requestContext);
-          requestContext.assertCurrent();
-          setDurableIntakeOverride({
-            outcomeId: attached.outcomeId,
-            situation: attached.situation,
-            templateName: attached.templateName,
-            templateId: attached.templateId,
-            conversationContext: attached.conversationContext,
-            uploadContext: attached.uploadContext,
-            uploadId: attached.uploadId,
-          });
-          requestContext.assertCurrent();
-          router.refresh();
-        } else if (pending) {
-          const merged = result.extracted_text.trim();
-          savePendingOutcome(cacheScope, outcomeId, {
-            ...pending,
-            uploadContext: merged,
-            uploadId: result.upload_id,
-          });
+          try {
+            const attached = await attachOutcomeUpload(outcomeId, result.upload_id, requestContext);
+            requestContext.assertCurrent();
+            setDurableIntakeOverride({
+              outcomeId: attached.outcomeId,
+              situation: attached.situation,
+              templateName: attached.templateName,
+              templateId: attached.templateId,
+              conversationContext: attached.conversationContext,
+              uploadContext: attached.uploadContext,
+              uploadId: attached.uploadId,
+            });
+            router.refresh();
+          } catch {
+            durableAttachFailed = true;
+          }
         }
+
+        requestContext.assertCurrent();
         setUploadedNames([file.name]);
-      } catch {
+        setError(
+          durableAttachFailed
+            ? "TED read the file and will use it for this draft, but could not save the attachment link to your account yet. Build now, then save the workspace after generation."
+            : null,
+        );
+      } catch (caught) {
         if (ownerDispatchIsCurrent(requestContext)) {
-          setError("That file didn't upload. Try another, or continue without it.");
+          setError(uploadFailureMessage(caught));
         }
       } finally {
         if (ownerDispatchIsCurrent(requestContext)) setBusy(false);
       }
     },
-    [cacheScope, initialState?.intake, outcomeId, router, user?.id],
+    [cacheScope, docName, initialState?.intake, outcomeId, router, user?.id],
   );
 
   const effectiveInitialState = useMemo<WorkspaceInitialState | null | undefined>(
@@ -458,363 +504,394 @@ function WorkspaceLoaded({
     operationId: string;
     documentRevision: number;
   } | null>(null);
-  const showTour = useDeferredTour("workspace-v2");
-  const proofreadRef = useRef<ProofreadPanelHandle>(null);
+  const proofreadPanelRef = useRef<ProofreadPanelHandle | null>(null);
+  const { active, start: startTour, next, prev, skip, steps } = useDeferredTour();
+  const activeSection = workspace.activeSection;
+  const activeQuestion = workspace.selectedPlaceholderId
+    ? workspace.missingInfoQuestions.find(
+        (question) => question.placeholderId === workspace.selectedPlaceholderId,
+      )
+    : null;
+  const captured = workspace.captured;
 
-  async function handleExport(format: DocumentExportFormat) {
-    if (!workspace.documentId || workspace.syncStatus !== "saved") {
-      showToast({
-        tone: "info",
-        message: "Save and approve the exact current revision before exporting.",
-      });
-      return;
-    }
-    const approvedRevision = workspace.currentRevision;
-    if (!workspace.canExport || !user?.id || approvedRevision === null) return;
-
-    let placeholderAcknowledged = false;
-    if (workspace.placeholderExportDecision.status === "acknowledgement_required") {
-      placeholderAcknowledged = window.confirm(
-        `This document still has ${workspace.placeholderExportDecision.requiredForExport} required missing detail(s). Export anyway with those placeholders visible?`,
-      );
-      if (!placeholderAcknowledged) return;
-    } else if (workspace.placeholderExportDecision.status === "warn") {
-      showToast({
-        tone: "info",
-        message: `Exporting with ${workspace.placeholderExportDecision.total} unresolved optional detail(s) visible.`,
-      });
-    }
-
-    let capturedExport:
-      { exportId: string; operationId: string; expectedOperationRevision: number } | undefined;
-    const requestContext = captureOwnerDispatch(user.id);
-    if (workspace.captured) {
-      if (format !== "pdf") {
+  const handleExport = useCallback(
+    async (format: DocumentExportFormat) => {
+      if (!workspace.documentId || workspace.syncStatus !== "saved") {
         showToast({
           tone: "info",
-          message: "This cohort currently exports inspected PDF artifacts only.",
+          message: "Save and approve the exact current wording before exporting.",
         });
         return;
       }
+      if (workspace.placeholderExportDecision.status === "acknowledgement_required") {
+        const count = workspace.placeholderExportDecision.requiredForExport;
+        showToast({
+          tone: "info",
+          message: `Answer ${count} required detail${count === 1 ? "" : "s"} before exporting.`,
+        });
+        return;
+      }
+      if (workspace.placeholderExportDecision.status === "warn") {
+        showToast({
+          tone: "info",
+          message: `Exporting with ${workspace.placeholderExportDecision.total} unresolved optional placeholder${workspace.placeholderExportDecision.total === 1 ? "" : "s"}.`,
+        });
+      }
+
+      let requestContext;
       try {
-        const request = await workspace.requestCapturedExport("pdf", requestContext);
-        if (!request) {
+        if (!user?.id) throw new Error("AUTH_REQUIRED");
+        requestContext = captureOwnerDispatch(user.id);
+        if (captured) {
+          if (format !== "pdf") {
+            showToast({
+              tone: "info",
+              message: "This cohort currently exports captured documents as PDF.",
+            });
+            return;
+          }
+          const request = await workspace.requestCapturedExport("pdf", requestContext);
+          if (!request) {
+            showToast({
+              tone: "info",
+              message: "Approve the exact current revision before exporting.",
+            });
+            return;
+          }
+          let delivery = request;
+          const needsFreshDelivery =
+            !request.exportReady || !request.exportId || !request.downloadUrl;
+          if (needsFreshDelivery && request.exportId) {
+            const refreshed = workspace.createUpdatedCapturedExport("pdf", request.exportId);
+            if (!refreshed && ownerDispatchIsCurrent(requestContext)) {
+              showToast({
+                tone: "info",
+                message: "The revision-bound export is being prepared. Try PDF export again shortly.",
+              });
+            }
+            return;
+          }
+          if (!delivery.exportId || !delivery.downloadUrl) {
+            showToast({
+              tone: "info",
+              message: "The revision-bound export is being prepared. Try PDF export again shortly.",
+            });
+            return;
+          }
+          setLastCapturedExportDelivery({
+            exportId: delivery.exportId,
+            operationId: delivery.operationId,
+            documentRevision: delivery.documentRevision,
+          });
+          if (
+            !workspace.rememberCapturedExportDelivery("pdf", delivery.exportId)
+          ) {
+            showToast({
+              tone: "info",
+              message:
+                "The browser prepared an export for an older revision. Approve the latest wording and export again.",
+            });
+            return;
+          }
+          window.open(delivery.downloadUrl, "_blank", "noopener,noreferrer");
+          workspace.markExported();
           showToast({
-            tone: "info",
-            message: "Approve the exact current revision before exporting.",
+            tone: "success",
+            message: "Sent to your browser. Check downloads or the new tab.",
           });
           return;
         }
-        capturedExport = {
-          exportId: request.export_id,
-          operationId: request.operation_id,
-          expectedOperationRevision: request.operation_revision,
-        };
-      } catch {
-        if (ownerDispatchIsCurrent(requestContext)) {
-          showToast({
-            tone: "info",
-            message: "The revision-bound export request could not be recorded yet.",
-          });
-        }
-        return;
-      }
-    }
-
-    const delivery = await exporter.run(
-      {
-        documentId: workspace.documentId,
-        title: workspace.title,
-        format,
-        sections: workspace.sections,
-        unresolvedPlaceholders: workspace.unresolvedPlaceholders,
-        placeholderAcknowledged,
-        capturedExport,
-      },
-      requestContext,
-    );
-    if (delivery && ownerDispatchIsCurrent(requestContext)) {
-      if (workspace.captured && capturedExport) {
+        const delivery = await exporter.exportDocument(format, requestContext);
         if (
-          delivery.capturedExportId !== capturedExport.exportId ||
-          !workspace.rememberCapturedExportDelivery("pdf", capturedExport.exportId)
+          delivery.format === "pdf" &&
+          !workspace.rememberCapturedExportDelivery("pdf", delivery.exportId)
         ) {
           showToast({
             tone: "info",
-            message:
-              "The browser received an artifact, but its durable export receipt was not retained.",
+            message: "The current export receipt could not be verified. Export again after the save finishes.",
           });
           return;
         }
-        setLastCapturedExportDelivery({
-          exportId: capturedExport.exportId,
-          operationId: capturedExport.operationId,
-          documentRevision: approvedRevision,
-        });
-      } else {
+        window.open(delivery.downloadUrl, "_blank", "noopener,noreferrer");
         workspace.markExported();
+        showToast({
+          tone: "success",
+          message: "Sent to your browser. Check downloads or the new tab.",
+        });
+      } catch {
+        if (requestContext && !ownerDispatchIsCurrent(requestContext)) return;
+        showToast({ tone: "error", message: "Export failed. Try again." });
       }
-      showToast({
-        tone: "success",
-        message: "Sent to your browser. Check your Downloads folder.",
-      });
-    }
-  }
-
-  async function handleCreateUpdatedCapturedExport() {
-    const delivery = lastCapturedExportDelivery;
-    if (
-      !delivery ||
-      delivery.operationId !== workspace.operationId ||
-      delivery.documentRevision !== workspace.currentRevision ||
-      !workspace.createUpdatedCapturedExport("pdf", delivery.exportId)
-    ) {
-      showToast({
-        tone: "info",
-        message: "The current export receipt changed. Export the approved revision again.",
-      });
-      setLastCapturedExportDelivery(null);
-      return;
-    }
-    setLastCapturedExportDelivery(null);
-    await handleExport("pdf");
-  }
-
-  const hasCurrentCapturedDelivery = Boolean(
-    lastCapturedExportDelivery &&
-    lastCapturedExportDelivery.operationId === workspace.operationId &&
-    lastCapturedExportDelivery.documentRevision === workspace.currentRevision,
+    },
+    [captured, exporter, showToast, user?.id, workspace],
   );
 
-  if (workspace.loading) {
-    return (
-      <div className={styles.loading}>
-        <Spinner label="Loading your workspace" size="md" />
-      </div>
+  const handleApproveDocument = useCallback(async () => {
+    const approved = await workspace.approveDocument();
+    showToast({
+      tone: approved ? "success" : "info",
+      message: approved
+        ? "Approved this exact revision. Export is unlocked."
+        : "Load every section and save the latest wording before approving.",
+    });
+  }, [showToast, workspace]);
+
+  const handleApproveAllVisible = useCallback(() => {
+    const skipped = workspace.sections.filter(
+      (section) => section.id !== AUTH_SECTION_ID && isVisiblyEmpty(section.content),
     );
-  }
-
-  const authIssue = workspace.generationIssues.find((issue) => issue.sectionId === AUTH_SECTION_ID);
-  const paywallIssue = workspace.generationIssues.find(
-    (issue) => issue.sectionId === PAYWALL_SECTION_ID,
-  );
-  const activeIssue = workspace.generationIssues.find(
-    (issue) => issue.sectionId === workspace.activeSectionId,
-  );
-  const activeMissingInfo =
-    workspace.missingInfoQuestions.find(
-      (question) => question.placeholderId === workspace.selectedPlaceholderId,
-    ) ??
-    workspace.missingInfoQuestions.find(
-      (question) => question.sectionId === workspace.activeSectionId,
-    ) ??
-    workspace.missingInfoQuestions[0];
-  const saveLabel =
-    workspace.syncStatus === "saving"
-      ? "Saving…"
-      : workspace.syncStatus === "saved"
-        ? "Saved"
-        : "Save";
-
-  async function approveAll() {
-    if (workspace.captured) {
-      const approved = await workspace.approveDocument();
-      showToast({
-        tone: approved ? "success" : "info",
-        message: approved
-          ? "The exact current document revision is approved."
-          : "PrompTED could not approve this revision. Check save state and required wording.",
-      });
-      return;
-    }
-    const skipped: string[] = [];
-    const notLoaded: string[] = [];
-    for (const section of workspace.sections) {
-      if (section.status === "approved") continue;
-      if (!isWorkspaceSectionContentLoaded(section)) {
-        notLoaded.push(section.name);
-        continue;
-      }
-      if (isVisiblyEmpty(section.content)) {
-        skipped.push(section.name);
-        continue;
-      }
-      workspace.section.approve(section.id);
-    }
+    const notLoaded = workspace.sections.filter(
+      (section) => section.id !== AUTH_SECTION_ID && !isWorkspaceSectionContentLoaded(section),
+    );
+    workspace.sections
+      .filter(
+        (section) =>
+          section.id !== AUTH_SECTION_ID &&
+          isWorkspaceSectionContentLoaded(section) &&
+          !isVisiblyEmpty(section.content),
+      )
+      .forEach((section) => workspace.section.approve(section.id));
     showToast({
       tone: skipped.length || notLoaded.length ? "info" : "success",
       message:
         skipped.length || notLoaded.length
-          ? [
-              "Approved the sections currently ready for review.",
-              skipped.length ? `Still needs wording: ${skipped.join(", ")}.` : "",
-              notLoaded.length
-                ? `Saved sections still need to be opened and reviewed: ${notLoaded.join(", ")}.`
-                : "",
-            ]
-              .filter(Boolean)
-              .join(" ")
-          : "All sections approved.",
+          ? "Approved loaded sections with wording. Empty or unloaded sections were left unchanged."
+          : "Approved all visible sections.",
     });
-  }
+  }, [showToast, workspace]);
+
+  const handleMissingInfoAnswer = useCallback(
+    async (answer: string) => {
+      if (!activeQuestion) return;
+      await workspace.answerMissingInfo(activeQuestion, answer);
+    },
+    [activeQuestion, workspace],
+  );
+
+  const downloadLabel = lastCapturedExportDelivery
+    ? `Last PDF export matched revision ${lastCapturedExportDelivery.documentRevision}`
+    : null;
 
   return (
-    <div className={styles.screen}>
-      <header className={styles.head}>
+    <div className={styles.screen} data-tour-active={active ? "true" : undefined}>
+      <header className={styles.head} data-tour="workspace-header">
         <div className={styles.brandLockup}>
-          <p className={styles.subtitle}>{workspace.title}</p>
-          <WorkflowTruth
-            initialTruth={initialState?.truth}
-            syncStatus={workspace.syncStatus}
-            currentRevision={workspace.currentRevision}
-            approvedRevision={workspace.approvedRevision}
-            operationRevision={workspace.operationRevision}
-          />
+          <p className={styles.subtitle}>PrompTED workspace</p>
+          <h1>{workspace.title}</h1>
+          <p>{workspace.situation}</p>
+          {downloadLabel && (
+            <span className={styles.syncPill} data-status="saved">
+              {downloadLabel}
+            </span>
+          )}
         </div>
-        <div className={styles.headerActions} aria-label="Document actions">
-          {authIssue && !user?.id && (
-            <ContextIssue
-              title="Sign in to continue"
-              message="Your work is safe. Sign in and PrompTED will return to this document."
-              actionLabel="Sign in"
-              href={signInHref(`/outcomes/${outcomeId}`)}
-            />
-          )}
-          {paywallIssue && (
-            <ContextIssue
-              title="Document credits used"
-              message="You can still read, edit and export this document. Update your plan only when you need another document."
-              actionLabel="View plans"
-              href="/settings/account"
-            />
-          )}
-          {workspace.syncStatus === "failed" && (
-            <ContextIssue
-              label="Save problem"
-              title="This version is saved on this device"
-              message="PrompTED could not sync it to your account yet. Try saving again."
-              actionLabel="Try saving again"
-              onAction={workspace.retrySync}
-            />
-          )}
-          {activeIssue && (
-            <ContextIssue
-              title={`${activeIssue.sectionName} needs attention`}
-              message="TED could not finish this section. Your existing wording has not been replaced."
-              actionLabel="Try this section again"
-              onAction={() => void workspace.retryGenerationSection(activeIssue.sectionId)}
-              busy={workspace.regeneratingSectionId === activeIssue.sectionId}
-            />
-          )}
-          {activeMissingInfo && (
-            <MissingInfoIssue
-              question={activeMissingInfo}
-              busy={workspace.answeringMissingInfo}
-              onAnswer={(question, answer) => void workspace.answerMissingInfo(question, answer)}
-              onDismiss={workspace.dismissMissingInfo}
-              onNeutralReplacement={(question, option) =>
-                void workspace.applyNeutralReplacement(question, option)
-              }
-              autoOpen={workspace.selectedPlaceholderId === activeMissingInfo.placeholderId}
-            />
-          )}
-          <button
-            type="button"
-            className={styles.globalAction}
-            onClick={() => void approveAll()}
-            disabled={workspace.approving}
-          >
-            {workspace.approving
-              ? "Approving…"
-              : workspace.captured
-                ? "Approve revision"
-                : "Approve all"}
+        <div className={styles.actions}>
+          <button type="button" className={styles.secondary} onClick={startTour}>
+            Walk me through
           </button>
           <button
             type="button"
-            className={styles.globalAction}
-            disabled={workspace.syncStatus === "saving"}
-            onClick={() => {
-              if (workspace.syncStatus === "failed") workspace.retrySync();
-              else showToast({ tone: "success", message: "Your latest changes are saved." });
-            }}
+            className={styles.secondary}
+            onClick={handleApproveAllVisible}
+            disabled={workspace.drafting || workspace.loading}
           >
-            {saveLabel}
+            Approve visible
           </button>
           <button
             type="button"
-            className={styles.globalPrimary}
-            onClick={() => {
-              if (proofreadStarted) proofreadRef.current?.scan();
-              else setProofreadStarted(true);
-            }}
+            className={styles.secondary}
+            onClick={() => void handleApproveDocument()}
+            disabled={workspace.drafting || workspace.loading || !workspace.canExport}
           >
-            Proofread
+            Approve document
+          </button>
+          <button
+            type="button"
+            className={styles.export}
+            onClick={() => void handleExport("pdf")}
+            disabled={!workspace.canExport || workspace.syncStatus !== "saved"}
+          >
+            Export PDF
+          </button>
+          <button
+            type="button"
+            className={styles.export}
+            onClick={() => void handleExport("docx")}
+            disabled={!workspace.canExport || workspace.syncStatus !== "saved" || captured}
+          >
+            Export DOCX
           </button>
         </div>
       </header>
 
-      {showTour ? (
-        <OptionalPanelBoundary label="Guided tour">
-          <GuidedTour
-            tourId="workspace-v2"
-            steps={[
-              {
-                anchor: "ws-sections",
-                title: "Move through your document",
-                body: "Choose a section or use the arrows. On a phone, tap the page to open the focused editor.",
-              },
-              {
-                anchor: "ws-editor",
-                title: "Edit without losing control",
-                body: "Use Expand, Shorten or tEdit at the bottom. TED always shows a suggestion before applying it.",
-              },
-              {
-                anchor: "ws-export",
-                title: "Finish when you are ready",
-                body: "Export and other occasional options are kept in the document menu.",
-              },
-            ]}
-          />
-        </OptionalPanelBoundary>
-      ) : null}
-
-      <DraftingIndicator
-        active={workspace.drafting}
-        label={
-          workspace.regeneratingSectionId
-            ? "TED is redrafting this section"
-            : "TED is drafting your document"
-        }
+      <WorkflowTruth
+        syncStatus={workspace.syncStatus}
+        canExport={workspace.canExport}
+        captured={workspace.captured}
+        currentRevision={workspace.currentRevision}
+        approvedRevision={workspace.approvedRevision}
+        operationRevision={workspace.operationRevision}
+        placeholderDecision={workspace.placeholderExportDecision.status}
+        onRetrySync={workspace.retrySync}
       />
+      {workspace.generationIssues.length > 0 && (
+        <section className={styles.issuePanel} aria-label="Document generation issues">
+          <h2>Needs attention</h2>
+          <ul>
+            {workspace.generationIssues.map((issue) => (
+              <li key={issue.sectionId}>
+                <strong>{issue.sectionName}</strong>
+                <span>{issue.reason}</span>
+                <button
+                  type="button"
+                  onClick={() => void workspace.retryGenerationSection(issue.sectionId)}
+                  disabled={workspace.regeneratingSectionId === issue.sectionId}
+                >
+                  {workspace.regeneratingSectionId === issue.sectionId ? "Retrying…" : "Retry section"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {workspace.missingInfoQuestions.length > 0 && (
+        <section className={styles.missingPanel} aria-label="Missing information">
+          <h2>Details TED needs</h2>
+          <p>
+            Answer these only where you know the fact. TED will not invent them.
+          </p>
+          <ul>
+            {workspace.missingInfoQuestions.slice(0, 6).map((question) => (
+              <li key={question.placeholderId}>
+                <button
+                  type="button"
+                  onClick={() => workspace.selectMissingPlaceholder(question.placeholderId)}
+                  data-selected={workspace.selectedPlaceholderId === question.placeholderId}
+                >
+                  <strong>{question.label}</strong>
+                  <span>{question.sectionLabel}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
-      <div className={`${styles.body}${proofreadStarted ? ` ${styles.bodyWithProofread}` : ""}`}>
-        {proofreadStarted && (
-          <OptionalPanelBoundary label="Proofread tools" onClose={() => setProofreadStarted(false)}>
-            <ProofreadPanel
-              ref={proofreadRef}
+      <DraftingIndicator active={workspace.drafting || workspace.loading} />
+      <div className={styles.body}>
+        {workspace.loading ? (
+          <div className={styles.loading}>
+            <Spinner label="Loading your workspace" size="md" />
+          </div>
+        ) : (
+          <>
+            <WorkspacePane
+              title={workspace.title}
+              situation={workspace.situation}
               sections={workspace.sections}
               activeSectionId={workspace.activeSectionId}
-              onApply={(sectionId, next) => workspace.section.editContent(sectionId, next)}
-              onResultsChange={setProofreadResults}
-              autoScan
+              onSelectSection={workspace.selectSection}
+              onUpdateSection={workspace.section.update}
+              onApproveSection={workspace.section.approve}
+              onRejectSection={workspace.section.reject}
+              onDeleteSection={workspace.section.remove}
+              onAddSection={workspace.section.add}
+              onMoveSection={workspace.reorder.moveSection}
+              syncStatus={workspace.syncStatus}
+              approval={workspace.approval}
+              canExport={workspace.canExport}
+              activePlaceholderId={workspace.selectedPlaceholderId}
+              onLoadFullPreview={workspace.loadFullPreview}
             />
-          </OptionalPanelBoundary>
+            <aside className={styles.side} data-tour="proofread">
+              <section className={styles.card}>
+                <h2>Proofread</h2>
+                <p>
+                  Check clarity, tone and missing details before you export.
+                </p>
+                <button
+                  type="button"
+                  className={styles.secondary}
+                  disabled={!activeSection || isVisiblyEmpty(activeSection.content)}
+                  onClick={() => {
+                    setProofreadStarted(true);
+                    proofreadPanelRef.current?.start();
+                  }}
+                >
+                  Proofread active section
+                </button>
+                {activeSection && proofreadStarted && (
+                  <ProofreadPanel
+                    ref={proofreadPanelRef}
+                    section={activeSection}
+                    onResults={(results) => setProofreadResults(results)}
+                  />
+                )}
+              </section>
+              <section className={styles.card}>
+                <h2>Missing details</h2>
+                {activeQuestion ? (
+                  <MissingInfoIssue
+                    issue={activeQuestion}
+                    busy={workspace.answeringMissingInfo}
+                    onAnswer={handleMissingInfoAnswer}
+                    onDismiss={() => workspace.dismissMissingInfo(activeQuestion)}
+                    onNeutralReplacement={(option) =>
+                      void workspace.applyNeutralReplacement(activeQuestion, option)
+                    }
+                  />
+                ) : workspace.missingInfoQuestions.length > 0 ? (
+                  <p>Select a missing detail above to answer it.</p>
+                ) : (
+                  <p>No required clarification is blocking this draft.</p>
+                )}
+              </section>
+              <section className={styles.card}>
+                <h2>Document truth</h2>
+                <p>{workspace.approval.approved} of {workspace.approval.total} sections approved.</p>
+                <p>
+                  Status: <strong>{workspace.status}</strong>
+                </p>
+                <p>
+                  Save: <strong>{workspace.syncStatus}</strong>
+                </p>
+                {workspace.syncStatus === "failed" && (
+                  <button type="button" className={styles.secondary} onClick={workspace.retrySync}>
+                    Retry save
+                  </button>
+                )}
+              </section>
+            </aside>
+          </>
         )}
-        <div className={styles.center}>
-          <WorkspacePane
-            workspace={workspace}
-            exporting={exporter.exporting}
-            exportError={exporter.error}
-            onExport={handleExport}
-            allowedFormats={workspace.captured ? ["pdf"] : undefined}
-            capturedExportDelivered={hasCurrentCapturedDelivery}
-            onCreateUpdatedExport={
-              workspace.captured ? handleCreateUpdatedCapturedExport : undefined
-            }
-          />
-        </div>
       </div>
+      <GuidedTour active={active} step={steps[0]} onNext={next} onPrev={prev} onSkip={skip} />
+      {workspace.syncStatus !== "saved" && (
+        <div className={styles.saveNotice} role="status" aria-live="polite">
+          <span>
+            {workspace.syncStatus === "saving"
+              ? "Saving…"
+              : workspace.syncStatus === "failed"
+                ? "Save failed. Your browser still has the current draft."
+                : workspace.syncStatus === "local_only"
+                  ? "Saved on this device. Sign in keeps it across devices."
+                  : "Ready"}
+          </span>
+          {workspace.syncStatus === "failed" && (
+            <button type="button" onClick={workspace.retrySync}>
+              Retry
+            </button>
+          )}
+          {workspace.syncStatus === "saved" && (
+            <button type="button" onClick={() => {
+              if (workspace.syncStatus === "failed") workspace.retrySync();
+              else showToast({ tone: "success", message: "Your latest changes are saved." });
+            }}>
+              Saved
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
