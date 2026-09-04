@@ -73,8 +73,8 @@ test("Netlify web build wrapper spawns the normal package build with sanitized e
 
   assert.equal(status, 0);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, "pnpm");
-  assert.deepEqual(calls[0].args, buildPnpmWebBuildArgs());
+  assert.equal(calls[0].command, "corepack");
+  assert.deepEqual(calls[0].args, ["pnpm", ...buildPnpmWebBuildArgs()]);
   assert.equal(calls[0].options.cwd, "/repo");
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.env.GITHUB_FINE_GRAIN_TOKEN, undefined);

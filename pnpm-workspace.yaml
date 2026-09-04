@@ -1,3 +1,5 @@
 packages:
+  # Netlify CLI selects a deploy project before it reads netlify.toml. Keep the
+  # deployable app as the sole workspace project; @prompted/shared remains a
+  # linked local dependency and is checked explicitly by the root scripts.
   - "apps/web"
-  - "packages/shared"
