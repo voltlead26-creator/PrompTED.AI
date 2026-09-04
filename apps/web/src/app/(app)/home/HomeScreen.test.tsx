@@ -774,7 +774,8 @@ describe("HomeScreen orchestration", () => {
     expect(confirmIntakeMock).not.toHaveBeenCalled();
   });
 
-  it("fails closed when durable Home truth is unavailable", () => {
+  it("keeps text chat available while durable upload truth is unavailable", async () => {
+    interpretIntentMock.mockResolvedValue(unclear("What outcome do you want?"));
     renderHome({
       authenticated: true,
       ownerUserId: USER_ID,
@@ -782,8 +783,16 @@ describe("HomeScreen orchestration", () => {
       intake: null,
     });
 
-    expect(screen.getByRole("alert")).toHaveTextContent(/couldn.t load your saved upload state/i);
-    expect(screen.queryByLabelText("What do you need help completing?")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(/saved uploads are temporarily unavailable/i);
+    expect(screen.queryByRole("button", { name: /upload a document into chat/i })).toBeNull();
+
+    const textarea = screen.getByLabelText("What do you need help completing?");
+    await userEvent.type(textarea, "I need help with my team");
+    await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
+
+    await waitFor(() => expect(screen.getByText("What outcome do you want?")).toBeDefined());
+    expect(interpretIntentMock).toHaveBeenCalledTimes(1);
+    expect(ingestUploadMock).not.toHaveBeenCalled();
   });
 
   it("retains the corrected confirmation card when durable confirmation fails", async () => {
@@ -916,8 +925,9 @@ describe("HomeScreen orchestration", () => {
     };
     renderHome(noIntake());
 
-    expect(screen.getByRole("alert")).toHaveTextContent(/saved upload state is unavailable/i);
-    expect(screen.queryByLabelText("What do you need help completing?")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(/saved uploads are temporarily unavailable/i);
+    expect(screen.getByLabelText("What do you need help completing?")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /upload a document into chat/i })).toBeNull();
     expect(beginIntakeMock).not.toHaveBeenCalled();
   });
 
@@ -956,7 +966,7 @@ describe("HomeScreen orchestration", () => {
     })), onMessagesChange);
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(/saved upload state is unavailable/i);
+      expect(screen.getByRole("alert")).toHaveTextContent(/saved uploads are temporarily unavailable/i);
     });
     expect(container).not.toHaveTextContent("PRIVATE OWNER A");
     expect(container).not.toHaveTextContent(foreignFileName);
@@ -1004,7 +1014,7 @@ describe("HomeScreen orchestration", () => {
     const { container } = renderHome(outerOwnerMatches);
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(/saved upload state is unavailable/i);
+      expect(screen.getByRole("alert")).toHaveTextContent(/saved uploads are temporarily unavailable/i);
     });
     expect(container).not.toHaveTextContent("PRIVATE INNER OWNER");
     expect(screen.queryByRole("region", { name: "Confirm what TED read" })).toBeNull();

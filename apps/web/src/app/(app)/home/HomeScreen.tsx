@@ -221,10 +221,12 @@ export function HomeScreen({
       setPendingUpload(null);
       intakeIdRef.current = null;
       rec.clearUploadContext();
+      clear();
     }
   }, [
     activeIntakeOwnerMismatch,
     authLoading,
+    clear,
     publishActiveIntake,
     rec,
     serverSnapshotMismatch,
@@ -354,7 +356,10 @@ export function HomeScreen({
   }, [cancelCurrentUpload, rec]);
 
   const handleSubmit = useCallback(async () => {
-    if (authLoading || !user || intakeUnavailable) return;
+    if (authLoading || !user) return;
+    // Durable upload state is owner-scoped. When it cannot be trusted, keep the
+    // independent text clarification path available but never dispatch a file.
+    if (intakeUnavailable && attachment) return;
     const resumingUpload = activeIntake?.state === "open" &&
       (activeIntake.uploadState === "file_required" || activeIntake.uploadState === "processing");
     const typed = resumingUpload ? activeIntake.typedSituation : value.trim();
@@ -708,10 +713,10 @@ export function HomeScreen({
         {user && intakeUnavailable ? (
           <section className={styles.intakeStatus} role="alert">
             <div>
-              <h2>Saved upload state is unavailable</h2>
+              <h2>Saved uploads are temporarily unavailable</h2>
               <p>
-                TED couldn&rsquo;t load your saved upload state, so a replacement upload has not
-                been started. Reload this page before continuing.
+                TED couldn&rsquo;t load your saved upload state. You can still describe what you
+                need in the chat below, but uploads are paused until you reload.
               </p>
             </div>
           </section>
@@ -804,7 +809,6 @@ export function HomeScreen({
         {(!user || (
           !rec.showRecommendation &&
           !trustedPendingUpload &&
-          !intakeUnavailable &&
           !terminalUploadFailure
         )) && (
           <div data-tour="home-chat" className={styles.chatDock}>
@@ -830,7 +834,7 @@ export function HomeScreen({
                 ariaLabel={recoveryRequiresFile
                   ? "Reselect the same file to continue your saved upload"
                   : "What do you need help completing?"}
-                allowAttachment={durableIntakeEnabled}
+                allowAttachment={durableIntakeEnabled && !intakeUnavailable}
               />
             ) : (
               <section className={styles.signInGate} aria-labelledby="home-sign-in-title">
