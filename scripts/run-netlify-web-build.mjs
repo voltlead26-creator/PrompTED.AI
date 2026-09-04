@@ -7,7 +7,7 @@ import {
   validateWebBuildEnvironment,
 } from "./check-web-build-environment.mjs";
 
-const WEB_BUILD_COMMAND = "pnpm";
+const WEB_BUILD_COMMAND = "corepack";
 const WEB_BUILD_ARGS = ["--filter", "@prompted/web", "build"];
 
 function sortedUnique(values) {
@@ -64,7 +64,7 @@ export function runNetlifyWebBuild({
     );
   }
 
-  const result = spawnImpl(WEB_BUILD_COMMAND, WEB_BUILD_ARGS, {
+  const result = spawnImpl(WEB_BUILD_COMMAND, ["pnpm", ...WEB_BUILD_ARGS], {
     cwd,
     env: sanitizedEnvironment,
     shell: false,

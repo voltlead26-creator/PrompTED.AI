@@ -10,9 +10,9 @@
   "scripts": {
     "dev": "pnpm --filter @prompted/web dev",
     "build": "pnpm --filter @prompted/web build",
-    "type-check": "pnpm -r type-check",
-    "lint": "node scripts/check-agent-instructions.mjs && node scripts/check-text-encoding.mjs && node scripts/check-product-promises.mjs && node scripts/check-migrations.mjs && pnpm -r lint",
-    "test": "node --test scripts/backend-release-baseline.test.mjs scripts/check-agent-instructions.test.mjs scripts/check-deployment-contract.test.mjs scripts/check-progressive-bundles.test.mjs scripts/check-supabase-secret-names.test.mjs scripts/check-web-build-environment.test.mjs scripts/deploy-contract-functions.test.mjs scripts/deploy-netlify-production.test.mjs scripts/immutable-source-import.test.mjs scripts/probe-supabase-contract.test.mjs scripts/run-netlify-web-build.test.mjs scripts/verify-live-document-generation.test.mjs scripts/verify-live-document-review.test.mjs scripts/verify-web-release.test.mjs && pnpm -r test",
+    "type-check": "pnpm --filter @prompted/web type-check && pnpm --dir packages/shared type-check",
+    "lint": "node scripts/check-agent-instructions.mjs && node scripts/check-text-encoding.mjs && node scripts/check-product-promises.mjs && node scripts/check-migrations.mjs && pnpm --filter @prompted/web lint && pnpm --dir packages/shared lint",
+    "test": "node --test scripts/backend-release-baseline.test.mjs scripts/check-agent-instructions.test.mjs scripts/check-deployment-contract.test.mjs scripts/check-progressive-bundles.test.mjs scripts/check-supabase-secret-names.test.mjs scripts/check-web-build-environment.test.mjs scripts/deploy-contract-functions.test.mjs scripts/deploy-netlify-production.test.mjs scripts/immutable-source-import.test.mjs scripts/probe-supabase-contract.test.mjs scripts/run-netlify-web-build.test.mjs scripts/verify-live-document-generation.test.mjs scripts/verify-live-document-review.test.mjs scripts/verify-web-release.test.mjs && pnpm --filter @prompted/web test && pnpm --dir packages/shared test",
     "check:instructions": "node scripts/check-agent-instructions.mjs",
     "check:encoding": "node scripts/check-text-encoding.mjs",
     "check:promises": "node scripts/check-product-promises.mjs",
@@ -33,8 +33,15 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,css,md}\" --ignore-path .gitignore"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.34.0",
+    "@typescript-eslint/parser": "^8.34.0",
+    "eslint": "^9.29.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "prettier": "^3.5.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.2"
   },
   "pnpm": {
     "overrides": {
