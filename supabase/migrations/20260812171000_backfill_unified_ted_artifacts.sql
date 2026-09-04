@@ -44,7 +44,7 @@ insert into public.ted_artifacts (
   request_id, created_at, updated_at
 )
 select
-  uuid_generate_v5('9b8f65d0-262c-4bb2-a8cd-f6456b62db31'::uuid, 'checklist:' || o.id::text),
+  extensions.uuid_generate_v5('9b8f65d0-262c-4bb2-a8cd-f6456b62db31'::uuid, 'checklist:' || o.id::text),
   o.id, o.user_id, 'checklist',
   coalesce(nullif(o.recommendation_payload->'primary'->>'reason', ''), 'Saved checklist or action plan'),
   'ready', 'passed', 1, 'legacy-checklist:' || o.id::text,
@@ -60,7 +60,7 @@ insert into public.ted_artifact_blocks (
 )
 select
   c.id,
-  uuid_generate_v5('9b8f65d0-262c-4bb2-a8cd-f6456b62db31'::uuid, 'checklist:' || c.outcome_id::text),
+  extensions.uuid_generate_v5('9b8f65d0-262c-4bb2-a8cd-f6456b62db31'::uuid, 'checklist:' || c.outcome_id::text),
   c.user_id, 'action', 'legacy_action_' || c.id::text,
   case when strpos(c.text, chr(9247)) > 0 then split_part(c.text, chr(9247), 1) else 'General' end,
   c.order_index,
@@ -78,7 +78,7 @@ select
   'draft', case when c.done then coalesce(c.updated_at, now()) else null end,
   c.due_date, 1, c.created_at, c.updated_at
 from public.checklist_items c
-join public.ted_artifacts a on a.id = uuid_generate_v5('9b8f65d0-262c-4bb2-a8cd-f6456b62db31'::uuid, 'checklist:' || c.outcome_id::text)
+join public.ted_artifacts a on a.id = extensions.uuid_generate_v5('9b8f65d0-262c-4bb2-a8cd-f6456b62db31'::uuid, 'checklist:' || c.outcome_id::text)
 on conflict (id) do nothing;
 
 insert into private.ted_migration_checkpoints (migration_key, migrated_count, completed_at)
