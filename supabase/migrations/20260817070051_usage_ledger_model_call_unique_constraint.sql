@@ -15,6 +15,24 @@
 -- treats every NULL as distinct under a plain unique constraint, so the
 -- other (non-generation-request-scoped) insert path — which never sets
 -- generation_request_id — is unaffected.
-alter table public.usage_ledger
-  add constraint usage_ledger_model_call_dedupe
-  unique (user_id, generation_request_id, event_type);
+do $$
+declare
+  existing_definition text;
+begin
+  select pg_catalog.pg_get_constraintdef(constraint_record.oid)
+    into existing_definition
+  from pg_catalog.pg_constraint constraint_record
+  where constraint_record.conrelid = 'public.usage_ledger'::regclass
+    and constraint_record.conname = 'usage_ledger_model_call_dedupe';
+
+  if existing_definition is null then
+    alter table public.usage_ledger
+      add constraint usage_ledger_model_call_dedupe
+      unique (user_id, generation_request_id, event_type);
+  elsif existing_definition <> 'UNIQUE (user_id, generation_request_id, event_type)' then
+    raise exception
+      'usage_ledger_model_call_dedupe exists with an incompatible definition: %',
+      existing_definition;
+  end if;
+end;
+$$;
