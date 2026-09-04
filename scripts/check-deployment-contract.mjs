@@ -536,9 +536,9 @@ export function validateProductionWorkflow(workflowText) {
     ["deploy-functions-prod", functionsJob],
     ["deploy-web-prod", webJob],
   ]) {
-    if (block && !/^ {4}environment:\s*PrompTED\.AI\s*$/m.test(block)) {
+    if (block && /^ {4}environment\s*:/m.test(block)) {
       failures.push(
-        `Production mutation job "${name}" must use the protected PrompTED.AI environment.`,
+        `Production mutation job "${name}" must resolve credentials from repository Actions secrets and must not declare a GitHub environment.`,
       );
     }
   }

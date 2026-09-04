@@ -89,7 +89,6 @@ jobs:
     name: Deploy Supabase foundation
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: PrompTED.AI
     needs: verify-release
     permissions:
       contents: read
@@ -285,7 +284,6 @@ jobs:
     name: Deploy web app to Netlify
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    environment: PrompTED.AI
     needs: deploy-functions-prod
     permissions:
       contents: read
