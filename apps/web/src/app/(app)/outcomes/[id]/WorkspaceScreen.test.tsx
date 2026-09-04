@@ -22,6 +22,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: mocks.refresh }),
 }));
 vi.mock("@prompted/shared/api-client", () => ({
+  ApiError: class ApiError extends Error {},
   ingestUpload: mocks.ingestUpload,
 }));
 vi.mock("@/components/organisms/CapturedAdmission", () => ({
@@ -326,6 +327,46 @@ describe("WorkspaceScreen durable recovery", () => {
     expect(latest.intake?.uploadContext).toBe("Authoritative synthetic source wording.");
     expect(mocks.loadPendingOutcome).not.toHaveBeenCalled();
     expect(mocks.loadWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("keeps extracted upload context when durable outcome attachment fails", async () => {
+    const user = userEvent.setup();
+    const uploadId = "99999999-9999-4999-8999-999999999999";
+    const extractedText = "Retained source wording for document generation.";
+    mocks.ingestUpload.mockResolvedValue({
+      upload_id: uploadId,
+      extracted_text: extractedText,
+    });
+    mocks.attachOutcomeUpload.mockRejectedValue(new Error("temporary attachment failure"));
+
+    const { container } = render(
+      <WorkspaceScreen
+        outcomeId={uploadGateInitialState.intake!.outcomeId}
+        initialState={uploadGateInitialState}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: /I can build your Business Proposal/i }))
+      .toBeVisible();
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    await user.upload(input!, new File(["source"], "source.txt", { type: "text/plain" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "TED read the file and will use it for this draft",
+    );
+    expect(mocks.savePendingOutcome).toHaveBeenCalledWith(
+      { kind: "user", userId: "user-1" },
+      uploadGateInitialState.intake!.outcomeId,
+      expect.objectContaining({ uploadContext: extractedText, uploadId }),
+    );
+    expect(mocks.refresh).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Build with these" }));
+    await waitFor(() => expect(mocks.useWorkspace).toHaveBeenCalled());
+    const latest = mocks.useWorkspace.mock.calls.at(-1)?.[1] as WorkspaceInitialState;
+    expect(latest.intake?.uploadId).toBe(uploadId);
+    expect(latest.intake?.uploadContext).toBe(extractedText);
   });
 
   it("rejects oversized text before ingesting or attaching an outcome upload", async () => {
