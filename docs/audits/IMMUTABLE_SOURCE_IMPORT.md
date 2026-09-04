@@ -66,22 +66,25 @@ unclassified absence:
 
 | Decision                  |   Count |
 | ------------------------- | ------: |
-| `retain_exact`            |     315 |
+| `retain_exact`            |     305 |
 | `retain_historical_exact` |      56 |
 | `defer_exact`             |       0 |
 | `rewrite_target`          |     196 |
-| `exclude`                 |      32 |
+| `exclude`                 |      42 |
 | **Total source paths**    | **599** |
 
-The 32 exclusions are the exact previously reviewed set:
+The 42 exclusions are the reviewed set:
 
 - 3 dead or duplicate delivery paths;
 - 8 web-first mobile scaffold/dependency paths;
 - 16 one-shot source mutators;
 - 2 legacy provider/data seams;
 - 3 stale generated or one-shot seed-authority paths.
+- 10 imported migration filename aliases whose SQL was mapped to the exact
+  production history or moved after the production baseline without changing
+  the reviewed migration content.
 
-The manifest also records 245 Git-versionable target-native files with exact
+The manifest also records 259 Git-versionable target-native files with exact
 mode, byte size, and Git blob ID. The manifest cannot hash itself without a
 circular identity, so `docs/audits/immutable-source-import.json` is the sole
 explicit self-exclusion. Ignored coordination state, dependencies, caches, and

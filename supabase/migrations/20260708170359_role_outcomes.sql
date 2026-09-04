@@ -41,4 +41,4 @@ $$;
 drop trigger if exists role_outcomes_sync_latest_stage on public.role_outcomes;
 create trigger role_outcomes_sync_latest_stage
   after insert on public.role_outcomes
-  for each row execute function public.sync_saved_role_latest_stage();
+  for each row execute function public.sync_saved_role_latest_stage();;

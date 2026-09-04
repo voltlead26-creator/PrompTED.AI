@@ -52,4 +52,4 @@ create policy "role_action_items_own" on public.role_action_items
 
 create index if not exists saved_roles_user_idx on public.saved_roles (user_id, updated_at desc);
 create index if not exists role_documents_role_idx on public.role_documents (saved_role_id);
-create index if not exists role_action_items_role_idx on public.role_action_items (saved_role_id, sort_order);
+create index if not exists role_action_items_role_idx on public.role_action_items (saved_role_id, sort_order);;

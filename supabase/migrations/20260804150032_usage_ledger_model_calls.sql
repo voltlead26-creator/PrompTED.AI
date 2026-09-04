@@ -25,4 +25,4 @@ alter table public.usage_ledger
 
 create index if not exists idx_usage_model_calls_created
   on public.usage_ledger (created_at desc)
-  where event_type = 'model_call';
+  where event_type = 'model_call';;

@@ -131,3 +131,4 @@ end;
 $$;
 
 grant execute on function public.commit_document_import(uuid, uuid, uuid, text, text, jsonb, jsonb) to authenticated;
+;

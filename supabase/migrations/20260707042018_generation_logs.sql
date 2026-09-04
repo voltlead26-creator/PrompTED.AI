@@ -19,4 +19,4 @@ create policy "generation_logs_select_own" on public.generation_logs
   for select using (auth.uid() = user_id);
 
 create index if not exists generation_logs_created_at_idx on public.generation_logs (created_at desc);
-create index if not exists generation_logs_template_idx on public.generation_logs (template_id, created_at desc);
+create index if not exists generation_logs_template_idx on public.generation_logs (template_id, created_at desc);;

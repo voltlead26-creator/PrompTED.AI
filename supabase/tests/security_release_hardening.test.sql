@@ -17,6 +17,27 @@ exception when others then
 end;
 $function$;
 
+create or replace function pg_temp.raises_matching_any(
+  p_sql text,
+  p_patterns text[]
+) returns boolean
+language plpgsql
+as $function$
+declare
+  pattern text;
+begin
+  execute p_sql;
+  return false;
+exception when others then
+  foreach pattern in array p_patterns loop
+    if sqlerrm like pattern then
+      return true;
+    end if;
+  end loop;
+  return false;
+end;
+$function$;
+
 select ok(
   has_table_privilege('authenticated', 'public.subscriptions', 'SELECT')
     and not has_table_privilege('authenticated', 'public.subscriptions', 'INSERT')
@@ -252,18 +273,18 @@ select ok(
   'the outcome patch RPC rejects a foreign outcome ID'
 );
 select ok(
-  pg_temp.raises_matching(
+  pg_temp.raises_matching_any(
     $$insert into public.role_action_items(user_id, saved_role_id, label)
       values (auth.uid(), '87000000-0000-4000-8000-000000000001', 'Cross tenant')$$,
-    '%foreign key constraint%'
+    array['%foreign key constraint%', '%row-level security policy%']
   ),
   'a caller cannot attach an action item to another tenant saved role'
 );
 select ok(
-  pg_temp.raises_matching(
+  pg_temp.raises_matching_any(
     $$insert into public.role_outcomes(user_id, saved_role_id, stage)
       values (auth.uid(), '87000000-0000-4000-8000-000000000001', 'offer')$$,
-    '%foreign key constraint%'
+    array['%foreign key constraint%', '%row-level security policy%']
   ),
   'a caller cannot attach an outcome to another tenant saved role'
 );
