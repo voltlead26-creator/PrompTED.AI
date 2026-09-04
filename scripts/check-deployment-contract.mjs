@@ -538,7 +538,7 @@ export function validateProductionWorkflow(workflowText) {
   ]) {
     if (block && /^ {4}environment\s*:/m.test(block)) {
       failures.push(
-        `Production mutation job "${name}" must resolve credentials from repository Actions secrets and must not declare a GitHub environment.`,
+        `Production mutation job "${name}" must not declare a GitHub environment; configure required credentials as repository or organization Actions secrets.`,
       );
     }
   }
