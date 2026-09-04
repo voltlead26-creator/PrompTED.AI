@@ -25,6 +25,14 @@ for (const file of files) {
   if (/security\s+definer/i.test(sql) && !/set\s+search_path/i.test(sql)) {
     failures.push(`${file}: SECURITY DEFINER function must set an explicit search_path`);
   }
+  if (
+    timestamp >= "20260812170000" &&
+    /(^|[^.\w])uuid_generate_v4\s*\(/im.test(sql)
+  ) {
+    failures.push(
+      `${file}: new migrations must not depend on an unqualified uuid_generate_v4(); use gen_random_uuid() or an explicitly qualified extension function`,
+    );
+  }
 }
 
 const atomicImport = files.find((file) => file.includes("atomic_document_import"));

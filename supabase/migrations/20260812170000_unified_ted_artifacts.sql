@@ -5,7 +5,7 @@ create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
 
 create table public.ted_artifacts (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   outcome_id uuid not null references public.outcomes(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   kind text not null check (kind in ('document','action_plan','checklist','report','recommendation','research_brief','job_match')),
@@ -23,7 +23,7 @@ create table public.ted_artifacts (
 );
 
 create table public.ted_artifact_blocks (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   artifact_id uuid not null references public.ted_artifacts(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   parent_block_id uuid references public.ted_artifact_blocks(id) on delete cascade,
@@ -42,7 +42,7 @@ create table public.ted_artifact_blocks (
 );
 
 create table public.ted_artifact_references (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   artifact_id uuid not null references public.ted_artifacts(id) on delete cascade,
   block_id uuid not null references public.ted_artifact_blocks(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -57,7 +57,7 @@ create table public.ted_artifact_references (
 );
 
 create table public.ted_artifact_versions (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   artifact_id uuid not null references public.ted_artifacts(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   revision integer not null,
@@ -67,7 +67,7 @@ create table public.ted_artifact_versions (
 );
 
 create table private.ted_generation_runs (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   artifact_id uuid references public.ted_artifacts(id) on delete set null,
   user_id uuid references auth.users(id) on delete set null,
   workflow text not null,
@@ -162,7 +162,7 @@ set search_path = public, pg_temp
 as $$
 declare
   v_user_id uuid := auth.uid();
-  v_artifact_id uuid := coalesce(nullif(p_artifact->>'id', '')::uuid, uuid_generate_v4());
+  v_artifact_id uuid := coalesce(nullif(p_artifact->>'id', '')::uuid, gen_random_uuid());
   v_existing_id uuid;
   v_block jsonb;
   v_block_id uuid;
@@ -207,7 +207,7 @@ begin
   delete from public.ted_artifact_blocks where artifact_id = v_artifact_id and user_id = v_user_id;
 
   for v_block in select value from jsonb_array_elements(p_blocks) loop
-    v_block_id := coalesce(nullif(v_block->>'id', '')::uuid, uuid_generate_v4());
+    v_block_id := coalesce(nullif(v_block->>'id', '')::uuid, gen_random_uuid());
     insert into public.ted_artifact_blocks (
       id, artifact_id, user_id, kind, stable_key, heading, order_index, payload,
       approval_status, completed_at, due_date, revision
@@ -237,7 +237,7 @@ begin
       reminder_sent, order_index, created_at, updated_at
     )
     select
-      coalesce(nullif(block->>'id', '')::uuid, uuid_generate_v4()),
+      coalesce(nullif(block->>'id', '')::uuid, gen_random_uuid()),
       (p_artifact->>'outcome_id')::uuid,
       v_user_id,
       coalesce(block->>'heading', 'General') || chr(9247) || coalesce(block->'payload'->>'title', 'Action'),
