@@ -1,8 +1,8 @@
 [build]
-  # Keep the monorepo base at the repository root. Netlify CLI's --filter
-  # selects apps/web as the package directory; setting both a package and the
-  # same subdirectory as base causes framework output to be nested twice.
-  command = "pnpm --filter @prompted/web build"
+  # Keep the monorepo base at the repository root. The build wrapper strips
+  # over-scoped Netlify/plugin secrets before spawning the web package build;
+  # the web package still runs the fail-closed environment checker before Next.
+  command = "node scripts/run-netlify-web-build.mjs"
   publish = "apps/web/.next"
 
 [build.environment]
@@ -38,4 +38,4 @@
     X-Frame-Options        = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy        = "strict-origin-when-cross-origin"
-    Permissions-Policy     = "camera=(), microphone=(), geolocation=()"
+    Permissions-Policy     = "camera=(), microphone=(), geolocation=()
