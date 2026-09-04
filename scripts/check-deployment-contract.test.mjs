@@ -895,7 +895,6 @@ jobs:
         run: supabase stop --no-backup
   deploy-functions-prod:
     timeout-minutes: 30
-    environment: PrompTED.AI
     needs: verify-release
     permissions:
       contents: read
@@ -975,7 +974,6 @@ jobs:
           SUPABASE_PROJECT_REF: \${{ secrets.PROD_SUPABASE_PROJECT_REF }}
   deploy-web-prod:
     timeout-minutes: 90
-    environment: PrompTED.AI
     needs: deploy-functions-prod
     permissions:
       contents: read
@@ -1422,15 +1420,23 @@ test("production web deployment rejects duplicate launcher-step secret-scan keys
   );
 });
 
-test("production mutation jobs require the protected environment and shell-free web launcher", () => {
-  const unsafe = SAFE_PRODUCTION_WORKFLOW.replaceAll("    environment: PrompTED.AI\n", "").replace(
-    'node scripts/deploy-netlify-production.mjs --site-id "$NETLIFY_SITE_ID" --git-sha "$GITHUB_SHA" --url "https://ted.littlemissscarlett.co"',
-    'netlify deploy --prod --site "$NETLIFY_SITE_ID"',
-  );
+test("production mutation jobs reject GitHub environments and retain the shell-free web launcher", () => {
+  const unsafe = SAFE_PRODUCTION_WORKFLOW.replace(
+    "    timeout-minutes: 30\n",
+    "    timeout-minutes: 30\n    environment: PrompTED.AI\n",
+  )
+    .replace(
+      "    timeout-minutes: 90\n",
+      "    timeout-minutes: 90\n    environment:\n      name: PrompTED.AI\n",
+    )
+    .replace(
+      'node scripts/deploy-netlify-production.mjs --site-id "$NETLIFY_SITE_ID" --git-sha "$GITHUB_SHA" --url "https://ted.littlemissscarlett.co"',
+      'netlify deploy --prod --site "$NETLIFY_SITE_ID"',
+    );
 
   const failures = validateProductionWorkflow(unsafe);
   assert.equal(
-    failures.filter((failure) => failure.includes("protected PrompTED.AI environment")).length,
+    failures.filter((failure) => failure.includes("must not declare a GitHub environment")).length,
     2,
   );
   assert.ok(failures.some((failure) => failure.includes("shell-free Netlify")));
