@@ -7,8 +7,8 @@ import {
   validateWebBuildEnvironment,
 } from "./check-web-build-environment.mjs";
 
-const WEB_BUILD_COMMAND = "pnpm";
-const WEB_BUILD_ARGS = ["--filter", "@prompted/web", "build"];
+const WEB_BUILD_COMMAND = "corepack";
+const WEB_BUILD_ARGS = ["pnpm", "--filter", "@prompted/web", "build"];
 
 function sortedUnique(values) {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));

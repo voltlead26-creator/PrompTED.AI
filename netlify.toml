@@ -2,6 +2,7 @@
   # Keep the monorepo base at the repository root. The build wrapper strips
   # over-scoped Netlify/plugin secrets before spawning the web package build;
   # the web package still runs the fail-closed environment checker before Next.
+  base = "."
   command = "node scripts/run-netlify-web-build.mjs"
   publish = "apps/web/.next"
 

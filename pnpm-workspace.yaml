@@ -1,3 +1,5 @@
 packages:
-  - "apps/web"
-  - "packages/shared"
+  # pnpm expands both packages from this single workspace glob. Keeping the
+  # deployable app first also prevents Netlify CLI from treating the shared
+  # library as a second deploy target when commands run from the repository root.
+  - "{apps/web,packages/shared}"

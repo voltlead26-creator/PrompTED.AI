@@ -19,6 +19,9 @@ import {
 } from "./check-deployment-contract.mjs";
 
 const SAFE_NETLIFY_SECRET_SCAN_CONFIG = `
+[build]
+  base = "."
+
 [build.environment]
   NODE_VERSION = "22.23.2"
   PNPM_VERSION = "10.33.0"
@@ -343,6 +346,13 @@ test("pins the required Node and pnpm releases in Netlify", () => {
   const failures = validateNetlifySecretScanConfig(unsafe);
   assert.ok(failures.some((failure) => failure.includes('NODE_VERSION to "22.23.2"')));
   assert.ok(failures.some((failure) => failure.includes('PNPM_VERSION to "10.33.0"')));
+});
+
+test("pins the Netlify build base to the repository root", () => {
+  const unsafe = SAFE_NETLIFY_SECRET_SCAN_CONFIG.replace('base = "."', 'base = "apps/missing"');
+
+  const failures = validateNetlifySecretScanConfig(unsafe);
+  assert.ok(failures.some((failure) => failure.includes('build base to "."')));
 });
 
 test("keeps Netlify secret scanning enabled and generated-function output covered", () => {
