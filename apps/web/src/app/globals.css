@@ -3,7 +3,48 @@
    Imports design tokens, applies reset, sets body defaults.
    ===================================================== */
 
+@import "tailwindcss";
+@import "tw-animate-css";
 @import "../design-system/tokens.css";
+
+/* shadcn/ui uses Tailwind's semantic utilities. Keep PrompTED's existing
+   design tokens and data-theme switch as the visual source of truth. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --color-background: var(--bg-page);
+  --color-foreground: var(--text-primary);
+  --color-card: var(--card);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--bg-card);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+  --color-secondary: var(--bg-inset);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted: var(--bg-hover);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--bg-hover);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--text-on-destructive);
+  --color-border: var(--border-default);
+  --color-input: var(--border-default);
+  --color-ring: var(--ember);
+  --color-chart-1: var(--scarlet);
+  --color-chart-2: var(--sage);
+  --color-chart-3: var(--ember);
+  --color-chart-4: var(--ink-soft);
+  --color-chart-5: var(--paper-deep);
+  --color-sidebar: var(--bg-card);
+  --color-sidebar-foreground: var(--text-primary);
+  --color-sidebar-primary: var(--accent);
+  --color-sidebar-primary-foreground: var(--on-accent);
+  --color-sidebar-accent: var(--bg-hover);
+  --color-sidebar-accent-foreground: var(--text-primary);
+  --color-sidebar-border: var(--border-default);
+  --color-sidebar-ring: var(--ember);
+}
 
 /* ---- Reset ---- */
 *,
@@ -12,6 +53,7 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  border-color: var(--border-default);
 }
 
 html {

@@ -142,6 +142,8 @@
   --accent:        var(--scarlet-deep);
   --accent-hover:  #8F2C18;
   --on-accent:     #FFFFFF;
+  --destructive:   #B42318;
+  --text-on-destructive: #FFFFFF;
   color-scheme: light;
 }
 
@@ -179,6 +181,8 @@
   --accent:        #E05A40;
   --accent-hover:  #F07055;
   --on-accent:     #FFFFFF;
+  --destructive:   #FF6B5E;
+  --text-on-destructive: #17140F;
   --focus-ring:    0 0 0 3px rgba(240, 160, 80, 0.50);
   --shadow-sm:     0 2px 8px rgba(0, 0, 0, 0.20);
   --shadow-md:     0 4px 20px rgba(0, 0, 0, 0.30);
