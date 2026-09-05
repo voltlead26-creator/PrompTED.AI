@@ -11,7 +11,7 @@ import {
   validateSupabasePublicAnonKey,
 } from "./check-web-build-environment.mjs";
 
-const PRODUCTION_REF = "refs/heads/main";
+const PRODUCTION_REF = "refs/heads/Thought-Enhanced-Document";
 const SITE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEPLOY_ID_PATTERN = /^[0-9a-f]{24}$/i;

@@ -17,7 +17,7 @@ This document replaces the earlier short canonical-architecture summary as the d
 Historical phase plans, audits, benchmark registers, implementation plans, and handoffs remain useful evidence. They are not parallel architecture authorities. When they disagree with this design, preserve the evidence and follow this design unless the owner records a newer decision.
 
 The maintained implementation line is `voltlead26-creator/PrompTED.AI` on its
-protected `main` branch. The committed
+canonical `Thought-Enhanced-Document` branch. The committed
 `voltlead26-creator/PrompTED` snapshot
 `ClaudeTED.AI@3a9a7bc7afa26c66fcbfa56266302c148d9dfc37` is immutable donor evidence,
 not a writable application checkout. The current platform is Next.js 15 and
@@ -793,7 +793,7 @@ Do not add queues, caches, or microservices from hypothetical scale. First measu
 
 ### Repository and branch topology
 
-- `PrompTED.AI/main` is the maintained implementation and production-release
+- `PrompTED.AI/Thought-Enhanced-Document` is the maintained implementation and production-release
   line.
 - `ClaudeTED.AI@3a9a7bc7…` is the immutable committed donor snapshot.
 - the donor checkout's dirty overlay and historical recovery branches are

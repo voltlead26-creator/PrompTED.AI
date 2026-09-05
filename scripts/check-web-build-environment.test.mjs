@@ -194,7 +194,7 @@ test("the GitHub release handoff may carry a synthetic Netlify site ID outside h
         ...PUBLIC_BUILD_ENVIRONMENT,
         CI: "true",
         GITHUB_ACTIONS: "true",
-        GITHUB_REF: "refs/heads/main",
+        GITHUB_REF: "refs/heads/Thought-Enhanced-Document",
         NETLIFY: "true",
         NETLIFY_SITE_ID: SYNTHETIC_NETLIFY_SITE_ID,
       },

@@ -883,7 +883,7 @@ jobs:
       - uses: supabase/setup-cli@pinned
         with:
           version: "2.114.0"
-      - run: test "$GITHUB_REF" = "refs/heads/main"
+      - run: test "$GITHUB_REF" = "refs/heads/Thought-Enhanced-Document"
       - run: pnpm verify:web
       - run: deno check supabase/functions/*/index.ts
       - run: deno test --allow-env --allow-read supabase/functions
@@ -894,6 +894,7 @@ jobs:
       - if: always()
         run: supabase stop --no-backup
   deploy-functions-prod:
+    environment: production
     timeout-minutes: 30
     needs: verify-release
     permissions:
@@ -973,6 +974,7 @@ jobs:
           SUPABASE_URL: \${{ secrets.PROD_SUPABASE_URL }}
           SUPABASE_PROJECT_REF: \${{ secrets.PROD_SUPABASE_PROJECT_REF }}
   deploy-web-prod:
+    environment: production
     timeout-minutes: 90
     needs: deploy-functions-prod
     permissions:
@@ -1067,13 +1069,13 @@ test("production workflow requires Edge and fresh-database gates before mutation
 
 test("production workflow requires an exact production-ref guard", () => {
   const unsafe = SAFE_PRODUCTION_WORKFLOW.replace(
-    '      - run: test "$GITHUB_REF" = "refs/heads/main"\n',
+    '      - run: test "$GITHUB_REF" = "refs/heads/Thought-Enhanced-Document"\n',
     "",
   );
 
   const failures = validateProductionWorkflow(unsafe);
   assert.ok(
-    failures.some((failure) => failure.includes("refs/heads/main")),
+    failures.some((failure) => failure.includes("refs/heads/Thought-Enhanced-Document")),
     `expected a production-ref failure, got: ${JSON.stringify(failures)}`,
   );
 });
@@ -1420,14 +1422,14 @@ test("production web deployment rejects duplicate launcher-step secret-scan keys
   );
 });
 
-test("production mutation jobs reject GitHub environments and retain the shell-free web launcher", () => {
+test("production mutation jobs require the exact production environment and retain the shell-free web launcher", () => {
   const unsafe = SAFE_PRODUCTION_WORKFLOW.replace(
-    "    timeout-minutes: 30\n",
-    "    timeout-minutes: 30\n    environment: PrompTED.AI\n",
+    "  deploy-functions-prod:\n    environment: production\n",
+    "  deploy-functions-prod:\n",
   )
     .replace(
-      "    timeout-minutes: 90\n",
-      "    timeout-minutes: 90\n    environment:\n      name: PrompTED.AI\n",
+      "  deploy-web-prod:\n    environment: production\n",
+      "  deploy-web-prod:\n    environment: PrompTED.AI\n",
     )
     .replace(
       'node scripts/deploy-netlify-production.mjs --site-id "$NETLIFY_SITE_ID" --git-sha "$GITHUB_SHA" --url "https://ted.littlemissscarlett.co"',
@@ -1436,7 +1438,8 @@ test("production mutation jobs reject GitHub environments and retain the shell-f
 
   const failures = validateProductionWorkflow(unsafe);
   assert.equal(
-    failures.filter((failure) => failure.includes("must not declare a GitHub environment")).length,
+    failures.filter((failure) => failure.includes('must declare exactly "environment: production"'))
+      .length,
     2,
   );
   assert.ok(failures.some((failure) => failure.includes("shell-free Netlify")));
@@ -1455,8 +1458,8 @@ jobs:
       - run: |
           git checkout --ours -- unsafe.ts
           git add -A
-          git rebase origin/main
-          git push origin HEAD:main
+          git rebase origin/Thought-Enhanced-Document
+          git push origin HEAD:Thought-Enhanced-Document
 `;
 
   const failures = validateWorkflowAuthority("controller.yml", unsafe);

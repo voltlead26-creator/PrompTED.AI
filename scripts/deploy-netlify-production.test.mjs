@@ -32,7 +32,7 @@ const SAFE_INPUT = {
   gitSha: "5574dee72e02f44507b22bd3c761dfc9d3c3bd51",
   baseUrl: "https://app.prompted.example",
   expectedBaseUrl: "https://app.prompted.example",
-  gitRef: "refs/heads/main",
+  gitRef: "refs/heads/Thought-Enhanced-Document",
   authToken: "test-token",
   appEnvironment: "production",
   supabaseUrl: `https://${SUPABASE_PROJECT_REF}.supabase.co`,

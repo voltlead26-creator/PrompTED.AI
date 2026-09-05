@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - Thought-Enhanced-Document
   pull_request:
 
 permissions: {}

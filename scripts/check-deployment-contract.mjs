@@ -500,8 +500,14 @@ export function validateProductionWorkflow(workflowText) {
       );
     }
   }
-  if (!verifyJob || !/GITHUB_REF/.test(verifyJob) || !/refs\/heads\/main/.test(verifyJob)) {
-    failures.push('Production verification must refuse every ref except "refs/heads/main".');
+  if (
+    !verifyJob ||
+    !/GITHUB_REF/.test(verifyJob) ||
+    !/refs\/heads\/Thought-Enhanced-Document/.test(verifyJob)
+  ) {
+    failures.push(
+      'Production verification must refuse every ref except "refs/heads/Thought-Enhanced-Document".',
+    );
   }
   if (!functionsJob || !/^ {4}needs:\s*verify-release\s*$/m.test(functionsJob)) {
     failures.push('Production function deployment must need "verify-release".');
@@ -536,9 +542,9 @@ export function validateProductionWorkflow(workflowText) {
     ["deploy-functions-prod", functionsJob],
     ["deploy-web-prod", webJob],
   ]) {
-    if (block && /^ {4}environment\s*:/m.test(block)) {
+    if (block && !/^ {4}environment:\s*production\s*$/m.test(block)) {
       failures.push(
-        `Production mutation job "${name}" must not declare a GitHub environment; configure required credentials as repository or organization Actions secrets.`,
+        `Production mutation job "${name}" must declare exactly "environment: production".`,
       );
     }
   }

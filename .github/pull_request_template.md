@@ -75,4 +75,4 @@ deno lint / check / test
 ## Review
 
 - [ ] Draft — not for merge
-- [ ] Owner approval required before merge to protected `main`
+- [ ] Owner approval required before merge to canonical `Thought-Enhanced-Document`

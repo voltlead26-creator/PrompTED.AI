@@ -21,8 +21,8 @@ jobs:
       - name: Refuse a non-production ref
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "::error::Production releases are allowed only from refs/heads/main."
+          if [[ "$GITHUB_REF" != "refs/heads/Thought-Enhanced-Document" ]]; then
+            echo "::error::Production releases are allowed only from refs/heads/Thought-Enhanced-Document."
             exit 1
           fi
 
@@ -87,6 +87,7 @@ jobs:
 
   deploy-functions-prod:
     name: Deploy Supabase foundation
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: verify-release
@@ -282,6 +283,7 @@ jobs:
 
   deploy-web-prod:
     name: Deploy web app to Netlify
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: deploy-functions-prod

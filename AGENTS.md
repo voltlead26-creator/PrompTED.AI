@@ -3,7 +3,7 @@
 - **Document status:** Authoritative repository instruction set
 - **Product:** PrompTED outcome-completion platform
 - **Canonical repository:** `https://github.com/voltlead26-creator/PrompTED.AI`
-- **Current implementation line:** Existing `main` history in this repository
+- **Current implementation line:** `Thought-Enhanced-Document` in this repository
 - **Reviewed source foundation:** Committed `ClaudeTED.AI@3a9a7bc7afa26c66fcbfa56266302c148d9dfc37`
 - **Runtime standard:** Node `22.23.2` and pnpm `10.33.0`
 - **Web:** Next.js 15 and React 19
