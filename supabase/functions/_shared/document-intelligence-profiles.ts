@@ -23219,16 +23219,21 @@ export const DIPS: DocumentIntelligenceProfile[] = EXTENDED_CATALOGUE.map(
   completeProfile,
 );
 
-/** Pick the best profile from a free-text hint, falling back to the domain. */
+/** Bump when selection precedence, matching or tie handling changes. */
+export const DOCUMENT_PROFILE_SELECTOR_VERSION = "document-profile-selection.1";
+
+/** Pick the best profile from a free-text hint, falling back to the domain.
+ * Server callers may supply an already accepted candidate snapshot. */
 export function selectProfile(
   hint: string,
   domain?: string,
+  candidates: readonly DocumentIntelligenceProfile[] = DIPS,
 ): DocumentIntelligenceProfile | null {
   const h = (hint || "").toLowerCase();
   const explicitLines = new Set(
     h.split(/\n+/).map((line) => line.trim()).filter(Boolean),
   );
-  for (const profile of DIPS) {
+  for (const profile of candidates) {
     if (
       explicitLines.has(profile.key.toLowerCase()) ||
       explicitLines.has(profile.label.toLowerCase())
@@ -23236,7 +23241,7 @@ export function selectProfile(
   }
   let best: DocumentIntelligenceProfile | null = null;
   let bestScore = 0;
-  for (const p of DIPS) {
+  for (const p of candidates) {
     let score = 0;
     for (const kw of p.matches) if (kw && h.includes(kw)) score++;
     if (score > bestScore) {
@@ -23247,7 +23252,7 @@ export function selectProfile(
   if (best) return best;
   if (domain) {
     const d = domain.toLowerCase();
-    for (const p of DIPS) if (p.domains.includes(d)) return p;
+    for (const p of candidates) if (p.domains.includes(d)) return p;
   }
   return null;
 }
@@ -23262,7 +23267,7 @@ export function renderProfile(
   const explains = task === "explain";
   const lines: string[] = [
     `DOCUMENT INTELLIGENCE PROFILE — ${p.label}`,
-    "Principle: ask the MINIMUM questions for the MAXIMUM quality. First use everything already available (profile, past conversations, uploaded files, resume, business profile, prior outputs); then ask only the highest-value MISSING items — never show a form, keep it conversational, one or two at a time, and prefer to infer over ask.",
+    "Principle: ask the MINIMUM questions for the MAXIMUM quality. First use everything already available (profile, past conversations, uploaded files, resume, business profile, prior outputs); then ask the highest-value MISSING items in conversational batches of up to three questions. Infer safe presentation choices, never personal facts. Continue until the profile requirements are understood, then present the knowledge summary for user confirmation.",
     "UNIVERSAL PLACEHOLDER RULES",
     ...UNIVERSAL_DOCUMENT_PLACEHOLDER_RULES.map((rule) => `- ${rule}`),
     "- Required information: " + p.requiredInformation.join("; "),

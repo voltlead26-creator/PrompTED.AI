@@ -1,5 +1,17 @@
-import { assertEquals } from "jsr:@std/assert@1";
-import { CAPTURED_DOCUMENT_LEDGER } from "../../../packages/shared/src/document-ledger.ts";
+import { assert, assertEquals } from "jsr:@std/assert@1";
+import {
+  planCapturedInputs,
+  prepareCapturedDocumentAssessment,
+} from "./captured-document-operation.ts";
+import {
+  CAPTURED_DOCUMENT_LEDGER,
+  GROUNDED_CAPTURED_DOCUMENT_LEDGER,
+} from "../../../packages/shared/src/document-ledger.ts";
+import {
+  facts as groundedFacts,
+  output as groundedOutput,
+  passingReview,
+} from "./captured-document-grounding.fixtures.ts";
 import {
   type CapturedOperationGateway,
   type CapturedProvider,
@@ -132,6 +144,639 @@ function acceptedResumePayload(
   };
 }
 
+function groundedResumePayload(overrides: Record<string, unknown> = {}) {
+  const routeSnapshot = acceptedRouteSnapshot();
+  routeSnapshot.routes.deep.structuredOutputSchemaVersion =
+    "complaint-letter.captured-output.2";
+  routeSnapshot.routes.review.structuredOutputSchemaVersion =
+    "complaint-letter.captured-grounding.2";
+  return acceptedResumePayload(groundedFacts, {
+    ledger_version: GROUNDED_CAPTURED_DOCUMENT_LEDGER.ledgerVersion,
+    ledger_template: structuredClone(
+      GROUNDED_CAPTURED_DOCUMENT_LEDGER.templates["complaint-letter"],
+    ),
+    pipeline_version: "captured-operation-pipeline.2",
+    route_snapshot: routeSnapshot,
+    ...overrides,
+  });
+}
+
+function groundedGateway(options: Parameters<typeof gateway>[0] = {}) {
+  const resumePayload = groundedResumePayload();
+  return gateway({
+    replay: true,
+    replayStatus: "accepted",
+    routeSnapshot: resumePayload.route_snapshot,
+    resumePayload,
+    ...options,
+  });
+}
+
+function reviewFromRequest(request: ProviderRequest) {
+  const message = request.messages[0]?.content;
+  if (typeof message !== "string") {
+    throw new Error("Expected a captured review message");
+  }
+  const payload = JSON.parse(message);
+  assertEquals(
+    payload.target.identity.operation_id,
+    "44444444-4444-4444-8444-444444444444",
+  );
+  assertEquals(
+    payload.target.identity.generation_snapshot_sha256,
+    "b".repeat(64),
+  );
+  return passingReview(payload.target);
+}
+
+function runGrounded(
+  controlled: ReturnType<typeof groundedGateway>,
+  provider: CapturedProvider,
+) {
+  return runCapturedDocumentOperation({
+    userId: USER_ID,
+    body: {
+      action: "resume",
+      operation_id: "44444444-4444-4444-8444-444444444444",
+    },
+    environment: { environment: "local" },
+    gateway: controlled.adapter,
+    provider,
+  });
+}
+
+async function storedGroundingReview() {
+  const plan = planCapturedInputs(
+    "complaint-letter",
+    groundedFacts,
+    GROUNDED_CAPTURED_DOCUMENT_LEDGER,
+  );
+  const { target } = await prepareCapturedDocumentAssessment(
+    plan,
+    groundedOutput(),
+    {
+      operation_id: "44444444-4444-4444-8444-444444444444",
+      document_id: DOCUMENT_ID,
+      accepted_document_revision: 1,
+      input_revision: 1,
+      generation_snapshot_sha256: "b".repeat(64),
+      ledger_version: GROUNDED_CAPTURED_DOCUMENT_LEDGER.ledgerVersion,
+      pipeline_version: "captured-operation-pipeline.2",
+    },
+  );
+  return passingReview(target);
+}
+
+Deno.test("accepted v2 requires exact review before finalizing structurally valid wording", async () => {
+  const controlled = groundedGateway();
+  const requests: ProviderRequest[] = [];
+  const result = await runCapturedDocumentOperation({
+    userId: USER_ID,
+    body: {
+      action: "resume",
+      operation_id: "44444444-4444-4444-8444-444444444444",
+    },
+    environment: { environment: "local" },
+    gateway: controlled.adapter,
+    provider: async (request) => {
+      requests.push(request);
+      const response = request.task === "review"
+        ? reviewFromRequest(request)
+        : groundedOutput();
+      return await successfulProvider(`resp_v2_${request.task}`, response)(
+        request,
+      );
+    },
+  });
+  assertEquals(result.status, 200);
+  assertEquals(requests.map((request) => request.task), ["document", "review"]);
+  assertEquals(requests.map((request) => request.outputSchema?.version), [
+    "complaint-letter.captured-output.2",
+    "complaint-letter.captured-grounding.2",
+  ]);
+  const finalized = controlled.calls.find((call) =>
+    call.name === "finalize_captured_document_operation"
+  );
+  assertEquals(finalized?.args.p_sections, groundedOutput().sections);
+  assertEquals(
+    (finalized?.args.p_validation_result as Record<string, unknown>)
+      ?.validator_version,
+    "captured-output-validator.2",
+  );
+  assertEquals(controlled.attemptNumbers, [1, 1]);
+  const reviewCompletion = controlled.calls.findIndex((call) =>
+    call.name === "complete_captured_document_provider_attempt" &&
+    call.args.p_logical_stage_key === "review"
+  );
+  const finalization = controlled.calls.findIndex((call) =>
+    call.name === "finalize_captured_document_operation"
+  );
+  assert(finalization > reviewCompletion && reviewCompletion >= 0);
+});
+
+for (
+  const failure of [
+    "negative",
+    "uncertain",
+    "malformed",
+    "replacement",
+    "missing-section",
+    "wrong-digest",
+    "contradictory-issue",
+  ] as const
+) {
+  Deno.test(`accepted v2 ${failure} review cannot finalize or rewrite`, async () => {
+    const controlled = groundedGateway({
+      generationCheckpoint: groundedOutput(),
+      replayStatus: "validating",
+    });
+    const tasks: string[] = [];
+    const result = await runGrounded(controlled, async (request) => {
+      tasks.push(request.task);
+      const review = reviewFromRequest(request);
+      if (failure === "negative") {
+        review.sections[0].checks.material_claim_support = "fail";
+      }
+      if (failure === "uncertain") {
+        review.sections[0].checks.material_claim_support = "uncertain";
+      }
+      if (failure === "missing-section") review.sections.pop();
+      if (failure === "wrong-digest") review.target_sha256 = "c".repeat(64);
+      if (failure === "contradictory-issue") {
+        review.sections[0].issues.push({
+          code: "unsupported_fact",
+          detail: "Synthetic unsupported allegation.",
+        });
+      }
+      return await successfulProvider(
+        "resp_v2_rejected",
+        failure === "malformed"
+          ? { passed: true }
+          : failure === "replacement"
+          ? groundedOutput()
+          : review,
+      )(request);
+    });
+    assertEquals(result.status, 422);
+    assertEquals(result.body.status, "terminal_failure");
+    assertEquals(tasks, ["review"]);
+    assertEquals(
+      controlled.calls.filter((call) =>
+        call.name === "finalize_captured_document_operation"
+      ),
+      [],
+    );
+    assert(
+      controlled.calls.some((call) =>
+        call.name === "complete_captured_document_provider_attempt" &&
+        call.args.p_status === "succeeded"
+      ),
+    );
+  });
+}
+
+Deno.test("v2 generation checkpoint requires only review and then exact finalization", async () => {
+  const controlled = groundedGateway({
+    generationCheckpoint: groundedOutput(),
+    replayStatus: "validating",
+  });
+  const tasks: string[] = [];
+  const result = await runGrounded(controlled, async (request) => {
+    tasks.push(request.task);
+    return await successfulProvider(
+      "resp_v2_review",
+      reviewFromRequest(request),
+    )(request);
+  });
+  assertEquals(result.status, 200);
+  assertEquals(tasks, ["review"]);
+  assertEquals(
+    controlled.calls.find((call) =>
+      call.name === "finalize_captured_document_operation"
+    )?.args.p_sections,
+    groundedOutput().sections,
+  );
+});
+
+for (const replayStatus of ["validating", "persisting"] as const) {
+  Deno.test(`v2 exact ${replayStatus} checkpoints finalize without redispatch`, async () => {
+    const controlled = groundedGateway({
+      replayStatus,
+      generationCheckpoint: groundedOutput(),
+      reviewCheckpoint: await storedGroundingReview(),
+    });
+    let calls = 0;
+    const result = await runGrounded(controlled, async () => {
+      calls++;
+      throw new Error("No new provider work permitted");
+    });
+    assertEquals(result.status, 200);
+    assertEquals(calls, 0);
+    assertEquals(
+      controlled.calls.filter((call) =>
+        call.name === "record_captured_document_provider_attempt"
+      ),
+      [],
+    );
+    assertEquals(
+      controlled.calls.find((call) =>
+        call.name === "finalize_captured_document_operation"
+      )?.args.p_sections,
+      groundedOutput().sections,
+    );
+  });
+}
+
+for (
+  const mismatch of [
+    "wording",
+    "snapshot",
+    "missing-generation",
+    "replacement-review",
+  ] as const
+) {
+  Deno.test(`v2 ${mismatch} checkpoint mismatch never becomes a new provider attempt`, async () => {
+    const candidate = groundedOutput();
+    if (mismatch === "wording") {
+      candidate.sections[0].content += " Fabricated extra claim.";
+    }
+    const controlled = groundedGateway({
+      replayStatus: "validating",
+      generationCheckpoint: mismatch === "missing-generation"
+        ? undefined
+        : candidate,
+      reviewCheckpoint: mismatch === "replacement-review"
+        ? groundedOutput()
+        : await storedGroundingReview(),
+      resumePayload: groundedResumePayload(
+        mismatch === "snapshot"
+          ? { generation_snapshot_sha256: "c".repeat(64) }
+          : {},
+      ),
+    });
+    let calls = 0;
+    const result = await runGrounded(controlled, async () => {
+      calls++;
+      throw new Error("Reconcile existing checkpoints first");
+    });
+    assert(result.status >= 400);
+    assertEquals(calls, 0);
+    assertEquals(
+      controlled.calls.filter((call) =>
+        call.name === "record_captured_document_provider_attempt" ||
+        call.name === "finalize_captured_document_operation"
+      ),
+      [],
+    );
+  });
+}
+
+for (const completionAcknowledgementsLost of [1, 2]) {
+  Deno.test(`v2 review survives ${completionAcknowledgementsLost} lost completion acknowledgements with one attempt`, async () => {
+    const controlled = groundedGateway({
+      replayStatus: "validating",
+      generationCheckpoint: groundedOutput(),
+      completionAcknowledgementsLost,
+    });
+    let calls = 0;
+    const result = await runGrounded(controlled, async (request) => {
+      calls++;
+      return await successfulProvider(
+        "resp_v2_ack_loss",
+        reviewFromRequest(request),
+      )(request);
+    });
+    assertEquals(result.status, 200);
+    assertEquals(calls, 1);
+    const completions = controlled.calls.filter((call) =>
+      call.name === "complete_captured_document_provider_attempt"
+    );
+    assertEquals(completions.length, 2);
+    assertEquals(completions[0].args, completions[1].args);
+    assertEquals(controlled.attemptNumbers, [1]);
+  });
+}
+
+Deno.test("v2 cancellation during review records usage then fences finalization", async () => {
+  const controlled = groundedGateway({
+    replayStatus: "validating",
+    generationCheckpoint: groundedOutput(),
+  });
+  const result = await runGrounded(controlled, async (request) => {
+    const lifecycle = request.attemptLifecycle;
+    if (!lifecycle) throw new Error("Missing lifecycle");
+    const originalPrepare = lifecycle.prepare;
+    return await successfulProvider(
+      "resp_v2_cancelled",
+      reviewFromRequest(request),
+    )({
+      ...request,
+      attemptLifecycle: {
+        ...lifecycle,
+        prepare: async (input) => {
+          const accepted = await originalPrepare(input);
+          controlled.requestCancellation();
+          return accepted;
+        },
+      },
+    });
+  });
+  assertEquals(result.status, 409);
+  assertEquals(result.body.status, "cancelled");
+  const completion = controlled.calls.findIndex((call) =>
+    call.name === "complete_captured_document_provider_attempt" &&
+    call.args.p_status === "succeeded"
+  );
+  const cancellation = controlled.calls.findIndex((call) =>
+    call.name === "cancel_captured_document_operation"
+  );
+  assert(completion >= 0 && cancellation > completion);
+  assertEquals(
+    controlled.calls.filter((call) =>
+      call.name === "finalize_captured_document_operation"
+    ),
+    [],
+  );
+});
+
+Deno.test("v2 durable cancellation while checkpoint digests are held fences persistence", async () => {
+  const controlled = groundedGateway({
+    replayStatus: "persisting",
+    generationCheckpoint: groundedOutput(),
+    reviewCheckpoint: await storedGroundingReview(),
+  });
+  const originalDigest = crypto.subtle.digest;
+  let releaseDigest!: () => void;
+  let digestStarted!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseDigest = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    digestStarted = resolve;
+  });
+  let holdFirst = true;
+  crypto.subtle.digest = async (algorithm, data) => {
+    if (holdFirst) {
+      holdFirst = false;
+      digestStarted();
+      await held;
+    }
+    return await originalDigest.call(crypto.subtle, algorithm, data);
+  };
+  let providerCalls = 0;
+  let execution: ReturnType<typeof runGrounded> | undefined;
+  try {
+    execution = runGrounded(controlled, async () => {
+      providerCalls++;
+      throw new Error("Existing checkpoints need no provider work");
+    });
+    await started;
+    controlled.requestCancellation();
+    releaseDigest();
+    const result = await execution;
+    assertEquals(result.status, 409);
+    assertEquals(result.body.status, "cancelled");
+    assertEquals(providerCalls, 0);
+    assertEquals(
+      controlled.calls.filter((call) =>
+        call.name === "finalize_captured_document_operation"
+      ),
+      [],
+    );
+  } finally {
+    releaseDigest();
+    try {
+      await execution;
+    } finally {
+      crypto.subtle.digest = originalDigest;
+    }
+  }
+});
+
+Deno.test("v2 provider result must match its durable generation checkpoint", async () => {
+  const controlled = groundedGateway();
+  let calls = 0;
+  const result = await runGrounded(controlled, async (request) => {
+    calls++;
+    const response = await successfulProvider(
+      "resp_v2_changed",
+      groundedOutput(),
+    )(request);
+    const changed = groundedOutput();
+    changed.sections[0].content += " Changed after checkpoint completion.";
+    return { ...response, structured: changed };
+  });
+  assertEquals(result.status, 503);
+  assertEquals(result.body.retryable, true);
+  assertEquals(calls, 1);
+  assertEquals(
+    controlled.calls.filter((call) =>
+      call.name === "finalize_captured_document_operation"
+    ),
+    [],
+  );
+});
+
+Deno.test("v2 exact fallback violations block before a paid review", async () => {
+  const candidate = groundedOutput();
+  candidate.sections[3].content += " The company admitted criminal fraud.";
+  const controlled = groundedGateway({
+    replayStatus: "validating",
+    generationCheckpoint: candidate,
+  });
+  let calls = 0;
+  const result = await runGrounded(controlled, async () => {
+    calls++;
+    throw new Error("Invalid neutral prose must not reach review");
+  });
+  assertEquals(result.status, 422);
+  assertEquals(calls, 0);
+  assertEquals(
+    controlled.calls.filter((call) =>
+      call.name === "finalize_captured_document_operation"
+    ),
+    [],
+  );
+});
+
+Deno.test("v2 review capacity wait preserves the generation checkpoint and does not prepare a call", async () => {
+  const controlled = groundedGateway({
+    replayStatus: "validating",
+    generationCheckpoint: groundedOutput(),
+  });
+  const tasks: string[] = [];
+  const result = await runGrounded(controlled, async (request) => {
+    tasks.push(request.task);
+    throw new OpenAIAdapterError("OPENAI_AWAITING_CAPACITY", 429, true);
+  });
+  assertEquals(result.status, 202);
+  assertEquals(result.body.status, "awaiting_capacity");
+  assertEquals(tasks, ["review"]);
+  assertEquals(
+    controlled.calls.find((call) =>
+      call.name === "defer_captured_document_operation_for_capacity"
+    )?.args.p_semantic_route,
+    "review",
+  );
+  assertEquals(
+    controlled.calls.filter((call) =>
+      call.name === "record_captured_document_provider_attempt" ||
+      call.name === "finalize_captured_document_operation"
+    ),
+    [],
+  );
+  const early = groundedGateway({
+    replayStatus: "awaiting_capacity",
+    generationCheckpoint: groundedOutput(),
+    capacityResumeDeferred: true,
+  });
+  let earlyCalls = 0;
+  const deferred = await runGrounded(early, async () => {
+    earlyCalls++;
+    throw new Error("Deadline has not elapsed");
+  });
+  assertEquals(deferred.status, 202);
+  assertEquals(earlyCalls, 0);
+});
+
+Deno.test("v2 two exhausted review attempts cannot dispatch attempt three on resume", async () => {
+  const controlled = groundedGateway({
+    replayStatus: "validating",
+    generationCheckpoint: groundedOutput(),
+  });
+  let providerCalls = 0;
+  const result = await runGrounded(controlled, async (request) => {
+    providerCalls++;
+    assertEquals(request.task, "review");
+    const attempts = [
+      await failCompletedProviderAttempt(request, 1),
+      await failCompletedProviderAttempt(request, 2),
+    ];
+    const error = new OpenAIAdapterError("OPENAI_UPSTREAM_ERROR", 429, true);
+    error.attempts = attempts;
+    throw error;
+  });
+  assertEquals(result.status, 422);
+  assertEquals(result.body.status, "terminal_failure");
+  assertEquals(result.body.retryable, false);
+  const resumed = await runGrounded(controlled, async () => {
+    providerCalls++;
+    throw new Error("Exhausted review must not dispatch");
+  });
+  assertEquals(resumed.status, 409);
+  assertEquals(providerCalls, 1);
+  assertEquals(controlled.attemptNumbers, [1, 2]);
+  assertEquals(
+    controlled.calls.filter((call) =>
+      call.name === "finalize_captured_document_operation"
+    ),
+    [],
+  );
+});
+
+Deno.test("v2 uncertain review preparation is reconciled without restarting generation", async () => {
+  const controlled = groundedGateway({
+    replayStatus: "validating",
+    generationCheckpoint: groundedOutput(),
+    preparedReconciliationRequiredOnce: true,
+  });
+  const tasks: string[] = [];
+  const result = await runGrounded(controlled, async (request) => {
+    tasks.push(request.task);
+    return await successfulProvider(
+      "resp_should_not_complete",
+      reviewFromRequest(request),
+    )(request);
+  });
+  assert(result.status >= 400);
+  assertEquals(tasks, ["review"]);
+  assert(
+    controlled.calls.some((call) =>
+      call.name === "reconcile_captured_document_provider_attempt"
+    ),
+  );
+  assertEquals(
+    controlled.calls.filter((call) =>
+      call.name === "finalize_captured_document_operation"
+    ),
+    [],
+  );
+});
+
+Deno.test("v2 provider review must match its durable verdict checkpoint", async () => {
+  const controlled = groundedGateway({
+    replayStatus: "validating",
+    generationCheckpoint: groundedOutput(),
+  });
+  const result = await runGrounded(controlled, async (request) => {
+    const response = await successfulProvider(
+      "resp_review_drift",
+      reviewFromRequest(request),
+    )(request);
+    const changed = reviewFromRequest(request);
+    changed.sections[0].checks.material_claim_support = "fail";
+    return { ...response, structured: changed };
+  });
+  assertEquals(result.status, 503);
+  assertEquals(result.body.retryable, true);
+  assertEquals(
+    controlled.calls.filter((call) =>
+      call.name === "finalize_captured_document_operation"
+    ),
+    [],
+  );
+});
+
+Deno.test("v2 stale document finalization returns a revision conflict with no success", async () => {
+  const controlled = groundedGateway({
+    replayStatus: "persisting",
+    generationCheckpoint: groundedOutput(),
+    reviewCheckpoint: await storedGroundingReview(),
+  });
+  const rpc = controlled.adapter.rpc;
+  controlled.adapter.rpc = async (name, args) =>
+    name === "finalize_captured_document_operation"
+      ? {
+        data: null,
+        error: { message: "STALE_CAPTURED_DOCUMENT_FINALIZATION" },
+      }
+      : await rpc(name, args);
+  const result = await runGrounded(controlled, async () => {
+    throw new Error("No provider work needed");
+  });
+  assertEquals(result.status, 409);
+  assertEquals(result.body.retryable, false);
+  assertEquals(
+    (result.body.error as Record<string, unknown>).code,
+    "STALE_CAPTURED_DOCUMENT_FINALIZATION",
+  );
+  assertEquals(result.body.status, undefined);
+});
+
+for (
+  const pipeline_version of [
+    "captured-operation-pipeline.1",
+    "captured-operation-pipeline.99",
+  ]
+) {
+  Deno.test(`grounded ledger rejects mismatched ${pipeline_version} before provider work`, async () => {
+    const controlled = groundedGateway({
+      resumePayload: groundedResumePayload({ pipeline_version }),
+    });
+    let calls = 0;
+    const result = await runGrounded(controlled, async () => {
+      calls++;
+      throw new Error("Mismatched accepted contract");
+    });
+    assert(result.status >= 400);
+    assertEquals(result.body.retryable, false);
+    assertEquals(calls, 0);
+    assertEquals(controlled.calls.map((call) => call.name), [
+      "get_captured_document_resume_payload",
+    ]);
+  });
+}
+
 async function completeProviderAttempt(
   request: ProviderRequest,
   responseId: string,
@@ -243,7 +888,7 @@ function gateway(options?: {
   const attemptNumbers: number[] = [];
   let revision = 1;
   let status = options?.replayStatus ?? "accepted";
-  let nextAttemptNumber = options?.nextAttemptNumber ?? 1;
+  const nextStageAttempt = new Map<string, number>();
   let acceptCalls = 0;
   let preparedAttempt = false;
   let cancellationRequested = false;
@@ -253,9 +898,11 @@ function gateway(options?: {
     options?.preparedReconciliationRequiredOnce ?? false;
   let completionAcknowledgementsLost =
     options?.completionAcknowledgementsLost ?? 0;
-  let generationCheckpoint = options?.generationCheckpoint ?? null;
-  let reviewCheckpoint = options?.reviewCheckpoint ?? null;
-  const completedAttemptKeys = new Set<string>();
+  let generationCheckpoint = structuredClone(
+    options?.generationCheckpoint ?? null,
+  );
+  let reviewCheckpoint = structuredClone(options?.reviewCheckpoint ?? null);
+  const completedAttempts = new Map<string, Record<string, unknown>>();
   let lastAcceptance: Record<string, unknown> | null = null;
   const leaseToken = "66666666-6666-4666-8666-666666666666";
   const value = (extra: Record<string, unknown> = {}) => ({
@@ -267,8 +914,8 @@ function gateway(options?: {
     correlation_id: "55555555-5555-4555-8555-555555555555",
     routing_version: "routing.test.1",
     route_snapshot: options?.routeSnapshot ?? acceptedRouteSnapshot(),
-    generation_checkpoint: generationCheckpoint,
-    review_checkpoint: reviewCheckpoint,
+    generation_checkpoint: structuredClone(generationCheckpoint),
+    review_checkpoint: structuredClone(reviewCheckpoint),
     cancellation_requested: cancellationRequested,
     cancellation_code: cancellationCode,
     ...(status === "awaiting_capacity"
@@ -324,7 +971,7 @@ function gateway(options?: {
 
   const adapter: CapturedOperationGateway = {
     async rpc(name, args) {
-      calls.push({ name, args });
+      calls.push({ name, args: structuredClone(args) });
       if (name === "get_captured_document_resume_payload") {
         return { data: payload(), error: null };
       }
@@ -444,10 +1091,12 @@ function gateway(options?: {
             },
           };
         }
+        const stage = String(args.p_logical_stage_key);
         const attemptNumber = prepared
-          ? nextAttemptNumber++
+          ? nextStageAttempt.get(stage) ?? options?.nextAttemptNumber ?? 1
           : Number(args.p_attempt_number);
         if (prepared) {
+          nextStageAttempt.set(stage, attemptNumber + 1);
           attemptNumbers.push(attemptNumber);
           preparedAttempt = true;
         } else {
@@ -469,17 +1118,29 @@ function gateway(options?: {
         const attemptKey = `${String(args.p_logical_stage_key)}:${
           String(args.p_attempt_number)
         }`;
-        const replay = completedAttemptKeys.has(attemptKey);
+        const priorCompletion = completedAttempts.get(attemptKey);
+        const replay = priorCompletion !== undefined;
+        if (
+          priorCompletion &&
+          JSON.stringify(priorCompletion) !== JSON.stringify(args)
+        ) {
+          return {
+            data: null,
+            error: { message: "CAPTURED_PROVIDER_ATTEMPT_COMPLETION_CONFLICT" },
+          };
+        }
         if (!replay) {
           revision += 1;
-          completedAttemptKeys.add(attemptKey);
+          completedAttempts.set(attemptKey, structuredClone(args));
           if (args.p_status === "succeeded") {
             if (args.p_logical_stage_key === "generation") {
-              generationCheckpoint = args.p_structured_output as
+              generationCheckpoint = structuredClone(
+                args.p_structured_output,
+              ) as
                 | Record<string, unknown>
                 | null;
             } else if (args.p_logical_stage_key === "review") {
-              reviewCheckpoint = args.p_structured_output as
+              reviewCheckpoint = structuredClone(args.p_structured_output) as
                 | Record<string, unknown>
                 | null;
             }

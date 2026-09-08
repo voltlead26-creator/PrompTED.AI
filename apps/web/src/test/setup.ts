@@ -32,6 +32,18 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = vi.fn();
 }
 
+// jsdom does not implement the native dialog top layer. This shim models only
+// its open/close state; real focus containment, inert background and viewport
+// placement still require the browser acceptance check.
+if (typeof HTMLDialogElement !== "undefined") {
+  if (!HTMLDialogElement.prototype.showModal) {
+    HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  }
+  if (!HTMLDialogElement.prototype.close) {
+    HTMLDialogElement.prototype.close = function () { this.open = false; };
+  }
+}
+
 afterEach(() => {
   cleanup();
 });

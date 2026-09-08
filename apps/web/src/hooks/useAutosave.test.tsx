@@ -144,4 +144,71 @@ describe("useAutosave owner epoch", () => {
     hook.unmount();
     expect(save).toHaveBeenCalledTimes(1);
   });
+
+  it("can discard the old mutation while scheduling the new edited value", () => {
+    const save = vi.fn();
+    recordBrowserPrincipal("user-a");
+    const hook = renderHook(
+      ({ value, epoch }) => useAutosave(value, save, 500, "user:user-a", epoch, "schedule-current"),
+      { initialProps: { value: "original", epoch: 0 } },
+    );
+    hook.rerender({ value: "first edit", epoch: 1 });
+    act(() => vi.advanceTimersByTime(400));
+    hook.rerender({ value: "latest edit", epoch: 2 });
+    act(() => vi.advanceTimersByTime(499));
+    expect(save).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      "latest edit",
+      expect.objectContaining({ expectedUserId: "user-a" }),
+    );
+    hook.unmount();
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("fences an old timer before React renders the new mutation", () => {
+    const save = vi.fn();
+    let epoch = 0;
+    recordBrowserPrincipal("user-a");
+    const hook = renderHook(
+      ({ value }) => useAutosave(value, save, 500, "user:user-a", () => epoch, "schedule-current"),
+      { initialProps: { value: "original" } },
+    );
+    epoch = 1;
+    hook.rerender({ value: "first edit" });
+    epoch = 2;
+    act(() => vi.advanceTimersByTime(500));
+    expect(save).not.toHaveBeenCalled();
+    hook.rerender({ value: "latest edit" });
+    hook.unmount();
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      "latest edit",
+      expect.objectContaining({ expectedUserId: "user-a" }),
+    );
+  });
+
+  it.each(["changed owner", "owner round trip", "unmount"])(
+    "keeps the opt-in mutation save fenced after %s",
+    (transition) => {
+      const save = vi.fn();
+      recordBrowserPrincipal("user-a");
+      const hook = renderHook(
+        ({ value, epoch, ownerEpoch }) =>
+          useAutosave(value, save, 500, ownerEpoch, epoch, "schedule-current"),
+        { initialProps: { value: "original", epoch: 0, ownerEpoch: "user:user-a" } },
+      );
+      hook.rerender({ value: "private A edit", epoch: 1, ownerEpoch: "user:user-a" });
+      recordBrowserPrincipal("user-b");
+      if (transition === "changed owner") {
+        hook.rerender({ value: "B document", epoch: 2, ownerEpoch: "user:user-b" });
+      } else if (transition === "owner round trip") {
+        recordBrowserPrincipal("user-a");
+      } else {
+        hook.unmount();
+      }
+      act(() => vi.advanceTimersByTime(1_000));
+      hook.unmount();
+      expect(save).not.toHaveBeenCalled();
+    },
+  );
 });

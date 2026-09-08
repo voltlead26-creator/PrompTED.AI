@@ -170,10 +170,8 @@ export interface GroundingIssue {
 
 function normaliseEvidence(value: string): string {
   return value
-    .normalize("NFKC")
-    .toLowerCase()
     .replace(/[’‘]/g, "'")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[\u2010-\u2014]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -189,8 +187,13 @@ export function groundingIssuesFromAudit(
   units: readonly FactualAuditUnit[],
   audit: readonly FactualAuditEntry[],
   source: string,
+  options?: { evidenceMode?: "typographic" | "verbatim" },
 ): GroundingIssue[] {
-  const sourceText = normaliseEvidence(source);
+  // Historical callers allow limited typography differences. Preserve case,
+  // Unicode, punctuation and numeric signs; none may be erased into a match.
+  // Exact assessment callers require the literal excerpt from their snapshot.
+  const verbatim = options?.evidenceMode === "verbatim";
+  const sourceText = verbatim ? source : normaliseEvidence(source);
   const byId = new Map(audit.map((entry) => [entry.unit_id, entry]));
 
   return units.flatMap((unit): GroundingIssue[] => {
@@ -229,9 +232,11 @@ export function groundingIssuesFromAudit(
     if (entry.classification === "supported") {
       const evidence = entry.evidence_quotes?.filter(Boolean) ?? [];
       const evidenceExists = evidence.length > 0 &&
-        evidence.every((quote) =>
-          sourceText.includes(normaliseEvidence(quote))
-        );
+        evidence.every((quote) => {
+          const excerpt = verbatim ? quote : normaliseEvidence(quote);
+          // Shared punctuation or a symbol alone cannot substantiate a fact.
+          return /[\p{L}\p{N}]/u.test(excerpt) && sourceText.includes(excerpt);
+        });
       if (evidenceExists) return [];
 
       return [{

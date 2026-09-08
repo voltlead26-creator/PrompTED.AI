@@ -31,11 +31,6 @@ function unavailable(authenticated: boolean, ownerUserId: string | null = null):
   };
 }
 
-interface SnapshotRpcResult {
-  data: unknown;
-  error: { code?: string; message?: string } | null;
-}
-
 /**
  * Loads all critical workspace truth from one versioned, owner-bound database
  * statement. Authentication remains a separate Supabase Auth operation; no
@@ -49,11 +44,7 @@ export async function loadWorkspaceInitialState(outcomeId: string): Promise<Work
   if (!auth.user) return { workspace: null, intake: null, truth: EMPTY_TRUTH };
 
   try {
-    const rpc = supabase.rpc as unknown as (
-      name: "get_workspace_snapshot_v1",
-      args: { p_outcome_id: string; p_active_section_id: string | null },
-    ) => Promise<SnapshotRpcResult>;
-    const { data, error } = await rpc("get_workspace_snapshot_v1", {
+    const { data, error } = await supabase.rpc("get_workspace_snapshot_v1", {
       p_outcome_id: outcomeId,
       p_active_section_id: null,
     });

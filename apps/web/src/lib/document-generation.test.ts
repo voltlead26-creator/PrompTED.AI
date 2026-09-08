@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Section } from "@prompted/shared";
 import {
   applyGeneratedSection,
+  applyGeneratedResult,
+  mergeGenerationMissingInfo,
+  type DocumentGenerationResult,
   applyRequiredSectionFallbacks,
   pendingDefaults,
   shouldGenerateInitialDraft,
@@ -51,6 +54,130 @@ function state(overrides: Partial<WorkspaceDocumentState> = {}): WorkspaceDocume
 }
 
 describe("document generation helpers", () => {
+  it.each([
+    { key: "unrelated", label: "Introduction" },
+    { key: "unrelated", label: "Intro" },
+    { key: "unrelated", label: "Something else" },
+  ])(
+    "rejects an unbound unknown key without label or blank-section reassignment: %j",
+    (identity) => {
+      const current = state();
+      const original = structuredClone(current);
+      expect(() =>
+        applyGeneratedSection(current, { ...identity, content: "Unrelated generated wording." }),
+      ).toThrow("DOCUMENT_GENERATION_SCOPE_INVALID");
+      expect(current).toEqual(original);
+    },
+  );
+
+  it("preserves stored identity and structure when a keyed section receives new wording", () => {
+    const current = state({ sections: [section({ key: "introduction", status: "approved" })] });
+    const next = applyGeneratedSection(current, {
+      key: "introduction",
+      label: "Provider replacement title",
+      content: "Supported new wording.",
+    });
+    expect(next.sections[0]).toEqual({
+      ...current.sections[0],
+      content: "Supported new wording.",
+      status: "draft",
+      updated_at: expect.any(String),
+    });
+  });
+
+  it("uses an explicit request-bound ID instead of another section's label or key", () => {
+    const sibling = section({
+      id: "kept",
+      key: "introduction",
+      content: "Approved sibling wording.",
+      status: "approved",
+    });
+    const current = state({
+      sections: [sibling, section({ id: "requested", name: "!!!", order_index: 1 })],
+    });
+    const event = {
+      targetSectionId: "requested",
+      key: "section_1",
+      label: "Introduction",
+      content: "Exact requested wording.",
+    };
+    const next = applyGeneratedSection(current, event);
+    expect(next.sections[0]).toBe(sibling);
+    expect(next.sections[1]).toEqual({
+      ...current.sections[1],
+      key: "section_1",
+      content: "Exact requested wording.",
+      status: "draft",
+      updated_at: expect.any(String),
+    });
+  });
+
+  it.each(["missing", "duplicate"])(
+    "rejects a %s bound ID without falling back to an exact key",
+    (kind) => {
+      const current = state({
+        sections: [
+          section({ id: "same", key: "introduction" }),
+          section({
+            id: kind === "duplicate" ? "same" : "different",
+            key: "request",
+            order_index: 1,
+          }),
+        ],
+      });
+      const event = {
+        targetSectionId: kind === "duplicate" ? "same" : "absent",
+        key: "introduction",
+        label: "Introduction",
+        content: "Generated wording.",
+      };
+      expect(() => applyGeneratedSection(current, event)).toThrow(
+        "DOCUMENT_GENERATION_SCOPE_INVALID",
+      );
+      expect(current.sections.every((item) => item.content === "")).toBe(true);
+    },
+  );
+
+  it("rejects an ambiguous unbound keyless normalized name", () => {
+    const current = state({
+      sections: [
+        section({ id: "one", name: "Introduction" }),
+        section({ id: "two", name: "INTRODUCTION", order_index: 1 }),
+      ],
+    });
+    expect(() =>
+      applyGeneratedSection(current, {
+        key: "introduction",
+        label: "Introduction",
+        content: "Generated wording.",
+      }),
+    ).toThrow("DOCUMENT_GENERATION_SCOPE_INVALID");
+  });
+
+  it("rejects a positional key for an unbound keyless section", () => {
+    const current = state({ sections: [section({ name: "!!!" })] });
+    expect(() =>
+      applyGeneratedSection(current, {
+        key: "section_1",
+        label: "!!!",
+        content: "Generated wording.",
+      }),
+    ).toThrow("DOCUMENT_GENERATION_SCOPE_INVALID");
+  });
+
+  it("rejects a provisional event at the canonical reducer boundary", () => {
+    const current = state({ sections: [section({ key: "introduction" })] });
+    expect(() =>
+      applyGeneratedSection(current, {
+        type: "draft_section",
+        key: "introduction",
+        label: "Introduction",
+        content: "Provisional wording.",
+      }),
+    ).toThrow("DOCUMENT_GENERATION_SCOPE_INVALID");
+    expect(current.sections[0]?.content).toBe("");
+  });
+
   it("round-trips workspace state through storage without dropping context", () => {
     const current = state();
     const stored = storedFromState("outcome-1", current);
@@ -204,11 +331,11 @@ describe("document generation helpers", () => {
     ).toBe(false);
   });
 
-  it("applies streamed section content by section label", () => {
+  it("applies streamed wording by the exact generated key of a historical keyless section", () => {
     const next = applyGeneratedSection(state(), {
       type: "section",
-      key: "intro",
-      label: "Introduction",
+      key: "introduction",
+      label: "Provider display label",
       content: "Generated intro",
     });
 
@@ -342,18 +469,29 @@ describe("document generation helpers", () => {
     ]);
   });
 
-  it("applies generic generated content to a single-section workspace", () => {
-    const next = applyGeneratedSection(
-      state({ sections: [section({ name: "Professional Summary" })] }),
-      {
+  it("rejects generic generated content that has no exact single-section destination", () => {
+    const current = state({ sections: [section({ name: "Professional Summary" })] });
+    expect(() =>
+      applyGeneratedSection(current, {
         type: "section",
         key: "body",
         label: "Content",
         content: "Generated summary",
-      },
-    );
-
-    expect(next.sections[0]?.content).toBe("Generated summary");
+      }),
+    ).toThrow("DOCUMENT_GENERATION_SCOPE_INVALID");
+    expect(current.sections[0]?.content).toBe("");
+    const next = applyGeneratedSection(current, {
+      type: "section",
+      key: "professional_summary",
+      label: "Content",
+      content: "Generated summary",
+    });
+    expect(next.sections[0]).toEqual({
+      ...current.sections[0],
+      key: "professional_summary",
+      content: "Generated summary",
+      updated_at: expect.any(String),
+    });
   });
 
   it("hydrates pending defaults without loading the full template catalogue", () => {
@@ -380,3 +518,195 @@ describe("document generation helpers", () => {
     expect(resolved.template?.name).toBe("Offer Letter");
   });
 });
+
+function placeholder(sectionKey: string, id = `contract.${sectionKey}.detail`) {
+  return {
+    id,
+    sectionKey,
+    profileKey: "contract",
+    informationKey: "detail",
+    label: "Confirmed detail",
+    question: "What is the confirmed detail?",
+    factType: "detail",
+    requiredForExport: true,
+    neutralReplacementOptions: [],
+    sharedResolutionKey: "same-confirmed-fact",
+  };
+}
+
+function resultFor(key = "introduction", sectionId = "section-1"): DocumentGenerationResult {
+  return {
+    documentId: "doc-1",
+    requestId: "accepted-request",
+    scope: [{ key, sectionId }],
+    sections: [
+      {
+        type: "section",
+        targetSectionId: sectionId,
+        key,
+        label: "Provider heading",
+        content: "Confirmed new wording.",
+      },
+    ],
+    missingInfo: [],
+    unresolvedPlaceholders: [],
+  };
+}
+
+describe("complete generation result adoption", () => {
+  it.each(["sibling", "Issue__DETAILS", "issue-details"])(
+    "replaces only exact scoped metadata while preserving %s",
+    (siblingKey) => {
+      const currentPlaceholder = placeholder("issue_details");
+      const siblingPlaceholder = placeholder(siblingKey);
+      const stalePlaceholder = placeholder("unknown-historical-key");
+      const sibling = section({
+        id: "sibling-id",
+        key: siblingKey,
+        status: "approved",
+        content: "Approved wording.",
+        order_index: 1,
+      });
+      const current = state({
+        sections: [section({ key: "issue_details" }), sibling],
+        unresolvedPlaceholders: [currentPlaceholder, siblingPlaceholder, stalePlaceholder],
+      });
+      const result = resultFor("issue_details");
+      const next = applyGeneratedResult(current, result);
+      expect(next.sections[0]?.content).toBe("Confirmed new wording.");
+      expect(next.sections[0]?.name).toBe("Introduction");
+      expect(next.sections[1]).toBe(sibling);
+      expect(next.unresolvedPlaceholders).toEqual([siblingPlaceholder, stalePlaceholder]);
+      expect(next.unresolvedPlaceholders?.[0]).toBe(siblingPlaceholder);
+      const siblingQuestion = { key: siblingKey, label: "Sibling", missing: ["Confirmed detail"] };
+      expect(
+        mergeGenerationMissingInfo(
+          [{ key: "issue_details", label: "Issue", missing: ["Old fact"] }, siblingQuestion],
+          result,
+        ),
+      ).toEqual([siblingQuestion]);
+      expect(current.unresolvedPlaceholders).toEqual([
+        currentPlaceholder,
+        siblingPlaceholder,
+        stalePlaceholder,
+      ]);
+    },
+  );
+
+  it("accepts exact new placeholder wording and retains unrelated blockers", () => {
+    const incoming = placeholder("introduction");
+    const result = resultFor();
+    result.sections[0]!.content = `I contacted {{TED_PLACEHOLDER:${incoming.id}:${incoming.label}}}.`;
+    result.unresolvedPlaceholders = [incoming];
+    result.missingInfo = [
+      { key: "introduction", label: "Introduction", missing: ["Contact name"] },
+    ];
+    const next = applyGeneratedResult(state(), result);
+    expect(next.unresolvedPlaceholders).toEqual([incoming]);
+    expect(next.sections[0]?.key).toBe("introduction");
+    expect(mergeGenerationMissingInfo([], result)).toEqual(result.missingInfo);
+  });
+
+  it.each([
+    "retained collision",
+    "duplicate incoming",
+    "foreign metadata",
+    "foreign question",
+    "orphaned sibling token",
+    "undeclared token",
+    "metadata without token",
+    "different stored key",
+    "empty result",
+    "blank body",
+    "scaffold body",
+    "empty HTML",
+  ])("rejects %s before candidate mutation", (failure) => {
+    const old = placeholder("introduction");
+    const other = placeholder("sibling");
+    const current = state({
+      sections: [
+        section({ key: "introduction" }),
+        section({
+          id: "sibling-id",
+          key: "sibling",
+          content: "Approved wording.",
+          status: "approved",
+          order_index: 1,
+        }),
+      ],
+      unresolvedPlaceholders: [old, other],
+    });
+    const result = resultFor();
+    if (failure === "retained collision")
+      result.unresolvedPlaceholders = [{ ...old, id: other.id }];
+    if (failure === "duplicate incoming") result.unresolvedPlaceholders = [old, old];
+    if (failure === "foreign metadata") result.unresolvedPlaceholders = [placeholder("unknown")];
+    if (failure === "foreign question")
+      result.missingInfo = [{ key: "unknown", label: "Unknown", missing: ["Private detail"] }];
+    if (failure === "orphaned sibling token")
+      current.sections[1]!.content = `{{TED_PLACEHOLDER:${old.id}:${old.label}}}`;
+    if (failure === "undeclared token")
+      result.sections[0]!.content = `{{TED_PLACEHOLDER:${old.id}:${old.label}}}`;
+    if (failure === "metadata without token") result.unresolvedPlaceholders = [old];
+    if (failure === "different stored key") current.sections[0]!.key = "other-stored-key";
+    if (failure === "empty result") {
+      result.scope = [];
+      result.sections = [];
+    }
+    if (failure === "blank body") result.sections[0]!.content = " ";
+    if (failure === "scaffold body") result.sections[0]!.content = "TED will replace this scaffold";
+    if (failure === "empty HTML") result.sections[0]!.content = "<p><br></p>";
+    const original = structuredClone(current);
+    expect(() => {
+      applyGeneratedResult(current, result);
+      mergeGenerationMissingInfo([], result);
+    }).toThrow(/DOCUMENT_GENERATION_SCOPE_INVALID|DOCUMENT_FINAL_WORDING_INVALID/);
+    expect(current).toEqual(original);
+  });
+});
+
+it("rejects a downgrade of an existing unresolved required fact", () => {
+  const required = placeholder("introduction");
+  const content = `Please contact {{TED_PLACEHOLDER:${required.id}:${required.label}}}.`;
+  const current = state({
+    sections: [section({ key: "introduction", content })],
+    unresolvedPlaceholders: [required],
+  });
+  const result = resultFor();
+  result.sections[0]!.content = content;
+  result.unresolvedPlaceholders = [{ ...required, requiredForExport: false }];
+  expect(() => applyGeneratedResult(current, result)).toThrow("DOCUMENT_GENERATION_SCOPE_INVALID");
+  expect(current.unresolvedPlaceholders).toEqual([required]);
+});
+
+it.each([false, true])(
+  "checks an existing neutral option with changed=%s by its values",
+  (changed) => {
+    const option = {
+      id: "general",
+      label: "Use general wording",
+      value: "the contact",
+      suitability: "Optional contact",
+      clearsExportWarning: false,
+      regenerateSurroundingWording: false,
+    };
+    const accepted = { ...placeholder("introduction"), neutralReplacementOptions: [option] };
+    const current = state({
+      sections: [section({ key: "introduction" })],
+      unresolvedPlaceholders: [accepted],
+    });
+    const result = resultFor();
+    result.sections[0]!.content = `Please contact {{TED_PLACEHOLDER:${accepted.id}:${accepted.label}}}.`;
+    result.unresolvedPlaceholders = [
+      { ...accepted, neutralReplacementOptions: [{ ...option, clearsExportWarning: changed }] },
+    ];
+    if (changed)
+      expect(() => applyGeneratedResult(current, result)).toThrow(
+        "DOCUMENT_GENERATION_SCOPE_INVALID",
+      );
+    else
+      expect(applyGeneratedResult(current, result).unresolvedPlaceholders).toEqual(
+        result.unresolvedPlaceholders,
+      );
+  },
+);

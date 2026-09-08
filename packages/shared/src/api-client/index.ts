@@ -1,3 +1,4 @@
+import { isOllamaCreditFallbackPolicy, type OllamaCreditFallbackPolicy } from "../document-operation";
 // =====================================================
 // PrompTED — Typed API Client
 // Thin fetch wrappers around the orchestration Edge Functions.
@@ -32,6 +33,10 @@ import type { TedArtifact, TedArtifactEvent, TedSupportingArtifactKind } from ".
 import {
   parseIngestUploadConfirmPayload,
   preflightUploadMetadata,
+  preflightUploadMetadataV2,
+  UPLOAD_RESOURCE_POLICY_VERSION,
+  UPLOAD_RESOURCE_POLICY_VERSION_V2,
+  type UploadPreflightFormatV2,
   type IngestUploadConfirmPayload,
 } from "../ingest-upload";
 import {
@@ -946,13 +951,9 @@ export interface GenerateDocumentInput {
     vital?: string[];
     improver?: string[];
   }>;
-  /**
-   * Authoritative metadata from the canonical template catalog
-   * (packages/shared/src/templates/templates.data.json). When provided, the
-   * backend uses these instead of re-deriving them from template_id against
-   * its own smaller fallback registry -- the catalog is the single source of
-   * truth, not the backend's stub list.
-   */
+  /** Compatibility assertions from older callers. The server resolves the
+   * canonical catalogue policy and rejects conflicting assertions; these
+   * fields cannot replace its domain, structure or advice requirements. */
   domain?: string;
   structure_type?: "compose" | "structured_form" | "checklist";
   advice_boundary?: "none" | "light" | "high-stakes";
@@ -995,9 +996,62 @@ export interface DocumentDraftSectionEvent {
   content: string;
 }
 
+// Allow the durable payload ceiling plus bounded SSE framing and heartbeats.
+const DOCUMENT_STREAM_MAX_BYTES = 8_380_000 + 64 * 1024;
+const DOCUMENT_STREAM_MAX_FRAME_BYTES = 1024 * 1024;
+const DOCUMENT_STREAM_MAX_EVENTS = 1024;
+const DOCUMENT_STREAM_MAX_SECTIONS = 128;
+// The existing server sends a heartbeat every 20 seconds. Three missing
+// intervals end this observation; they do not establish provider completion.
+const DOCUMENT_STREAM_IDLE_TIMEOUT_MS = 60_000;
+
+function documentStreamFailure(code = "DOCUMENT_STREAM_EVENT_INVALID"): never {
+  throw new ApiError(502, code, {});
+}
+
+function streamString(value: unknown, maximum: number, allowEmpty = false): value is string {
+  return typeof value === "string" && value.length <= maximum &&
+    (allowEmpty || value.trim().length > 0);
+}
+
+function streamRoster(value: unknown): value is DocumentDesignEvent["sections"] {
+  return Array.isArray(value) && value.length > 0 &&
+    value.length <= DOCUMENT_STREAM_MAX_SECTIONS &&
+    value.every((section) => isRecord(section) &&
+      streamString(section.key, 200) && streamString(section.label, 512) &&
+      typeof section.required === "boolean") &&
+    new Set(value.map((section) => section.key)).size === value.length;
+}
+
+function streamPlaceholder(value: unknown): value is DocumentPlaceholderMetadata {
+  if (!isRecord(value)) return false;
+  const fields = ["id", "profileKey", "sectionKey", "informationKey", "label", "question", "factType"];
+  if (!fields.every((field) => streamString(value[field], 16_384))) return false;
+  if (typeof value.requiredForExport !== "boolean") return false;
+  for (const field of ["automaticFallback", "sharedResolutionKey"]) {
+    if (value[field] !== undefined && !streamString(value[field], 16_384, true)) return false;
+  }
+  const options = value.neutralReplacementOptions;
+  return Array.isArray(options) && options.length <= 128 &&
+    options.every((option) => isRecord(option) &&
+      ["id", "label", "value", "suitability"].every((key) =>
+        streamString(option[key], 16_384, key === "value")) &&
+      typeof option.clearsExportWarning === "boolean" &&
+      typeof option.regenerateSurroundingWording === "boolean") &&
+    new Set(options.map((option) => option.id)).size === options.length;
+}
+
+type AcceptedDocumentStreamEvent =
+  | DocumentSectionEvent
+  | DocumentDesignEvent
+  | MissingInfoEvent
+  | UnresolvedPlaceholdersEvent;
+
+
 /**
- * Stream document sections as they generate. Calls `onSection` for each
- * section event. Resolves when the stream completes.
+ * Accept reviewed sections only after the complete expected set, terminal
+ * marker and EOF. Draft callbacks are transient previews, never saved content.
+ * Completion proves this response's transport contract, not a document revision.
  */
 export async function generateDocumentStream(
   input: GenerateDocumentInput,
@@ -1027,67 +1081,260 @@ export async function generateDocumentStream(
 
   const res = await request(`${config.baseUrl}/generate-document`);
 
-  const body = res.body!;
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
+  if ((res.headers.get("Content-Type") ?? "").split(";")[0]?.trim().toLowerCase() !== "text/event-stream") {
+    void res.body!.cancel().catch(() => undefined);
+    documentStreamFailure("DOCUMENT_STREAM_CONTENT_TYPE_INVALID");
+  }
+  if (input.sections !== undefined && !streamRoster(input.sections)) {
+    void res.body!.cancel().catch(() => undefined);
+    documentStreamFailure("DOCUMENT_STREAM_SECTION_SET_INVALID");
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const encoder = new TextEncoder();
+  let expectedKeys = input.sections?.map((section) => section.key) ?? null;
   let buffer = "";
+  let searchFrom = 0;
+  let dataLines: string[] = [];
+  let frameBytes = 0;
+  let pendingBytes = 0;
+  let receivedBytes = 0;
+  let eventCount = 0;
+  let terminal = false;
+  let eof = false;
+  let phase: "design" | "drafts" | "sections" | "metadata" = "design";
+  const accepted: AcceptedDocumentStreamEvent[] = [];
+  const finalKeys: string[] = [];
+  const metadataTypes = new Set<string>();
+  let designSeen = false;
+  let firstDecodedCharacter = true;
+  let cleanup: Promise<void> | undefined;
+  const cancelReader = () => {
+    cleanup ??= reader.cancel().catch(() => undefined);
+    return cleanup;
+  };
+  const onAbort = () => { void cancelReader(); };
+  requestContext.signal.addEventListener("abort", onAbort, { once: true });
 
-  for (;;) {
-    const { done, value } = await reader.read();
+  const readChunk = async () => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        reader.read(),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new ApiError(504,
+            "DOCUMENT_STREAM_IDLE_TIMEOUT", {})), DOCUMENT_STREAM_IDLE_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  const completeSectionSet = () => {
+    const roster = expectedKeys;
+    if (!roster?.length || finalKeys.length !== roster.length ||
+      finalKeys.some((key, index) => key !== roster[index])) {
+      documentStreamFailure("DOCUMENT_STREAM_SECTION_SET_INVALID");
+    }
+  };
+  const knownSection = (key: unknown): key is string =>
+    streamString(key, 200) && (!expectedKeys || expectedKeys.includes(key));
+
+  const consumeEvent = async (data: string) => {
     assertRequestCurrent(requestContext);
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const events = buffer.split("\n\n");
-    buffer = events.pop() ?? "";
-    for (const raw of events) {
-      const line = raw.replace(/^data: /, "").trim();
-      if (!line || line === "[DONE]") continue;
-      assertRequestCurrent(requestContext);
-      try {
-        const event = JSON.parse(line) as
-          | DocumentSectionEvent
-          | DocumentDraftSectionEvent
-          | UnresolvedPlaceholdersEvent
-          | {
-              type: string;
-              error?: { code?: string };
-              code?: string;
-              detail_code?: string;
-              http_status?: number;
-            };
-        if (event.type === "section") {
-          onSection(event as DocumentSectionEvent);
-        } else if (event.type === "draft_section") {
-          onDraftSection?.(event as DocumentDraftSectionEvent);
-        } else if (event.type === "document_design") {
-          onDesign?.(event as unknown as DocumentDesignEvent);
-        } else if (event.type === "missing_info") {
-          onMissingInfo?.(event as unknown as MissingInfoEvent);
-        } else if (event.type === "unresolved_placeholders") {
-          onUnresolvedPlaceholders?.(event as UnresolvedPlaceholdersEvent);
-        } else if (event.type === "error") {
-          const status =
-            Number.isInteger(event.http_status) &&
-            Number(event.http_status) >= 400 &&
-            Number(event.http_status) <= 599
-              ? Number(event.http_status)
-              : 502;
-          throw new ApiError(
-            status,
-            String(
-              event.error?.code ?? event.code ?? event.detail_code ?? "DOCUMENT_STREAM_FAILED",
-            ),
-            event,
-          );
+    if (++eventCount > DOCUMENT_STREAM_MAX_EVENTS) {
+      documentStreamFailure("DOCUMENT_STREAM_LIMIT_EXCEEDED");
+    }
+    if (terminal) documentStreamFailure("DOCUMENT_STREAM_AFTER_TERMINAL");
+    if (data === "[DONE]") {
+      completeSectionSet();
+      terminal = true;
+      return;
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(data);
+    } catch {
+      documentStreamFailure("DOCUMENT_STREAM_JSON_INVALID");
+    }
+    if (!isRecord(raw)) documentStreamFailure();
+    // A server failure retains its exact code/status, even when no successful
+    // section roster was established. Never mask a reconciliation hold.
+    if (raw.type === "error") {
+      const error = isRecord(raw.error) ? raw.error : {};
+      const code = error.code ?? raw.code ?? raw.detail_code ?? "DOCUMENT_STREAM_FAILED";
+      if (!streamString(code, 256)) documentStreamFailure();
+      const status = raw.http_status === undefined ? 502 : raw.http_status;
+      if (typeof status !== "number" || !Number.isInteger(status) || status < 400 || status > 599) {
+        documentStreamFailure();
+      }
+      throw new ApiError(status, code, raw);
+    }
+    if (raw.type === "document_design") {
+      if (designSeen || phase !== "design" || !input.design_bespoke ||
+        !streamString(raw.name, 512) || !streamRoster(raw.sections)) {
+        documentStreamFailure();
+      }
+      designSeen = true;
+      expectedKeys = raw.sections.map((section) => section.key);
+      accepted.push(raw as unknown as DocumentDesignEvent);
+      return;
+    }
+    if (raw.type === "section" || raw.type === "draft_section") {
+      if (!knownSection(raw.key) || !streamString(raw.label, 512) ||
+        !streamString(raw.content, DOCUMENT_STREAM_MAX_FRAME_BYTES)) {
+        documentStreamFailure();
+      }
+      if (raw.type === "draft_section") {
+        if (phase === "sections" || phase === "metadata") documentStreamFailure();
+        phase = "drafts";
+        // Draft keys may repeat across bounded repairs and arrive concurrently.
+        // This callback is optional and must only update a transient preview.
+        await onDraftSection?.(raw as unknown as DocumentDraftSectionEvent);
+        assertRequestCurrent(requestContext);
+      } else {
+        if (phase === "metadata" || finalKeys.includes(raw.key) ||
+          (expectedKeys && expectedKeys[finalKeys.length] !== raw.key) ||
+          finalKeys.length >= DOCUMENT_STREAM_MAX_SECTIONS) {
+          documentStreamFailure("DOCUMENT_STREAM_SECTION_SET_INVALID");
         }
-      } catch (err) {
-        if (err instanceof ApiError) throw err;
-        // Ignore malformed event lines.
+        phase = "sections";
+        finalKeys.push(raw.key);
+        accepted.push(raw as unknown as DocumentSectionEvent);
+      }
+      return;
+    }
+    if (raw.type !== "missing_info" && raw.type !== "unresolved_placeholders" &&
+      raw.type !== "advice_boundary") documentStreamFailure();
+    completeSectionSet();
+    phase = "metadata";
+    if (metadataTypes.has(raw.type)) documentStreamFailure();
+    metadataTypes.add(raw.type);
+    if (raw.type === "advice_boundary") {
+      if (typeof raw.level !== "string" || !["none", "light", "high-stakes"].includes(raw.level)) {
+        documentStreamFailure();
+      }
+      return;
+    }
+    if (encoder.encode(data).byteLength > 256 * 1024) {
+      documentStreamFailure("DOCUMENT_STREAM_LIMIT_EXCEEDED");
+    }
+    if (raw.type === "missing_info") {
+      const entries = raw.sections;
+      if (!Array.isArray(entries) || entries.length > DOCUMENT_STREAM_MAX_SECTIONS ||
+        !entries.every((entry) => isRecord(entry) && knownSection(entry.key) &&
+          streamString(entry.label, 512) && Array.isArray(entry.missing) &&
+          entry.missing.length <= 128 &&
+          entry.missing.every((value: unknown) => streamString(value, 16_384))) ||
+        new Set(entries.map((entry) => entry.key)).size !== entries.length) {
+        documentStreamFailure();
+      }
+      accepted.push(raw as unknown as MissingInfoEvent);
+    } else {
+      const entries = raw.placeholders;
+      if (!Array.isArray(entries) || entries.length > 512 ||
+        !entries.every((entry) => streamPlaceholder(entry) && knownSection(entry.sectionKey)) ||
+        new Set(entries.map((entry) => entry.id)).size !== entries.length) {
+        documentStreamFailure();
+      }
+      accepted.push(raw as unknown as UnresolvedPlaceholdersEvent);
+    }
+  };
+
+  const consumeLines = async (flushing: boolean) => {
+    const ending = /[\r\n]/g;
+    for (;;) {
+      ending.lastIndex = searchFrom;
+      const match = ending.exec(buffer);
+      if (!match) { searchFrom = buffer.length; break; }
+      const index = match.index;
+      if (!flushing && buffer[index] === "\r" && index === buffer.length - 1) {
+        searchFrom = index;
+        break;
+      }
+      const width = buffer[index] === "\r" && buffer[index + 1] === "\n" ? 2 : 1;
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + width);
+      searchFrom = 0;
+      const lineBytes = encoder.encode(line).byteLength + width;
+      pendingBytes -= lineBytes;
+      frameBytes += lineBytes;
+      if (frameBytes > DOCUMENT_STREAM_MAX_FRAME_BYTES) {
+        documentStreamFailure("DOCUMENT_STREAM_LIMIT_EXCEEDED");
+      }
+      if (!line) {
+        if (dataLines.length > 0) await consumeEvent(dataLines.join("\n"));
+        dataLines = [];
+        frameBytes = 0;
+      } else if (!line.startsWith(":")) {
+        const colon = line.indexOf(":");
+        const field = colon < 0 ? line : line.slice(0, colon);
+        let value = colon < 0 ? "" : line.slice(colon + 1);
+        if (value.startsWith(" ")) value = value.slice(1);
+        if (field === "data") dataLines.push(value);
+        // Event names, IDs and retry hints cannot change this request identity.
       }
     }
+    if (frameBytes + pendingBytes > DOCUMENT_STREAM_MAX_FRAME_BYTES) {
+      documentStreamFailure("DOCUMENT_STREAM_LIMIT_EXCEEDED");
+    }
+  };
+
+  try {
+    assertRequestCurrent(requestContext);
+    for (;;) {
+      const { done, value } = await readChunk();
+      assertRequestCurrent(requestContext);
+      if (value) {
+        receivedBytes += value.byteLength;
+        pendingBytes += value.byteLength;
+        if (receivedBytes > DOCUMENT_STREAM_MAX_BYTES) {
+          documentStreamFailure("DOCUMENT_STREAM_LIMIT_EXCEEDED");
+        }
+      }
+      let decoded: string;
+      try {
+        decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+      } catch {
+        documentStreamFailure("DOCUMENT_STREAM_ENCODING_INVALID");
+      }
+      if (firstDecodedCharacter && decoded.length > 0) {
+        firstDecodedCharacter = false;
+        if (decoded.charCodeAt(0) === 0xfeff) {
+          decoded = decoded.slice(1);
+          pendingBytes -= 3;
+        }
+      }
+      buffer += decoded;
+      await consumeLines(done);
+      if (done) { eof = true; break; }
+    }
+    if (!terminal || buffer || dataLines.length > 0) {
+      documentStreamFailure("DOCUMENT_STREAM_INCOMPLETE");
+    }
+    // Publish nothing canonical until every frame, final section and metadata
+    // item has passed the terminal contract, including absence of trailing data.
+    for (const event of accepted) {
+      assertRequestCurrent(requestContext);
+      switch (event.type) {
+        case "section": await onSection(event); break;
+        case "document_design": await onDesign?.(event); break;
+        case "missing_info": await onMissingInfo?.(event); break;
+        case "unresolved_placeholders": await onUnresolvedPlaceholders?.(event); break;
+      }
+      assertRequestCurrent(requestContext);
+    }
+  } finally {
+    requestContext.signal.removeEventListener("abort", onAbort);
+    // Cleanup must not replace a parser, consumer, owner or reconciliation error.
+    // cancel() closes pending reads synchronously, but its underlying transport
+    // cleanup promise may never settle. It must not hide the primary failure.
+    if (!eof) void cancelReader();
+    reader.releaseLock();
   }
-  assertRequestCurrent(requestContext);
+
 }
 
 // ---- generate-checklist ----------------------------------------
@@ -1192,11 +1439,14 @@ export async function generateArtifactStream(
 // ---- ingest-upload (Layer 5 placeholder) -----------------------
 
 export interface IngestUploadOutput {
+  credit_fallback?: OllamaCreditFallbackPolicy;
   upload_id: string;
   extracted_text: string;
   original_retained: true;
   classification_status: "completed";
   confirm_payload: IngestUploadConfirmPayload;
+  extraction_format?: UploadPreflightFormatV2;
+  resource_policy_version?: typeof UPLOAD_RESOURCE_POLICY_VERSION | typeof UPLOAD_RESOURCE_POLICY_VERSION_V2;
 }
 
 export interface PreparedUploadDispatch {
@@ -1211,6 +1461,8 @@ export interface PreparedUploadDispatch {
 
 export interface IngestUploadOptions {
   readonly beforeDispatch?: (prepared: Readonly<PreparedUploadDispatch>) => void | Promise<void>;
+  /** Local file admission only; never selects or changes the server's accepted contract. */
+  readonly metadataPolicyVersion?: typeof UPLOAD_RESOURCE_POLICY_VERSION | typeof UPLOAD_RESOURCE_POLICY_VERSION_V2;
 }
 
 const UPLOAD_UUID_V8_PATTERN =
@@ -1222,8 +1474,8 @@ function assertUploadMetadata(input: {
   fileName: string;
   mimeType: string;
   byteLength: number;
-}): void {
-  const result = preflightUploadMetadata(input);
+}, preflight: typeof preflightUploadMetadataV2): void {
+  const result = preflight(input);
   if (result.ok) return;
   const status =
     result.code === "UPLOAD_TEXT_RESOURCE_LIMIT" || result.code === "UPLOAD_TOO_LARGE" ? 413 : 400;
@@ -1240,6 +1492,7 @@ async function prepareUploadDispatch(
   file: File,
   situationText: string,
   userId: string,
+  preflight: typeof preflightUploadMetadataV2,
 ): Promise<Readonly<PreparedUploadDispatch>> {
   const normalisedName = String(file.name || "")
     .normalize("NFKC")
@@ -1249,7 +1502,10 @@ async function prepareUploadDispatch(
     .normalize("NFKC")
     .trim()
     .toLowerCase();
-  const normalisedType = rawNormalisedType.slice(0, 200);
+  // Multipart emits application/octet-stream for an untyped File. Capture
+  // that actual wire value before hashing so the server derives the same ID.
+  // Explicit MIME values and the server's historical JSON route are unchanged.
+  const normalisedType = rawNormalisedType.slice(0, 200) || "application/octet-stream";
   const canonicalSituation = situationText.normalize("NFKC").trim();
   if (!normalisedName || canonicalSituation.length > MAX_UPLOAD_SITUATION_CHARS) {
     throw new ApiError(400, "UPLOAD_METADATA_INVALID", {
@@ -1264,13 +1520,13 @@ async function prepareUploadDispatch(
     fileName: normalisedName,
     mimeType: rawNormalisedType,
     byteLength: file.size,
-  });
+  }, preflight);
   const fileBytes = new Uint8Array(await file.arrayBuffer());
   assertUploadMetadata({
     fileName: normalisedName,
     mimeType: rawNormalisedType,
     byteLength: fileBytes.byteLength,
-  });
+  }, preflight);
   if (fileBytes.byteLength !== file.size) {
     throw new ApiError(400, "UPLOAD_METADATA_INVALID", {
       error: {
@@ -1329,9 +1585,23 @@ async function prepareUploadDispatch(
 function parseIngestUploadSuccess(
   value: unknown,
   prepared: Readonly<PreparedUploadDispatch>,
+  ownerId: string,
 ): IngestUploadOutput {
   if (!isRecord(value) || !isRecord(value.confirm_payload)) {
     throw new Error("UPLOAD_RESPONSE_INVALID");
+  }
+  const hasMetadata = Object.hasOwn(value, "resource_policy_version") || Object.hasOwn(value, "extraction_format");
+  const sourcePolicy = value.resource_policy_version === UPLOAD_RESOURCE_POLICY_VERSION_V2;
+  const preflight = preflightUploadMetadataV2({ fileName: prepared.fileName, mimeType: prepared.mimeType,
+    byteLength: prepared.fileSizeBytes });
+  let metadata: Pick<IngestUploadOutput, "extraction_format" | "resource_policy_version"> = {};
+  if (!preflight.ok || (preflight.format === "rtf" && !sourcePolicy)) throw new Error("UPLOAD_RESPONSE_INVALID");
+  if (hasMetadata) {
+    const policy = value.resource_policy_version;
+    const format = value.extraction_format;
+    if ((policy !== UPLOAD_RESOURCE_POLICY_VERSION && policy !== UPLOAD_RESOURCE_POLICY_VERSION_V2) ||
+      format !== preflight.format) throw new Error("UPLOAD_RESPONSE_INVALID");
+    metadata = { extraction_format: preflight.format, resource_policy_version: policy };
   }
   const extractedText = value.extracted_text;
   if (
@@ -1343,9 +1613,31 @@ function parseIngestUploadSuccess(
     typeof extractedText !== "string" ||
     extractedText.length < 1 ||
     extractedText.length > 20_000 ||
-    extractedText !== extractedText.trim()
+    !extractedText.trim() ||
+    (!sourcePolicy && extractedText !== extractedText.trim())
   ) {
     throw new Error("UPLOAD_RESPONSE_INVALID");
+  }
+  if (value.credit_fallback !== undefined && !isOllamaCreditFallbackPolicy(value.credit_fallback)) {
+    throw new Error("UPLOAD_RESPONSE_INVALID");
+  }
+  if (sourcePolicy) {
+    const exactKeys = (record: Record<string, unknown>, keys: string[]) =>
+      Object.keys(record).length === keys.length && keys.every(key => Object.hasOwn(record, key));
+    const keys = ["upload_id", "extracted_text", "original_retained", "storage_path", "classification_status",
+      "extraction_format", "resource_policy_version", "confirm_payload"];
+    if (Object.hasOwn(value, "credit_fallback")) keys.push("credit_fallback");
+    if (!exactKeys(value, keys) ||
+      !exactKeys(value.confirm_payload, ["summary", "document_type", "structure", "filename", "char_count", "truncated"]) ||
+      !Array.isArray(value.confirm_payload.structure) || value.confirm_payload.structure.some(section =>
+        !isRecord(section) || !exactKeys(section, ["title", "items"])) ||
+      typeof value.storage_path !== "string" || value.storage_path.length > 800 ||
+      !value.storage_path.startsWith(`${ownerId}/${prepared.uploadId}/`) ||
+      value.storage_path.split("/").some(part => !part || part === "." || part === "..") ||
+      extractedText.includes("\u0000") ||
+      new TextDecoder("utf-8", { ignoreBOM: true }).decode(new TextEncoder().encode(extractedText)) !== extractedText) {
+      throw new Error("UPLOAD_RESPONSE_INVALID");
+    }
   }
   let confirmation: IngestUploadConfirmPayload;
   try {
@@ -1358,6 +1650,8 @@ function parseIngestUploadSuccess(
     throw new Error("UPLOAD_RESPONSE_INVALID");
   }
   return {
+    ...metadata,
+    ...(isOllamaCreditFallbackPolicy(value.credit_fallback) ? { credit_fallback: value.credit_fallback } : {}),
     upload_id: value.upload_id,
     extracted_text: extractedText,
     original_retained: true,
@@ -1383,7 +1677,14 @@ export async function ingestUpload(
   options: IngestUploadOptions = {},
 ): Promise<IngestUploadOutput> {
   assertRequestCurrent(requestContext);
-  const prepared = await prepareUploadDispatch(file, situationText, requestContext.expectedUserId);
+  // Capture policy before any await. It is deliberately absent from the stable
+  // identity envelope, prepared request, multipart body and server claim.
+  const metadataPolicy = options.metadataPolicyVersion === undefined ? UPLOAD_RESOURCE_POLICY_VERSION : options.metadataPolicyVersion;
+  if (metadataPolicy !== UPLOAD_RESOURCE_POLICY_VERSION && metadataPolicy !== UPLOAD_RESOURCE_POLICY_VERSION_V2) {
+    throw new Error("UPLOAD_METADATA_POLICY_UNSUPPORTED");
+  }
+  const preflight = metadataPolicy === UPLOAD_RESOURCE_POLICY_VERSION_V2 ? preflightUploadMetadataV2 : preflightUploadMetadata;
+  const prepared = await prepareUploadDispatch(file, situationText, requestContext.expectedUserId, preflight);
   assertRequestCurrent(requestContext);
   await options.beforeDispatch?.(prepared);
   assertRequestCurrent(requestContext);
@@ -1454,7 +1755,7 @@ export async function ingestUpload(
     }
     let result: IngestUploadOutput;
     try {
-      result = parseIngestUploadSuccess(await readBoundedUploadSuccess(response), prepared);
+      result = parseIngestUploadSuccess(await readBoundedUploadSuccess(response), prepared, requestContext.expectedUserId);
     } catch (error) {
       if (requestContext.signal.aborted) throw error;
       assertRequestCurrent(requestContext);

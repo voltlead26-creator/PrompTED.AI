@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createClient as createSdkClient } from "@supabase/supabase-js";
 
 const createClientMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/supabase/client", () => ({ createClient: createClientMock }));
@@ -64,6 +65,31 @@ describe("fetchWorkspaceSectionBody", () => {
       p_expected_document_revision: 7,
       p_expected_section_revision: 3,
     });
+  });
+
+  it("dispatches a deferred section read through the real SDK client method", async () => {
+    const content = "Deferred authoritative section.";
+    const contentSha256 = await sha256(content);
+    const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("https://example.supabase.co/rest/v1/rpc/get_workspace_section_body_v1");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ p_outcome_id: OUTCOME_ID, p_section_id: SECTION_ID,
+        p_expected_document_revision: 7, p_expected_section_revision: 3 });
+      return Response.json({ contract_version: "workspace-section-body.v1", outcome_id: OUTCOME_ID,
+        document_id: DOCUMENT_ID, document_revision: 7, section_id: SECTION_ID, section_revision: 3,
+        content, content_sha256: contentSha256, content_length: new TextEncoder().encode(content).length,
+        status: "edited", approved_revision: null, ledger_binding_status: "legacy_unversioned",
+        section_key: null, section_state: null, updated_at: "2026-09-01T00:00:00.000Z" });
+    });
+    const client = createSdkClient("https://example.supabase.co", "synthetic-anon-key", {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false,
+        storageKey: "workspace-section-receiver" }, global: { fetch },
+    });
+    createClientMock.mockReturnValue(client);
+    await expect(fetchWorkspaceSectionBody({ outcomeId: OUTCOME_ID, sectionId: SECTION_ID,
+      expectedDocumentRevision: 7, expectedSectionRevision: 3 }, testOwnerDispatchLease()))
+      .resolves.toMatchObject({ content, contentSha256, sectionRevision: 3, documentRevision: 7 });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it.each([

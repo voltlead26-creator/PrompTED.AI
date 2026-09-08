@@ -1,3 +1,8 @@
+import {
+  ExternalJsonError,
+  fetchBoundedExternalJson,
+} from "./bounded-external-json.ts";
+
 export type GovernmentCatalogue = "australia" | "victoria";
 
 export class CkanDispatchError extends Error {
@@ -26,29 +31,8 @@ const CATALOGUES: Record<GovernmentCatalogue, {
   },
 };
 
-interface CkanResource {
-  id?: string;
-  name?: string;
-  format?: string;
-  url?: string;
-  datastore_active?: boolean;
-}
-
-interface CkanDataset {
-  id?: string;
-  name?: string;
-  title?: string;
-  notes?: string;
-  metadata_modified?: string;
-  organization?: { title?: string };
-  license_title?: string;
-  resources?: CkanResource[];
-}
-
-interface CkanResponse {
-  success?: boolean;
-  result?: { results?: CkanDataset[] };
-}
+const MAX_CKAN_RESPONSE_BYTES = 1024 * 1024;
+const MAX_CKAN_RESOURCES = 1000;
 
 export interface GovernmentDatasetSummary {
   id: string;
@@ -93,6 +77,41 @@ function safeHttpUrl(value: string | undefined): string | null {
   }
 }
 
+function ckanRecord(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Government catalogue returned an invalid response.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function optionalString(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new Error("Government catalogue returned an invalid response.");
+  }
+  return value;
+}
+
+function datasetIdentity(value: string | undefined): string | undefined {
+  if (value === undefined || !value.trim()) return undefined;
+  // Identity is never manufactured, truncated or Unicode-normalised into a
+  // different catalogue path. Display metadata retains its existing bounds.
+  if (value.length > 300) {
+    throw new Error("Government catalogue returned an invalid response.");
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error("Government catalogue returned an invalid response.");
+    }
+  }
+  return value.trim();
+}
+
 export function buildCkanSearchUrl(
   catalogueInput: string,
   query: string,
@@ -114,44 +133,79 @@ export function buildCkanSearchUrl(
 
 export function normaliseCkanDatasets(
   catalogueInput: string,
-  body: CkanResponse,
+  body: unknown,
+  maximumResults = 25,
 ): GovernmentDatasetSummary[] {
   const catalogue = parseCatalogue(catalogueInput);
-  if (!body.success || !Array.isArray(body.result?.results)) {
+  const envelope = ckanRecord(body);
+  const result = ckanRecord(envelope.result);
+  if (
+    envelope.success !== true || !Array.isArray(result.results) ||
+    !Number.isInteger(maximumResults) || maximumResults < 1 ||
+    maximumResults > 25 ||
+    result.results.length > maximumResults ||
+    (result.count !== undefined && (typeof result.count !== "number" ||
+      !Number.isSafeInteger(result.count) ||
+      result.count < result.results.length))
+  ) {
     throw new Error("Government catalogue returned an invalid response.");
   }
   const config = CATALOGUES[catalogue];
-  return body.result.results.slice(0, 25).map((dataset) => {
-    const slug = boundedText(dataset.name || dataset.id || "unknown", 300);
+  return result.results.map((value) => {
+    const dataset = ckanRecord(value);
+    const id = datasetIdentity(optionalString(dataset, "id"));
+    const name = datasetIdentity(optionalString(dataset, "name"));
+    const slug = name ?? id;
+    if (!slug) {
+      throw new Error("Government catalogue returned an invalid response.");
+    }
+    const organization = dataset.organization == null
+      ? undefined
+      : ckanRecord(dataset.organization);
+    const resourceValues: unknown = dataset.resources ?? [];
+    if (
+      !Array.isArray(resourceValues) ||
+      resourceValues.length > MAX_CKAN_RESOURCES
+    ) {
+      throw new Error("Government catalogue returned an invalid response.");
+    }
+    const resources = resourceValues.map((value) => {
+      const resource = ckanRecord(value);
+      const active = resource.datastore_active;
+      if (active != null && typeof active !== "boolean") {
+        throw new Error("Government catalogue returned an invalid response.");
+      }
+      const resourceName = optionalString(resource, "name");
+      const format = optionalString(resource, "format");
+      return {
+        id: datasetIdentity(optionalString(resource, "id")) ?? null,
+        name: boundedText(resourceName || format || "Resource", 200),
+        format: boundedText(format || "Unknown", 50),
+        url: safeHttpUrl(optionalString(resource, "url")),
+        datastoreActive: active === true,
+      };
+    });
     return {
-      id: boundedText(dataset.id || slug, 300),
-      title: boundedText(dataset.title || slug, 300),
-      description: boundedText(dataset.notes, 2_000),
+      id: id ?? slug,
+      title: boundedText(optionalString(dataset, "title") || slug, 300),
+      description: boundedText(optionalString(dataset, "notes"), 2_000),
       publisher: boundedText(
-        dataset.organization?.title || "Unknown government publisher",
+        (organization && optionalString(organization, "title")) ||
+          "Unknown government publisher",
         300,
       ),
-      licence: boundedText(dataset.license_title || "Licence not stated", 200),
-      modifiedAt: boundedText(dataset.metadata_modified, 80) || null,
+      licence: boundedText(
+        optionalString(dataset, "license_title") || "Licence not stated",
+        200,
+      ),
+      modifiedAt:
+        boundedText(optionalString(dataset, "metadata_modified"), 80) || null,
       catalogue,
       catalogueLabel: config.label,
       catalogueUrl: `${config.datasetBase}/${encodeURIComponent(slug)}`,
-      resources: (dataset.resources ?? [])
-        .map((resource) => ({ resource, url: safeHttpUrl(resource.url) }))
-        .filter((entry): entry is { resource: CkanResource; url: string } =>
-          entry.url !== null
-        )
-        .slice(0, 10)
-        .map(({ resource, url }) => ({
-          id: boundedText(resource.id, 300) || null,
-          name: boundedText(
-            resource.name || resource.format || "Resource",
-            200,
-          ),
-          format: boundedText(resource.format || "Unknown", 50),
-          url,
-          datastoreActive: resource.datastore_active === true,
-        })),
+      resources: resources.flatMap((resource) =>
+        resource.url === null ? [] : [{ ...resource, url: resource.url }]
+      ).slice(0, 10),
     };
   });
 }
@@ -161,43 +215,35 @@ export async function searchGovernmentCatalogue(input: {
   query: string;
   limit?: number;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }): Promise<GovernmentDatasetSummary[]> {
+  const { catalogue, query, signal, fetchImpl } = input;
+  const limit = input.limit ?? 10;
   const url = buildCkanSearchUrl(
-    input.catalogue,
-    input.query,
-    input.limit ?? 10,
+    catalogue,
+    query,
+    limit,
   );
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    let response: Response;
-    try {
-      response = await (input.fetchImpl ?? fetch)(url, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-    } catch {
+    return await fetchBoundedExternalJson({
+      url,
+      maximumBytes: MAX_CKAN_RESPONSE_BYTES,
+      timeoutMs: 8000,
+      fetchImpl,
+      signal,
+      validate: (body) => normaliseCkanDatasets(catalogue, body, limit),
+    });
+  } catch (error) {
+    if (error instanceof ExternalJsonError) {
       throw new CkanDispatchError(
-        "Government catalogue request outcome is uncertain.",
-        false,
+        error.failure === "http_error"
+          ? `Government catalogue returned HTTP ${error.httpStatus}.`
+          : error.dispatchCertain
+          ? "Government catalogue returned an invalid or interrupted response."
+          : "Government catalogue request outcome is uncertain.",
+        error.dispatchCertain,
       );
     }
-    if (!response.ok) {
-      throw new CkanDispatchError(
-        `Government catalogue returned HTTP ${response.status}.`,
-        true,
-      );
-    }
-    try {
-      return normaliseCkanDatasets(input.catalogue, await response.json());
-    } catch (error) {
-      if (error instanceof CkanDispatchError) throw error;
-      throw new CkanDispatchError(
-        "Government catalogue returned an invalid response.",
-        true,
-      );
-    }
-  } finally {
-    clearTimeout(timeout);
+    throw error;
   }
 }

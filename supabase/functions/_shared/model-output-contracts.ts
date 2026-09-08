@@ -82,7 +82,7 @@ const QUESTION_OPTIONS_SCHEMA = nullable(
 
 export const INTENT_OUTPUT_SCHEMA: StrictOutputSchema = {
   name: "prompted_intent_result",
-  version: "intent-result.1",
+  version: "intent-result.2",
   schema: closedObject({
     domain: {
       type: "string",
@@ -96,6 +96,7 @@ export const INTENT_OUTPUT_SCHEMA: StrictOutputSchema = {
       ],
     },
     situation: stringSchema(MAX_DETAIL_TEXT, 1),
+    knowledge_summary: nullable(stringSchema(12_000, 1)),
     confidence: { type: "number", minimum: 0, maximum: 1 },
     intent_clear: { type: "boolean" },
     question: nullable(stringSchema(MAX_SHORT_TEXT, 1)),
@@ -108,8 +109,9 @@ export const INTENT_OUTPUT_SCHEMA: StrictOutputSchema = {
 
 export const CLARIFY_OUTPUT_SCHEMA: StrictOutputSchema = {
   name: "prompted_clarification_result",
-  version: "clarification-result.1",
+  version: "clarification-result.2",
   schema: closedObject({
+    knowledge_summary: nullable(stringSchema(12_000, 1)),
     intent_clear: { type: "boolean" },
     question: nullable(stringSchema(MAX_SHORT_TEXT, 1)),
     question_options: QUESTION_OPTIONS_SCHEMA,

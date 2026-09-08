@@ -4,6 +4,8 @@ import {
   affectedSectionKeys,
   boundedConversationSource,
   findUnsupportedNumericClaims,
+  type FactualAuditEntry,
+  type FactualAuditUnit,
   groundingIssuesFromAudit,
   hasBlockingQualityIssues,
   hasIdentityCriticalMissingInformation,
@@ -292,4 +294,71 @@ Deno.test("a fabricated evidence quote becomes audit incompleteness, not proof o
       issues[0]?.category === "completeness",
     "an invalid auditor quote was treated as proof that user wording was unsafe",
   );
+});
+
+const auditWithEvidenceOptions: (
+  units: readonly FactualAuditUnit[],
+  audit: readonly FactualAuditEntry[],
+  source: string,
+  options?: { evidenceMode: "typographic" | "verbatim" },
+) => ReturnType<typeof groundingIssuesFromAudit> = groundingIssuesFromAudit;
+
+function evidenceIssues(
+  source: string,
+  quote: string,
+  evidenceMode: "typographic" | "verbatim" = "typographic",
+) {
+  return auditWithEvidenceOptions(
+    [{ id: "facts#1", sectionKey: "facts", text: "The supplied factual statement." }],
+    [{ unit_id: "facts#1", classification: "supported", evidence_quotes: [quote] }],
+    source,
+    { evidenceMode },
+  );
+}
+
+function assertUnverifiedEvidence(source: string, quote: string, mode?: "typographic" | "verbatim") {
+  const issues = evidenceIssues(source, quote, mode);
+  assert(
+    issues.length === 1 && issues[0]?.category === "completeness" &&
+      issues[0]?.severity === "low" && issues[0]?.finding.includes("evidence could not be verified"),
+    `an unmatched quote was accepted as verified evidence: ${JSON.stringify(quote)}`,
+  );
+}
+
+Deno.test("an absent symbol and whitespace-only quote cannot normalise into matching evidence", () => {
+  assertUnverifiedEvidence("The balance is recorded in dollars.", "⚑");
+  assertUnverifiedEvidence("The balance is recorded in dollars.", " \t\n ");
+});
+
+Deno.test("quote matching preserves a numeric minus sign instead of accepting its removal", () => {
+  assertUnverifiedEvidence("The balance was −50 dollars.", "The balance was 50 dollars.");
+  assertUnverifiedEvidence("The balance was -50 dollars.", "The balance was 50 dollars.");
+});
+
+Deno.test("an invented Unicode quote cannot match an unrelated Unicode source", () => {
+  assertUnverifiedEvidence("张伟已完成培训。", "王芳已完成培训。");
+});
+
+Deno.test("exact Unicode quotations preserve their wording and meaningful symbols", () => {
+  for (const source of ["张伟已完成培训。", "Η Μαρία ολοκλήρωσε την εκπαίδευση.", "The balance was −50 dollars."]) {
+    assert(evidenceIssues(source, source).length === 0, "an exact Unicode quote was rejected");
+    assert(evidenceIssues(source, source, "verbatim").length === 0, "an exact verbatim quote was rejected");
+  }
+});
+
+Deno.test("verbatim evidence mode rejects typography replacement that the compatibility mode permits", () => {
+  const source = "Certificate IV — Leadership & Management";
+  const quote = "Certificate IV - Leadership & Management";
+  assert(evidenceIssues(source, quote).length === 0, "the existing typography compatibility was lost");
+  assertUnverifiedEvidence(source, quote, "verbatim");
+  assert(evidenceIssues(source, source, "verbatim").length === 0, "the exact source quote was rejected");
+});
+
+Deno.test("a symbol-only quote cannot establish evidence even when that symbol occurs in the source", async (test) => {
+  for (const mode of ["typographic", "verbatim"] as const) {
+    await test.step(mode, () => {
+      assertUnverifiedEvidence("The supplied statement ends here.", ".", mode);
+      assertUnverifiedEvidence("The entry carries the flag ⚑.", "⚑", mode);
+    });
+  }
 });

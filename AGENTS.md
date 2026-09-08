@@ -9,7 +9,7 @@
 - **Web:** Next.js 15 and React 19
 - **Hosting:** Netlify
 - **Application core:** Supabase Auth, Postgres, RLS, RPCs, Storage, migrations, and Edge Functions
-- **Active AI policy:** OpenAI is the sole active generative-AI provider
+- **Active AI policy:** OpenAI primary; explicitly authorised local Ollama fallback on exhausted OpenAI credit (see §2.6)
 - **Locale default:** Australian English unless the user or document contract selects another locale
 
 ## Executive directive
@@ -358,8 +358,22 @@ Local-only recovery is labelled “Saved on this device”.
 
 ### 2.6 OpenAI semantic routes
 
-OpenAI is the sole active inference provider. All calls go through one
-server-owned Responses adapter. No component, hook, page, or separate function
+The owner's 2026-09-07 request authorises a narrow exception to this document's
+earlier OpenAI-only policy: a pinned local Ollama model may handle one fallback
+attempt after an explicit, durably recorded OpenAI credit exhaustion response.
+The exception requires an immutable accepted fallback policy, exact request and
+user identity, validated output, actual provider/model usage, and safe replay.
+Temporary rate limits, invalid keys, ambiguous timeouts, and unsupported tools
+do not authorise fallback. Existing operations without that policy retain their
+original behaviour. Local Ollama needs no API key; hosted activation remains
+subject to a reachable authenticated endpoint and the protected release gates.
+This exception takes precedence over the older OpenAI-only wording elsewhere
+in this document and does not authorise a deployment or fabricate evaluation
+evidence. Implementation and verification status are recorded in
+`docs/plans/2026-09-07-ollama-credit-fallback.md`.
+
+OpenAI remains the primary inference provider. All calls go through one
+server-owned provider router. No component, hook, page, or separate function
 may invent provider policy.
 
 Initial candidate configuration:

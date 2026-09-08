@@ -10,6 +10,7 @@ import {
   type IsolatedUploadExtractionResult,
 } from "../_shared/upload-extraction-client.ts";
 import { PrivateStorageObjectError } from "../_shared/private-storage-object.ts";
+import { bindModelCallContext } from "../_shared/model-call-context.ts";
 import {
   deriveUploadRequestIdentity,
   handleIngestUpload as handleGuardedIngestUpload,
@@ -172,6 +173,11 @@ class MemoryIngestStore implements IngestStore {
   recordExtraction(
     input: Parameters<IngestStore["recordExtraction"]>[0],
   ): Promise<void> {
+    // This fixture claims historical v1 only. Source-checkpoint suites exercise
+    // v2/v3 through the real RPC adapter and their database digest contracts.
+    if ("extractionContractVersion" in input.extraction) {
+      throw new Error("Synthetic v1 store cannot accept a source-version result");
+    }
     this.events.push("record-extraction");
     this.extractionRecordCalls += 1;
     const stored = this.uploads.get(input.uploadId);
@@ -226,7 +232,7 @@ function auth(userId = OWNER_ID): AuthContext {
 async function handleIngestUpload(
   req: Request,
   context: AuthContext,
-  dependencies: IngestDependencies,
+  dependencies?: IngestDependencies,
 ): Promise<Response> {
   const contentType = (req.headers.get("content-type") ?? "").toLowerCase();
   const multipartBody = contentType.includes("multipart/form-data")
@@ -235,7 +241,9 @@ async function handleIngestUpload(
   let body = context.body;
   if (contentType.includes("application/json")) {
     const parsed: unknown = await req.clone().json();
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (
+      parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ) {
       body = parsed as Record<string, unknown>;
     }
   }
@@ -475,6 +483,7 @@ Deno.test(
       "begin-extraction",
       "extract",
       "record-extraction",
+      "load-extraction",
       "advance:provider_dispatched",
       "classify",
       "settle",
@@ -1010,13 +1019,274 @@ Deno.test(
 
     assertEquals(response.status, 200);
     const recordIndex = store.events.indexOf("record-extraction");
+    const adoptionIndex = store.events.indexOf("load-extraction", recordIndex);
     const dispatchIndex = store.events.indexOf("advance:provider_dispatched");
     const classifyIndex = store.events.indexOf("classify");
     assertEquals(recordIndex >= 0, true);
-    assertEquals(recordIndex < dispatchIndex, true);
+    assertEquals(adoptionIndex > recordIndex, true);
+    assertEquals(adoptionIndex < dispatchIndex, true);
     assertEquals(dispatchIndex < classifyIndex, true);
     assertEquals(store.extractionAttemptCalls, 1);
     assertEquals(store.extractionRecordCalls, 1);
+  },
+);
+
+for (const acknowledgement of ["received", "lost"] as const) {
+  for (const checkpoint of ["missing", "unavailable", "different"] as const) {
+    Deno.test(
+      `ingest-upload verifies stored extraction after ${acknowledgement} acknowledgement: ${checkpoint}`,
+      async () => {
+        const store = new MemoryIngestStore();
+        const record = store.recordExtraction.bind(store);
+        const load = store.loadExtraction.bind(store);
+        store.recordExtraction = async (input) => {
+          await record(input);
+          if (acknowledgement === "lost") {
+            throw new Error("synthetic lost write acknowledgement");
+          }
+        };
+        store.loadExtraction = async (input) => {
+          const saved = await load(input);
+          if (!store.extractionRecordCalls) return saved;
+          if (checkpoint === "unavailable") {
+            throw new Error("synthetic checkpoint read unavailable");
+          }
+          if (checkpoint === "missing") return null;
+          if (!saved) throw new Error("positive checkpoint fixture missing");
+          return { ...saved, text: "A different retained extraction" };
+        };
+        const deps = dependencies(store);
+        const response = await handleIngestUpload(
+          await uploadRequest(),
+          auth(),
+          deps,
+        );
+        const body = await response.json();
+        assertEquals(response.status, checkpoint === "different" ? 409 : 503);
+        assertEquals(
+          body.error.code,
+          checkpoint === "different"
+            ? "UPLOAD_EXTRACTION_CHECKPOINT_CONFLICT"
+            : "UPLOAD_EXTRACTION_CHECKPOINT_UNAVAILABLE",
+        );
+        assertEquals(deps.extractCalls, 1);
+        assertEquals(deps.classifyCalls, 0);
+        assertEquals(store.extractionRecordCalls, 1);
+        assertEquals(
+          store.events.includes("advance:provider_dispatched"),
+          false,
+        );
+        assertEquals(store.extractions.size, 1);
+        assertEquals(store.retained.size, 1);
+        assertEquals(store.settleCalls, checkpoint === "different" ? 1 : 0);
+        if (checkpoint !== "different") {
+          assertEquals(body.retryable, true);
+          assertEquals(response.headers.get("Retry-After"), "120");
+          assertEquals(body.durable_stage, "storage_completed");
+          const immediate = await handleIngestUpload(
+            await uploadRequest(),
+            auth(),
+            deps,
+          );
+          assertEquals(immediate.status, 409);
+          assertEquals(
+            (await immediate.json()).error.code,
+            "UPLOAD_PROCESSING",
+          );
+          assertEquals(deps.extractCalls, 1);
+          assertEquals(deps.classifyCalls, 0);
+          assertEquals(store.extractionRecordCalls, 1);
+          // A later claim adopts the already stored result; it must not parse,
+          // write, or retain the original again after this read-only failure.
+          store.loadExtraction = load;
+          store.resumeProcessingOnClaim = true;
+          const resumed = dependencies(store);
+          const retry = await handleIngestUpload(
+            await uploadRequest(),
+            auth(),
+            resumed,
+          );
+          const retryBody = await retry.json();
+          assertEquals(retry.status, 200);
+          assertEquals(retryBody.upload_id, body.upload_id);
+          assertEquals(resumed.extractCalls, 0);
+          assertEquals(resumed.classifyCalls, 1);
+          assertEquals(store.extractionRecordCalls, 1);
+          assertEquals(store.retainCalls, 1);
+          assertEquals(store.settleCalls, 1);
+          const completedReplay = await handleIngestUpload(
+            await uploadRequest(),
+            auth(),
+            resumed,
+          );
+          assertEquals(completedReplay.status, 200);
+          assertEquals(await completedReplay.json(), retryBody);
+          assertEquals(resumed.classifyCalls, 1);
+          assertEquals(store.settleCalls, 1);
+        } else {
+          const replay = await handleIngestUpload(
+            await uploadRequest(),
+            auth(),
+            deps,
+          );
+          assertEquals(replay.status, 409);
+          assertEquals(await replay.json(), body);
+          assertEquals(store.settleCalls, 1);
+          assertEquals(deps.classifyCalls, 0);
+        }
+      },
+    );
+  }
+}
+
+Deno.test(
+  "ingest-upload adopts the stored extraction after a lost write acknowledgement",
+  async () => {
+    const store = new MemoryIngestStore();
+    const record = store.recordExtraction.bind(store);
+    store.recordExtraction = async (input) => {
+      await record(input);
+      throw new Error("synthetic lost write acknowledgement");
+    };
+    const deps = dependencies(store);
+    const response = await handleIngestUpload(
+      await uploadRequest(),
+      auth(),
+      deps,
+    );
+    assertEquals(response.status, 200);
+    assertEquals(
+      (await response.json()).extracted_text,
+      "Reliable source text",
+    );
+    const recordIndex = store.events.indexOf("record-extraction");
+    const adoptionIndex = store.events.indexOf("load-extraction", recordIndex);
+    assertEquals(adoptionIndex > recordIndex, true);
+    assertEquals(adoptionIndex < store.events.indexOf("classify"), true);
+    assertEquals(deps.extractCalls, 1);
+    assertEquals(deps.classifyCalls, 1);
+    assertEquals(store.extractionRecordCalls, 1);
+    assertEquals(store.settleCalls, 1);
+  },
+);
+
+for (const handoff of [false, true]) {
+  Deno.test(
+    `ingest-upload waits for checkpoint readback and fences claim handoff: ${handoff}`,
+    async () => {
+      const store = new MemoryIngestStore();
+      const load = store.loadExtraction.bind(store);
+      const readStarted = Promise.withResolvers<string>();
+      const releaseRead = Promise.withResolvers<void>();
+      store.loadExtraction = async (input) => {
+        const saved = await load(input);
+        if (store.extractionRecordCalls) {
+          readStarted.resolve(input.uploadId);
+          await releaseRead.promise;
+        }
+        return saved;
+      };
+      const deps = dependencies(store);
+      const pending = handleIngestUpload(await uploadRequest(), auth(), deps);
+      try {
+        const observed = await Promise.race([
+          readStarted.promise.then((uploadId) => ({ kind: "read", uploadId })),
+          pending.then(() => ({ kind: "completed", uploadId: "" })),
+        ]);
+        assertEquals(observed.kind, "read");
+        const savedUpload = store.uploads.get(observed.uploadId);
+        if (!savedUpload) throw new Error("positive upload fixture missing");
+        assertEquals(savedUpload.stage, "storage_completed");
+        assertEquals(deps.classifyCalls, 0);
+        assertEquals(store.settleCalls, 0);
+        assertEquals(store.extractionRecordCalls, 1);
+        if (handoff) {
+          savedUpload.claimToken = "73000000-0000-4000-8000-000000000099";
+        }
+      } finally {
+        releaseRead.resolve();
+        await pending;
+      }
+      const response = await pending;
+      assertEquals(response.status, handoff ? 503 : 200);
+      assertEquals(deps.classifyCalls, handoff ? 0 : 1);
+      assertEquals(store.settleCalls, handoff ? 0 : 1);
+      assertEquals(deps.extractCalls, 1);
+      assertEquals(store.extractionRecordCalls, 1);
+      if (handoff) {
+        assertEquals(
+          (await response.json()).error.code,
+          "UPLOAD_STAGE_ACK_UNRESOLVED",
+        );
+      }
+    },
+  );
+}
+
+Deno.test(
+  "ingest-upload rejects malformed checkpoint format at its actual RPC adapter",
+  async () => {
+    const content = "Reliable source text";
+    const digest = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(content),
+        ),
+      ),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const calls: string[] = [];
+    const context = auth();
+    context.admin = {
+      rpc(name: string) {
+        calls.push(name);
+        if (name === "claim_upload_ingest") {
+          return Promise.resolve({
+            data: {
+              outcome: "resumed",
+              stage: "storage_completed",
+              claim_token: "73000000-0000-4000-8000-000000000001",
+            },
+            error: null,
+          });
+        }
+        if (name === "get_upload_extraction_checkpoint") {
+          return Promise.resolve({
+            data: {
+              content_sha256: digest,
+              text_sha256: digest,
+              text: content,
+              format: ["text"],
+              truncated: false,
+              resource_policy_version: "upload-resource-policy.1",
+            },
+            error: null,
+          });
+        }
+        // Stop all downstream commands before any real external call, even
+        // when exercising the defective normalizer through default adapters.
+        return Promise.resolve({
+          data: null,
+          error: { message: "synthetic fence" },
+        });
+      },
+    } as unknown as AuthContext["admin"];
+    const request = await uploadRequest();
+    bindModelCallContext(request.signal, {
+      userId: OWNER_ID,
+      admin: context.admin,
+    });
+    const response = await handleIngestUpload(request, context);
+    assertEquals(response.status, 503);
+    assertEquals(
+      (await response.json()).error.code,
+      "UPLOAD_EXTRACTION_CHECKPOINT_UNAVAILABLE",
+    );
+    assertEquals(calls, [
+      "claim_upload_ingest",
+      "get_upload_extraction_checkpoint",
+    ]);
   },
 );
 
@@ -1247,3 +1517,103 @@ Deno.test(
     assertEquals(observedAbort, true);
   },
 );
+
+for (
+  const version of ["upload-extraction.2", null, "unknown", [
+    "upload-extraction.2",
+  ], 2]
+) {
+  Deno.test(`ingest-upload reads the captured checkpoint version at its RPC adapter: ${JSON.stringify(version)}`, async () => {
+    const content = "Reliable source text";
+    const identity = await deriveUploadRequestIdentity({
+      userId: OWNER_ID,
+      filename: "resume.txt",
+      mime: "text/plain",
+      bytes: new TextEncoder().encode(content),
+      situationText: "Tailor this resume",
+    });
+    const calls: string[] = [];
+    const context = auth();
+    context.admin = {
+      rpc(name: string, args: Record<string, unknown>) {
+        calls.push(name);
+        if (name === "claim_upload_ingest") {
+          assertEquals(Object.keys(args).length, 9);
+          assertEquals(args.p_extraction_contract_version, "upload-extraction.3");
+          return Promise.resolve({
+            error: null,
+            data: {
+              outcome: "resumed",
+              stage: "storage_completed",
+              claim_token: "73000000-0000-4000-8000-000000000001",
+              extraction_contract_version: version,
+            },
+          });
+        }
+        if (name === "get_upload_extraction_checkpoint") {
+          return Promise.resolve({
+            error: null,
+            data: {
+              text: content,
+              text_sha256: identity.contentSha256,
+              content_sha256: identity.contentSha256,
+              format: "text",
+              truncated: false,
+              resource_policy_version: "upload-resource-policy.1",
+              extraction_contract_version: "upload-extraction.2",
+              content_byte_length: new TextEncoder().encode(content).length,
+              source_manifest: null,
+              source_manifest_sha256: null,
+              source_digest_version: null,
+            },
+          });
+        }
+        // Fence external dispatch while exercising the real normalizer.
+        return Promise.resolve({
+          data: null,
+          error: { message: "synthetic dispatch fence" },
+        });
+      },
+    } as unknown as AuthContext["admin"];
+    const request = await uploadRequest();
+    bindModelCallContext(request.signal, {
+      userId: OWNER_ID,
+      admin: context.admin,
+    });
+    const response = await handleIngestUpload(request, context);
+    assertEquals(response.status, 503);
+    assertEquals(
+      (await response.json()).error.code,
+      version === "upload-extraction.2"
+        ? "UPLOAD_STAGE_ACK_UNRESOLVED"
+        : "UPLOAD_CLAIM_FAILED",
+    );
+    assertEquals(
+      calls,
+      version === "upload-extraction.2"
+        ? [
+          "claim_upload_ingest",
+          "get_upload_extraction_checkpoint",
+          "advance_upload_ingest",
+          "advance_upload_ingest",
+        ]
+        : ["claim_upload_ingest"],
+    );
+  });
+}
+
+Deno.test("upload replay retains local fallback provenance without another classification", async () => {
+  const store = new MemoryIngestStore();
+  const deps = dependencies(store);
+  const classify = deps.classify;
+  const execution = { provider: "ollama" as const, model: "gpt-oss:20b", modelDigest: "a".repeat(64), configurationVersion: "local.1" };
+  deps.classify = async (request) => ({ ...await classify(request), execution });
+  const first = await handleIngestUpload(await uploadRequest(), auth(), deps);
+  const firstBody = await first.json();
+  assertEquals(first.status, 200);
+  assertEquals(firstBody.credit_fallback, execution);
+  const replay = await handleIngestUpload(await uploadRequest(), auth(), deps);
+  assertEquals(await replay.json(), firstBody);
+  assertEquals(deps.classifyCalls, 1);
+  assertEquals(store.settleCalls, 1);
+});

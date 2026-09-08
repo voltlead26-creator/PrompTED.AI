@@ -123,10 +123,12 @@
     "claim_legacy_pdf_export": "uuid, uuid, jsonb",
     "claim_openai_capacity_lease": "uuid, text, text, text, integer, uuid",
     "claim_persisted_pdf_export": "uuid, uuid, jsonb",
-    "claim_upload_ingest": "uuid, uuid, text, text, text, integer, text, text",
+    "claim_upload_ingest": "uuid, uuid, text, text, text, integer, text, text, text",
     "claim_user_external_egress": "uuid, text, text, text, uuid",
     "claim_user_storage_dispatch": "uuid, uuid, text, text, text, uuid",
     "commit_document_import": "uuid, uuid, uuid, text, text, jsonb, jsonb",
+    "get_own_workspace_upload_v1": "uuid",
+    "list_own_workspace_uploads_v1": "timestamp with time zone, uuid",
     "commit_guest_workspace_import": "text, uuid, uuid, text, text, jsonb, uuid, text, jsonb",
     "commit_own_home_upload_intake_v1": "uuid, integer, text, jsonb",
     "complete_brand_logo_operation": "uuid, uuid, uuid, text",
@@ -162,7 +164,10 @@
     "mark_openai_capacity_lease_dispatched": "uuid, uuid, uuid",
     "prepare_legacy_section_edit": "uuid, uuid, uuid, uuid, integer, text, text, jsonb",
     "promote_profile_resume": "uuid, text",
+    "read_legacy_document_audit_checkpoint_v1": "uuid, text, uuid, text, text, text, integer, uuid, boolean, jsonb, boolean, jsonb",
     "read_legacy_model_call_checkpoint": "uuid, text, uuid, text, text, text, integer, uuid, boolean",
+    "read_legacy_model_call_checkpoint_with_fallback": "uuid, text, uuid, text, text, text, integer, uuid, boolean",
+    "record_legacy_model_call_attempt_with_provider": "uuid, text, text, text, text, integer, text, text, text, text, integer, integer, timestamp with time zone, timestamp with time zone, text, text, text, text, text, uuid, jsonb, uuid, text",
     "reconcile_captured_document_provider_attempt": "uuid, integer, uuid, text",
     "reconcile_upload_ingest_storage": "uuid, uuid, text, text, text",
     "reconcile_user_external_egress": "uuid, text, text, text, text, text",
@@ -171,7 +176,7 @@
     "record_captured_export_storage_recovery": "uuid, uuid, uuid, integer, text, text, integer, text, jsonb, uuid",
     "record_captured_document_provider_attempt": "uuid, integer, uuid, text, integer, text, text, text, text, text, text, integer, integer, text, text, timestamp with time zone, timestamp with time zone, text, jsonb",
     "record_legacy_pdf_export_artifact": "uuid, uuid, text, text, integer, text, jsonb",
-    "record_upload_extraction_snapshot": "uuid, uuid, text, uuid, text, text, text, text, boolean, text",
+    "record_upload_extraction_snapshot": "uuid, uuid, text, uuid, text, text, text, text, boolean, text, text, jsonb",
     "record_legacy_model_call_attempt": "uuid, text, text, text, text, integer, text, text, text, text, integer, integer, timestamp with time zone, timestamp with time zone, text, text, text, text, text, uuid, jsonb, uuid",
     "release_document_allowance": "uuid, uuid, text, text",
     "release_openai_capacity_lease": "uuid, uuid, uuid, text",
@@ -180,6 +185,8 @@
     "request_captured_document_cancellation": "uuid, integer, text",
     "request_captured_document_export": "uuid, integer, uuid, integer, text, text",
     "reserve_document_allowance_with_result": "uuid, text, text, text, text, integer, integer",
+    "read_document_allowance_replay": "uuid, text, text, text",
+    "reserve_document_allowance_with_policy": "uuid, text, text, text, text, integer, integer, text, text, text",
     "restore_previous_profile_resume": "",
     "resolve_brand_logo_reconciliation": "uuid, uuid, uuid, text, text",
     "resume_captured_document_operation_from_capacity": "uuid, integer, text, integer",
@@ -220,7 +227,9 @@
       "20260901040000_protected_compute_privileges",
       "20260901060000_legacy_model_accounting_and_replay",
       "20260901091000_ingest_upload_exact_replay",
-      "20260901093000_openai_capacity_leases"
+      "20260901093000_openai_capacity_leases",
+      "20260907053000_ollama_credit_fallback",
+      "20260908150000_legacy_document_audit_binding"
     ],
     "requiredRpcs": [
       "consume_rate_limit",
@@ -229,7 +238,10 @@
       "complete_user_external_egress",
       "mark_openai_capacity_lease_dispatched",
       "mark_legacy_model_attempt_dispatched",
+      "read_legacy_document_audit_checkpoint_v1",
       "read_legacy_model_call_checkpoint",
+      "read_legacy_model_call_checkpoint_with_fallback",
+      "record_legacy_model_call_attempt_with_provider",
       "record_legacy_model_call_attempt",
       "release_openai_capacity_lease"
     ],
@@ -285,7 +297,11 @@
       "20260902013000_upload_extraction_snapshot",
       "20260902014000_upload_extraction_checkpoint",
       "20260902015000_upload_extraction_checkpoint_conflict_precedence",
-      "20260902016000_brand_logo_lifecycle"
+      "20260902016000_brand_logo_lifecycle",
+      "20260907112000_upload_source_import_boundary",
+      "20260907124000_workspace_upload_reads",
+      "20260908140000_complete_catalogue_persistence_seeds",
+      "20260908160000_legacy_workspace_save_core"
     ],
     "requiredRpcs": [
       "get_latest_captured_document_operation",
@@ -293,6 +309,8 @@
       "approve_captured_document_revision",
       "request_captured_document_export",
       "commit_document_import",
+      "get_own_workspace_upload_v1",
+      "list_own_workspace_uploads_v1",
       "commit_guest_workspace_import",
       "upsert_own_outcome",
       "upsert_own_outcome_with_upload",
@@ -432,12 +450,15 @@
         "20260804150032_usage_ledger_model_calls",
         "20260817070051_usage_ledger_model_call_unique_constraint",
         "20260901020000_atomic_allowance_reservations",
-        "20260901060000_legacy_model_accounting_and_replay"
+        "20260901060000_legacy_model_accounting_and_replay",
+        "20260908130000_legacy_generation_policy_binding"
       ],
       "requiredRpcs": [
         "release_document_allowance",
         "reserve_document_allowance_with_result",
-        "settle_document_allowance_with_result"
+        "settle_document_allowance_with_result",
+        "read_document_allowance_replay",
+        "reserve_document_allowance_with_policy"
       ],
       "requiredTables": ["generation_logs"],
       "requiredTablePrivileges": { "generation_logs": ["insert"] },
@@ -492,12 +513,15 @@
       "usesSharedRequestGuard": true,
       "requiredMigrations": [
         "20260901020000_atomic_allowance_reservations",
-        "20260901060000_legacy_model_accounting_and_replay"
+        "20260901060000_legacy_model_accounting_and_replay",
+        "20260908130000_legacy_generation_policy_binding"
       ],
       "requiredRpcs": [
         "release_document_allowance",
         "reserve_document_allowance_with_result",
-        "settle_document_allowance_with_result"
+        "settle_document_allowance_with_result",
+        "read_document_allowance_replay",
+        "reserve_document_allowance_with_policy"
       ],
       "requiredTables": [],
       "requiredSecrets": [],
@@ -510,12 +534,15 @@
       "usesSharedRequestGuard": true,
       "requiredMigrations": [
         "20260901020000_atomic_allowance_reservations",
-        "20260901060000_legacy_model_accounting_and_replay"
+        "20260901060000_legacy_model_accounting_and_replay",
+        "20260908130000_legacy_generation_policy_binding"
       ],
       "requiredRpcs": [
         "release_document_allowance",
         "reserve_document_allowance_with_result",
-        "settle_document_allowance_with_result"
+        "settle_document_allowance_with_result",
+        "read_document_allowance_replay",
+        "reserve_document_allowance_with_policy"
       ],
       "requiredTables": ["outcomes"],
       "requiredTablePrivileges": { "outcomes": ["select"] },
@@ -529,12 +556,15 @@
       "usesSharedRequestGuard": true,
       "requiredMigrations": [
         "20260901020000_atomic_allowance_reservations",
-        "20260901060000_legacy_model_accounting_and_replay"
+        "20260901060000_legacy_model_accounting_and_replay",
+        "20260908130000_legacy_generation_policy_binding"
       ],
       "requiredRpcs": [
         "release_document_allowance",
         "reserve_document_allowance_with_result",
-        "settle_document_allowance_with_result"
+        "settle_document_allowance_with_result",
+        "read_document_allowance_replay",
+        "reserve_document_allowance_with_policy"
       ],
       "requiredTables": [],
       "requiredSecrets": [],
@@ -586,7 +616,10 @@
       "internalServiceRole": true,
       "requiredMigrations": [
         "20260901091000_ingest_upload_exact_replay",
-        "20260902013000_upload_extraction_snapshot"
+        "20260902013000_upload_extraction_snapshot",
+        "20260906160000_upload_source_checkpoint_v2",
+        "20260907081500_upload_source_checkpoint_v3",
+        "20260907094500_upload_rtf_mime_alias"
       ],
       "requiredRpcs": ["load_upload_extraction_snapshot"],
       "requiredTables": [],
@@ -608,7 +641,12 @@
         "20260901091000_ingest_upload_exact_replay",
         "20260902013000_upload_extraction_snapshot",
         "20260902014000_upload_extraction_checkpoint",
-        "20260902015000_upload_extraction_checkpoint_conflict_precedence"
+        "20260902015000_upload_extraction_checkpoint_conflict_precedence",
+        "20260906160000_upload_source_checkpoint_v2",
+        "20260907081500_upload_source_checkpoint_v3",
+        "20260907094500_upload_rtf_mime_alias",
+        "20260907102000_upload_fallback_settlement",
+        "20260907112000_upload_source_import_boundary"
       ],
       "requiredRpcs": [
         "advance_upload_ingest",
@@ -747,9 +785,9 @@
       "status": "active",
       "authMode": "jwt",
       "clientRoute": null,
-      "usesSharedRequestGuard": false,
-      "requiredMigrations": [],
-      "requiredRpcs": [],
+      "usesSharedRequestGuard": true,
+      "requiredMigrations": ["20260901091000_ingest_upload_exact_replay"],
+      "requiredRpcs": ["claim_user_external_egress", "complete_user_external_egress"],
       "requiredTables": [],
       "requiredSecrets": [],
       "smokeProbe": { "kind": "none", "name": null }

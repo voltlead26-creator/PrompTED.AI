@@ -1,4 +1,16 @@
-import { routeRequest } from "./provider-router.ts";
+import { type ProviderResponse, routeRequest } from "./provider-router.ts";
+import type { TerminalModelAttemptReceipt } from "./cost-tracker.ts";
+import {
+  LEGACY_AUDIT_DIGEST_VERSION,
+  type LegacyAuditSources,
+  type LegacyDocumentAuditBinding,
+  legacyAuditSourceSha256,
+  legacyAuditTargetSha256 as auditTargetSha256,
+  legacyAuditTextSha256 as wordingSha256,
+  validateLegacyAuditSources,
+  validateLegacyDocumentAuditBinding,
+} from "./document-audit-binding.ts";
+import { isProviderReconciliationRequired } from "./allowance-reservations.ts";
 import type { ResolvedTemplate } from "./template-engine.ts";
 import { stripResidual, validateSection } from "./draft-validator.ts";
 import {
@@ -13,6 +25,7 @@ import {
 } from "./document-pipeline-utils.ts";
 import {
   groundingAuditOutputSchema,
+  type GroundingAuditOutput,
   type IntentBriefOutput,
   intentBriefOutputSchema,
   type IntentSectionReadiness,
@@ -29,8 +42,8 @@ import {
 import {
   type DocumentIntelligenceProfile,
   renderProfile,
-  selectProfile,
 } from "./document-intelligence-profiles.ts";
+import { resolveDocumentProfilePolicy } from "./document-profile-projection.ts";
 import {
   createDocumentPlaceholderToken,
   DOCUMENT_PLACEHOLDER_TOKEN_PATTERN,
@@ -47,6 +60,14 @@ export interface DocumentPipelineInput {
   extractedText: string;
   memoryContext: string;
   systemPrompt: string;
+  /** Internal server snapshot already bound to the allowance execution policy. */
+  resolvedProfile?: DocumentIntelligenceProfile | null;
+  /** Internal prerequisite for future atomic workspace attachment. Current
+   * callers remain unchanged until that persistence contract is enabled. */
+  assessmentPolicy?: {
+    version: "legacy-wording-assessment.1";
+    executionPolicySha256: string;
+  };
   signal?: AbortSignal;
   onDraftSection?: (section: DraftSection) => void;
 }
@@ -69,6 +90,105 @@ interface DraftSection {
 
 type ReviewIssue = QualityAuditIssue;
 type ReviewResult = QualityAuditOutput;
+type CheckpointReceipt = Extract<TerminalModelAttemptReceipt, { kind: "checkpoint" }>;
+type AuditedQuality = ReviewResult & { evidence?: {
+  receipt: CheckpointReceipt;
+  binding: LegacyDocumentAuditBinding;
+  output: QualityAuditOutput;
+  deterministicIssues: ReviewIssue[];
+} };
+type AuditedGrounding = ReviewResult & { evidence?: {
+  receipt: CheckpointReceipt;
+  binding: LegacyDocumentAuditBinding;
+  output: GroundingAuditOutput;
+  units: Array<{ id: string; sectionKey: string; contentSha256: string }>;
+} };
+interface AuditSources {
+  values: LegacyAuditSources;
+  sha256: string;
+}
+interface PreparedAuditRound {
+  sources: LegacyAuditSources;
+  units: FactualAuditUnit[];
+  quality: LegacyDocumentAuditBinding;
+  grounding: LegacyDocumentAuditBinding | null;
+}
+interface ExactAuditEvidence {
+  round: number;
+  targetSha256: string;
+  sections: Array<{ key: string; label: string; contentSha256: string }>;
+  quality: NonNullable<AuditedQuality["evidence"]>;
+  /** Null means no auditable units; it never establishes grounding success. */
+  grounding: NonNullable<AuditedGrounding["evidence"]> | null;
+}
+type DocumentAuditResult = ReviewResult & {
+  groundingComplete: boolean;
+  evidence?: ExactAuditEvidence;
+};
+
+export interface LegacyDocumentWordingAssessment {
+  contractVersion: "legacy-wording-assessment.1";
+  digestContractVersion: typeof LEGACY_AUDIT_DIGEST_VERSION;
+  sourceSha256: string;
+  executionPolicySha256: string;
+  finalTargetSha256: string;
+  compositionMatchesReview: boolean;
+  review: ExactAuditEvidence;
+  sections: Array<{
+    key: string;
+    contentSha256: string;
+    reviewedContentSha256: string;
+    disposition: "assessed_generated" | "deterministic_unresolved" | "review_blocked";
+    requiredFacts: "complete" | "blocked";
+  }>;
+}
+
+function freezePlain<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) freezePlain(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function captureAssessmentInput(input: DocumentPipelineInput): DocumentPipelineInput {
+  const policy = input.assessmentPolicy;
+  if (policy === undefined) return input;
+  if (!policy || typeof policy !== "object" || Array.isArray(policy) ||
+    Object.keys(policy).sort().join(",") !== "executionPolicySha256,version" ||
+    policy.version !== "legacy-wording-assessment.1" ||
+    typeof policy.executionPolicySha256 !== "string" || !/^[a-f0-9]{64}$/.test(policy.executionPolicySha256) ||
+    [input.situation, input.conversationContext, input.uploadContext, input.extractedText, input.memoryContext]
+      .some((value) => typeof value !== "string")) {
+    throw new DocumentGenerationError("DOCUMENT_ASSESSMENT_POLICY_INVALID");
+  }
+  // Keep the actual cancellation signal/callback while freezing only plain
+  // accepted data. Never freeze the AbortSignal's mutable runtime internals.
+  return Object.freeze({ ...input,
+    template: freezePlain(structuredClone(input.template)),
+    ...(input.resolvedProfile === undefined ? {} : {
+      resolvedProfile: freezePlain(structuredClone(input.resolvedProfile)),
+    }),
+    assessmentPolicy: freezePlain({ ...policy }),
+  });
+}
+
+function requiredAuditReceipt(
+  input: DocumentPipelineInput,
+  result: ProviderResponse,
+  stage: string,
+): CheckpointReceipt | undefined {
+  if (!input.assessmentPolicy) return undefined;
+  const receipt = result.legacyCheckpointReceipt;
+  if (!receipt || receipt.kind !== "checkpoint" || receipt.logicalStageKey !== stage ||
+    receipt.checkpointScope !== "generate-document" || receipt.attemptStatus !== "succeeded" ||
+    receipt.providerStatus !== "completed" || receipt.errorCode !== null ||
+    typeof receipt.legacyAuditBindingSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(receipt.legacyAuditBindingSha256)) {
+    throw new DocumentGenerationError("DOCUMENT_AUDIT_RECEIPT_REQUIRED");
+  }
+  return freezePlain(structuredClone(receipt));
+}
 
 function stageSegment(value: string): string {
   const segment = value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-")
@@ -94,10 +214,9 @@ function readinessFor(
 function resolvedProfileFor(
   input: DocumentPipelineInput,
 ): DocumentIntelligenceProfile | null {
-  return selectProfile(
-    [input.template.name, input.template.id].filter(Boolean).join("\n"),
-    input.template.domain,
-  );
+  return input.resolvedProfile !== undefined
+    ? input.resolvedProfile
+    : resolveDocumentProfilePolicy(input.template).profile;
 }
 
 function informationKeysBySection(
@@ -290,14 +409,6 @@ function displayLabelFor(
   return label;
 }
 
-// "compose" is the catalog's own deliberate signal that a document should be
-// written as flowing prose rather than a strict data form. structureType is the
-// intentional signal chosen by the catalog; trust it instead of re-deriving
-// narrower, keyword-based guesses per document type.
-function isCommunicationDocument(input: DocumentPipelineInput): boolean {
-  return input.template.structureType === "compose";
-}
-
 function canDraftDespiteMissingInfo(
   _input: DocumentPipelineInput,
   _readiness: SectionReadiness | undefined,
@@ -316,7 +427,7 @@ function canDraftDespiteMissingInfo(
 // declared missing facts, so the existing placeholder-resolution UI picks it
 // up without new frontend work. Every other section is unaffected.
 export function sectionFallbackPlaceholder(
-  brief: OutcomeBrief,
+  _brief: OutcomeBrief,
   profile: DocumentIntelligenceProfile | null,
   section: Pick<ResolvedTemplate["sections"][number], "key" | "label">,
   readiness: SectionReadiness | undefined,
@@ -905,7 +1016,7 @@ async function generateDraft(
 
   // Three concurrent section writes substantially reduce wall-clock time while
   // avoiding an unbounded burst against the configured provider.
-  return mapWithConcurrency(
+  return await mapWithConcurrency(
     selected,
     3,
     async (section) => {
@@ -932,7 +1043,8 @@ async function auditDraft(
   sections: DraftSection[],
   profile: DocumentIntelligenceProfile | null,
   round: number,
-): Promise<ReviewResult> {
+  prepared?: PreparedAuditRound,
+): Promise<AuditedQuality> {
   const sectionKeys = sections.map((section) => section.key);
   const profileAudit = profile
     ? renderProfile(profile, "review")
@@ -982,7 +1094,9 @@ Do not provide corrected prose. Findings must be specific enough for the origina
         `Original situation:\n${input.situation}`,
         input.conversationContext &&
         `Conversation context:\n${input.conversationContext}`,
+        input.uploadContext && `Owned upload context:\n${input.uploadContext}`,
         input.extractedText && `Source material:\n${input.extractedText}`,
+        input.memoryContext && `Saved source context:\n${input.memoryContext}`,
         `Complete draft:\n${JSON.stringify(sections)}`,
       ].filter(Boolean).join("\n\n"),
     }],
@@ -994,10 +1108,13 @@ Do not provide corrected prose. Findings must be specific enough for the origina
     // the way maxTokens: 3000 assumed. Matched to the audit stage's budget.
     maxTokens: 5000,
     outputSchema: qualityAuditOutputSchema(sectionKeys),
+    ...(prepared ? { requireLegacyCheckpointReceipt: true,
+      legacyAuditBinding: prepared.quality, legacyAuditSources: prepared.sources } : {}),
     signal: input.signal,
   });
 
   const reviewed = validateQualityAuditOutput(result.structured, sectionKeys);
+  const receipt = requiredAuditReceipt(input, result, `generate-document.quality:round-${round}`);
   const sourceEvidence = [
     input.situation,
     input.conversationContext,
@@ -1017,7 +1134,9 @@ Do not provide corrected prose. Findings must be specific enough for the origina
         `Remove ${claim} unless that exact figure is present in the confirmed source evidence. Never replace it with another estimated figure.`,
     }))
   );
-  if (numericIssues.length === 0) return reviewed;
+  const evidence = receipt && prepared
+    ? { receipt, binding: prepared.quality, output: reviewed, deterministicIssues: numericIssues } : undefined;
+  if (numericIssues.length === 0) return { ...reviewed, ...(evidence ? { evidence } : {}) };
 
   const existing = new Set(
     reviewed.issues.map((issue) =>
@@ -1032,7 +1151,7 @@ Do not provide corrected prose. Findings must be specific enough for the origina
       )
     ),
   ];
-  return { decision: "changes_required", issues };
+  return { decision: "changes_required", issues, ...(evidence ? { evidence } : {}) };
 }
 
 function factualAuditUnits(sections: DraftSection[]): FactualAuditUnit[] {
@@ -1043,7 +1162,7 @@ function factualAuditUnits(sections: DraftSection[]): FactualAuditUnit[] {
       .flatMap((line) => line.split(/(?<=[.!?])\s+/))
       .map((text) => text.trim())
       .filter((text) => {
-        if (!text || !/[a-z0-9]/i.test(text)) return false;
+        if (!text || !/[\p{L}\p{N}]/u.test(text)) return false;
         const plain = text.replace(/^#+\s*/, "").replace(/\*/g, "").trim();
         const factualText = plain.replace(
           new RegExp(DOCUMENT_PLACEHOLDER_TOKEN_PATTERN.source, "g"),
@@ -1064,8 +1183,9 @@ async function auditFactualGrounding(
   input: DocumentPipelineInput,
   sections: DraftSection[],
   round: number,
-): Promise<ReviewResult> {
-  const units = factualAuditUnits(sections);
+  prepared?: PreparedAuditRound,
+): Promise<AuditedGrounding> {
+  const units = prepared?.units ?? factualAuditUnits(sections);
   if (units.length === 0) {
     return {
       decision: "changes_required",
@@ -1114,18 +1234,69 @@ Return exactly one entry for every unit_id and no others. Return strict JSON onl
     }],
     maxTokens: 5000,
     outputSchema: groundingAuditOutputSchema(unitIds),
+    ...(prepared?.grounding ? { requireLegacyCheckpointReceipt: true,
+      legacyAuditBinding: prepared.grounding, legacyAuditSources: prepared.sources } : {}),
     signal: input.signal,
   });
   const parsed = validateGroundingAuditOutput(result.structured, unitIds);
+  const receipt = requiredAuditReceipt(input, result, `generate-document.grounding:round-${round}`);
   const issues = groundingIssuesFromAudit(
     units,
     parsed.units,
     sourceEvidence,
+    input.assessmentPolicy ? { evidenceMode: "verbatim" } : undefined,
   );
   return {
     decision: issues.length > 0 ? "changes_required" : "approve",
     issues,
+    ...(receipt && prepared?.grounding ? { evidence: { receipt,
+      binding: prepared.grounding, output: parsed,
+      units: prepared.grounding.units.map((unit) => ({
+        id: unit.id, sectionKey: unit.section_key, contentSha256: unit.content_sha256,
+      })) } } : {}),
   };
+}
+
+async function prepareAuditRound(
+  input: DocumentPipelineInput,
+  target: DraftSection[],
+  sources: AuditSources,
+  round: number,
+): Promise<PreparedAuditRound> {
+  input.signal?.throwIfAborted();
+  const units = freezePlain(factualAuditUnits(target));
+  if (units.length > 512) throw new DocumentGenerationError("DOCUMENT_AUDIT_BINDING_INVALID");
+  const [targetSha256, sections, unitCommitments] = await Promise.all([
+    auditTargetSha256(target),
+    Promise.all(target.map(async (section) => ({ key: section.key, label: section.label,
+      content_sha256: await wordingSha256(section.content) }))),
+    Promise.all(units.map(async (unit) => ({ id: unit.id, section_key: unit.sectionKey,
+      content_sha256: await wordingSha256(unit.text) }))),
+  ]);
+  input.signal?.throwIfAborted();
+  const common = {
+    version: "legacy-document-audit-binding.1",
+    digest_version: LEGACY_AUDIT_DIGEST_VERSION,
+    validator_version: input.assessmentPolicy!.version,
+    unit_policy_version: "legacy-factual-units.2",
+    round,
+    evidence_mode: "verbatim",
+    source_sha256: sources.sha256,
+    execution_policy_version: "legacy-template-policy.1",
+    execution_policy_sha256: input.assessmentPolicy!.executionPolicySha256,
+    target_sha256: targetSha256,
+    sections,
+    units: unitCommitments,
+  };
+  const binding = (kind: "quality" | "grounding") => validateLegacyDocumentAuditBinding({
+    ...common, review_kind: kind,
+    output_schema_name: `prompted_document_${kind}_audit`,
+    output_schema_version: `document-${kind}-audit.1`,
+  }, `generate-document.${kind}:round-${round}`);
+  return freezePlain({ sources: sources.values, units, quality: binding("quality"),
+    // Heading/placeholder-only drafts keep their existing bounded recovery.
+    // An empty roster can never create a successful grounding checkpoint.
+    grounding: units.length ? binding("grounding") : null });
 }
 
 async function auditDocument(
@@ -1134,16 +1305,114 @@ async function auditDocument(
   sections: DraftSection[],
   profile: DocumentIntelligenceProfile | null,
   round: number,
-): Promise<ReviewResult> {
-  const [grounding, quality] = await Promise.all([
-    auditFactualGrounding(input, sections, round),
-    auditDraft(input, brief, sections, profile, round),
+  sources?: AuditSources,
+): Promise<DocumentAuditResult> {
+  const target = input.assessmentPolicy ? freezePlain(structuredClone(sections)) : sections;
+  const prepared = sources ? await prepareAuditRound(input, target, sources, round) : undefined;
+  input.signal?.throwIfAborted();
+  const results = await Promise.allSettled([
+    auditFactualGrounding(input, target, round, prepared),
+    auditDraft(input, brief, target, profile, round, prepared),
   ]);
+  // Both routes are bounded. Join both even on failure so a sibling audit
+  // cannot outlive this assessment and its caller's cancellation/cleanup.
+  // Preserve the existing allowance hold when either provider's completion
+  // is uncertain. Cancellation or a malformed sibling must not release it.
+  for (const result of results) {
+    if (
+      result.status === "rejected" &&
+      isProviderReconciliationRequired(result.reason)
+    ) {
+      throw result.reason;
+    }
+  }
+  const [groundingResult, qualityResult] = results;
+  if (groundingResult.status === "rejected") throw groundingResult.reason;
+  if (qualityResult.status === "rejected") throw qualityResult.reason;
+  input.signal?.throwIfAborted();
+  const grounding = groundingResult.value;
+  const quality = qualityResult.value;
   const issues = [...grounding.issues, ...quality.issues];
+  let evidence: ExactAuditEvidence | undefined;
+  if (input.assessmentPolicy) {
+    if (!quality.evidence || !prepared) throw new DocumentGenerationError("DOCUMENT_AUDIT_RECEIPT_REQUIRED");
+    if (grounding.evidence && ["userId", "logicalRequestId", "authorityReservationId"].some((key) =>
+      Reflect.get(grounding.evidence!.receipt, key) !== Reflect.get(quality.evidence!.receipt, key))) {
+      throw new DocumentGenerationError("DOCUMENT_AUDIT_RECEIPT_CONFLICT");
+    }
+    evidence = freezePlain({
+      round,
+      targetSha256: prepared.quality.target_sha256,
+      sections: prepared.quality.sections.map((section) => ({
+        key: section.key, label: section.label, contentSha256: section.content_sha256,
+      })),
+      quality: quality.evidence,
+      grounding: grounding.evidence ?? null,
+    });
+  }
   return {
     decision: issues.length > 0 ? "changes_required" : "approve",
     issues,
+    // An unverifiable evidence quote is an incomplete review, regardless of
+    // the legacy low severity used to avoid rewriting source-backed prose.
+    groundingComplete: !grounding.issues.some((issue) =>
+      issue.category === "completeness"
+    ),
+    ...(evidence ? { evidence } : {}),
   };
+}
+
+function applyAuditedDraft(
+  input: DocumentPipelineInput,
+  brief: OutcomeBrief,
+  draft: DraftSection[],
+  profile: DocumentIntelligenceProfile | null,
+  audit: DocumentAuditResult,
+): DraftSection[] {
+  if (!audit.groundingComplete) {
+    throw new DocumentGenerationError("DOCUMENT_FACTUAL_REVIEW_INCOMPLETE");
+  }
+  const blockingIssues = audit.issues.filter((issue) =>
+    issue.severity === "medium" || issue.severity === "high"
+  );
+  const gate = applySectionQualityGate(
+    brief,
+    profile,
+    input.template.sections,
+    draft,
+    blockingIssues,
+  );
+  const validSectionKeys = new Set(
+    input.template.sections.map((section) => section.key),
+  );
+  if (blockingIssues.length > 0) {
+    console.warn("DOCUMENT_QUALITY_GATE", {
+      blockingIssueCount: blockingIssues.length,
+      blockedSectionKeys: gate.blockedSectionKeys,
+      documentLevelIssueCount: gate.documentLevelIssues.length,
+      invalidSectionKeys: [
+        ...new Set(
+          blockingIssues
+            .map((issue) => issue.section_key)
+            .filter((key): key is string =>
+              typeof key === "string" && !validSectionKeys.has(key)
+            ),
+        ),
+      ],
+      categories: [...new Set(blockingIssues.map((issue) => issue.category))],
+    });
+  }
+  if (gate.documentLevelIssues.length > 0) {
+    const categories = [
+      ...new Set(gate.documentLevelIssues.map((issue) => issue.category)),
+    ].join(",");
+    throw new Error(
+      categories
+        ? `DOCUMENT_QUALITY_FAILED:${categories}`
+        : "DOCUMENT_QUALITY_FAILED",
+    );
+  }
+  return gate.draft;
 }
 
 function ensureNoBlankSections(
@@ -1253,12 +1522,25 @@ export interface DocumentPipelineResult {
   missingInfo: SectionMissingInfo[];
   /** Canonical Enhanced DIP unresolved state. */
   unresolvedPlaceholders: UnresolvedDocumentPlaceholder[];
+  /** Internal evidence only. A provider checkpoint is not semantic approval;
+   * these verdicts and exact wording bindings are independently required. */
+  wordingAssessment?: LegacyDocumentWordingAssessment;
 }
 
 export async function runDocumentPipeline(
   input: DocumentPipelineInput,
 ): Promise<DocumentPipelineResult> {
+  input = captureAssessmentInput(input);
   const profile = resolvedProfileFor(input);
+  if (input.assessmentPolicy) freezePlain(profile);
+  const sourceValues = input.assessmentPolicy ? validateLegacyAuditSources([
+    input.situation, input.conversationContext,
+    input.uploadContext, input.extractedText, input.memoryContext,
+  ]) : undefined;
+  const sources = sourceValues ? freezePlain({ values: sourceValues,
+    sha256: await legacyAuditSourceSha256(sourceValues) }) : undefined;
+  const sourceSha256 = sources?.sha256;
+  input.signal?.throwIfAborted();
   const brief = await interpretIntent(input, profile);
   const plan = await planSections(input, brief, profile);
   let draft = ensureNoBlankSections(
@@ -1267,7 +1549,7 @@ export async function runDocumentPipeline(
     await generateDraft(input, brief, plan, profile),
     profile,
   );
-  let audit = await auditDocument(input, brief, draft, profile, 0);
+  let audit = await auditDocument(input, brief, draft, profile, 0, sources);
 
   // Give the original section writers two bounded, targeted opportunities to
   // address the independent audit. A single repair pass was too brittle: one
@@ -1297,63 +1579,38 @@ export async function runDocumentPipeline(
       mergeByKey(draft, rewrittenSections),
       profile,
     );
-    audit = await auditDocument(input, brief, draft, profile, repairRound + 1);
+    audit = await auditDocument(input, brief, draft, profile, repairRound + 1, sources);
   }
 
   // Medium and high failures remain a hard boundary for the section they
   // affect. They must not erase sections that passed: a resume with one
   // flagged bullet is worth more to the user than no resume at all.
   //
-  // Issues carrying a section_key are scoped to that section. Issues without
-  // one are document-level and still fail the whole document, because we
-  // cannot tell which section is unsafe.
-  const blockingIssues = audit.issues.filter((issue) =>
-    issue.severity === "medium" || issue.severity === "high"
-  );
-  const gate = applySectionQualityGate(
-    brief,
-    profile,
-    input.template.sections,
-    draft,
-    blockingIssues,
-  );
-  draft = gate.draft;
-  const documentLevelIssues = gate.documentLevelIssues;
-  const blockedSectionKeys = new Set(gate.blockedSectionKeys);
-  const validSectionKeys = new Set(
-    input.template.sections.map((section) => section.key),
-  );
-  if (blockingIssues.length > 0) {
-    console.warn("DOCUMENT_QUALITY_GATE", {
-      blockingIssueCount: blockingIssues.length,
-      blockedSectionKeys: [...blockedSectionKeys],
-      documentLevelIssueCount: documentLevelIssues.length,
-      invalidSectionKeys: [
-        ...new Set(
-          blockingIssues
-            .map((issue) => issue.section_key)
-            .filter((key): key is string =>
-              typeof key === "string" && !validSectionKeys.has(key)
-            ),
-        ),
-      ],
-      categories: [...new Set(blockingIssues.map((issue) => issue.category))],
-    });
-  }
-
-  if (documentLevelIssues.length > 0) {
-    const categories = [
-      ...new Set(documentLevelIssues.map((issue) => issue.category)),
-    ].join(",");
-    throw new Error(
-      categories
-        ? `DOCUMENT_QUALITY_FAILED:${categories}`
-        : "DOCUMENT_QUALITY_FAILED",
-    );
-  }
+  draft = applyAuditedDraft(input, brief, draft, profile, audit);
 
   const guarded = ensureNoBlankSections(input, brief, draft, profile);
-  const sections = await enforceFinalText(input, brief, guarded, plan, profile);
+  let sections = await enforceFinalText(input, brief, guarded, plan, profile);
+  input.signal?.throwIfAborted();
+  const wordingChanged = sections.length !== guarded.length ||
+    sections.some((section, index) =>
+      section.key !== guarded[index]?.key ||
+      section.label !== guarded[index]?.label ||
+      section.content !== guarded[index]?.content
+    );
+  if (wordingChanged) {
+    // Existing rounds 0–2 keep their checkpoint identities. Cleanup can call
+    // a writer or strip text, so it needs its own exact-wording audit. No
+    // provider rewrite or stripping is allowed after this final assessment;
+    // the gate can only isolate failures with declared deterministic slots.
+    const finalAudit = await auditDocument(input, brief, sections, profile, 3, sources);
+    sections = applyAuditedDraft(input, brief, sections, profile, finalAudit);
+    audit = finalAudit;
+  }
+
+  // Draft callbacks may retain their preview objects. Own the final roster
+  // before any asynchronous digest work, then return that same immutable
+  // wording with the assessment. A preview callback cannot amend its bytes.
+  if (input.assessmentPolicy) sections = freezePlain(structuredClone(sections));
 
   // sectionFallbackPlaceholder is pure and deterministic in (brief, profile,
   // section, readiness) -- all fixed by this point in the run -- so a
@@ -1396,5 +1653,55 @@ export async function runDocumentPipeline(
     })
     .filter((entry) => entry.missing.length > 0);
 
-  return { sections, missingInfo, unresolvedPlaceholders };
+  let wordingAssessment: LegacyDocumentWordingAssessment | undefined;
+  if (input.assessmentPolicy) {
+    const review = audit.evidence;
+    if (!review || !sourceSha256 || !review.grounding) {
+      throw new DocumentGenerationError("DOCUMENT_AUDIT_RECEIPT_REQUIRED");
+    }
+    const fallbackKeys = new Set(sectionFallbacks.map((placeholder) => placeholder.sectionKey));
+    const finalTargetSha256 = await auditTargetSha256(sections);
+    const assessedSections: LegacyDocumentWordingAssessment["sections"] = await Promise.all(
+      sections.map(async (section) => {
+        const reviewed = review.sections.find((entry) => entry.key === section.key);
+        if (!reviewed) throw new DocumentGenerationError("DOCUMENT_AUDIT_COVERAGE_INVALID");
+        const contentSha256 = await wordingSha256(section.content);
+        const blocked = audit.issues.some((issue) =>
+          (issue.severity === "medium" || issue.severity === "high") &&
+          (!issue.section_key || issue.section_key === section.key));
+        const hasAuditedUnits = review.grounding!.units.some((unit) => unit.sectionKey === section.key);
+        const exactGenerated = contentSha256 === reviewed.contentSha256 &&
+          !blocked && hasAuditedUnits && !fallbackKeys.has(section.key);
+        // A deterministic replacement for rejected prose is preserved as
+        // blocked recovery wording. It never inherits that prose's assessment
+        // or falsely tells the caller that the owner omitted source facts.
+        const disposition = exactGenerated ? "assessed_generated" as const
+          : fallbackKeys.has(section.key) && contentSha256 === reviewed.contentSha256
+          ? "deterministic_unresolved" as const : "review_blocked" as const;
+        return {
+          key: section.key, contentSha256, reviewedContentSha256: reviewed.contentSha256,
+          disposition,
+          requiredFacts: unresolvedPlaceholders.some((placeholder) =>
+            placeholder.sectionKey === section.key && placeholder.requiredForExport)
+            ? "blocked" as const : "complete" as const,
+        };
+      }),
+    );
+    wordingAssessment = freezePlain({
+      contractVersion: input.assessmentPolicy.version,
+      digestContractVersion: LEGACY_AUDIT_DIGEST_VERSION,
+      executionPolicySha256: input.assessmentPolicy.executionPolicySha256,
+      sourceSha256,
+      finalTargetSha256,
+      // Section support does not transfer composition-wide review to changed
+      // sibling wording. A later finalizer must enforce both boundaries.
+      compositionMatchesReview: finalTargetSha256 === review.targetSha256,
+      review,
+      sections: assessedSections,
+    });
+  }
+  input.signal?.throwIfAborted();
+  return { sections, missingInfo, unresolvedPlaceholders,
+    ...(wordingAssessment ? { wordingAssessment } : {}),
+  };
 }

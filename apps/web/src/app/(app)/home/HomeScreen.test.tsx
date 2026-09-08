@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import type { ComponentPropsWithoutRef } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { axe } from "vitest-axe";
 import { ApiError } from "@prompted/shared/api-client";
@@ -299,6 +299,10 @@ function clearResumeResult(): IntentResult {
   };
 }
 
+function withKnowledge(result: IntentResult): IntentResult {
+  return { ...result, knowledgeSummary: `Proposed document: ${result.recommendation!.primary.name}. Source: user answers and confirmed upload, if supplied. Purpose: ${result.situation}. Include specific relevant facts, evidence and the section detail required for this document; keep unavailable details explicitly unresolved.` };
+}
+
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -322,6 +326,37 @@ beforeEach(() => {
 afterEach(() => recordBrowserPrincipal(undefined));
 
 describe("HomeScreen orchestration", () => {
+  it("keeps an oversized first request editable and sends its corrected replacement", async () => {
+    interpretIntentMock.mockResolvedValue(unclear("When are you moving?"));
+    renderHome();
+    const textarea = screen.getByLabelText("What do you need help completing?");
+    const oversized = "x".repeat(20_001);
+    fireEvent.change(textarea, { target: { value: oversized } });
+    await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
+    expect(interpretIntentMock).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue(oversized);
+    expect(await screen.findByText(/20,000/)).toBeInTheDocument();
+
+    fireEvent.change(textarea, { target: { value: "Help me move" } });
+    await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
+    await screen.findByText("When are you moving?");
+    expect(interpretIntentMock).toHaveBeenCalledTimes(1);
+    expect(textarea).toHaveValue("");
+  });
+
+  it("preserves a new draft typed while an earlier accepted request is still returning", async () => {
+    const response = deferredValue<IntentResult>();
+    interpretIntentMock.mockReturnValue(response.promise);
+    renderHome();
+    const textarea = screen.getByLabelText("What do you need help completing?");
+    fireEvent.change(textarea, { target: { value: "Help me move" } });
+    await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
+    expect(interpretIntentMock).toHaveBeenCalledTimes(1);
+    fireEvent.change(textarea, { target: { value: "My next detail" } });
+    await act(async () => response.resolve(unclear("When are you moving?")));
+    expect(textarea).toHaveValue("My next detail");
+  });
+
   it("shows a sign-in path without calling a paid API when signed out", async () => {
     authState.current = { user: null, loading: false };
     const { container } = renderHome();
@@ -392,7 +427,7 @@ describe("HomeScreen orchestration", () => {
 
   it("requires a confirmation turn before showing a premature first-turn recommendation", async () => {
     interpretIntentMock.mockResolvedValue(clearResult());
-    clarifyMock.mockResolvedValue(clearResult());
+    clarifyMock.mockResolvedValue(withKnowledge(clearResult()));
     renderHome();
 
     const textarea = screen.getByLabelText("What do you need help completing?");
@@ -403,6 +438,8 @@ describe("HomeScreen orchestration", () => {
     expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Yes, that's accurate" }));
+    expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
 
     await waitFor(() =>
       expect(screen.getByRole("region", { name: "TED's recommendation" })).toBeDefined(),
@@ -414,13 +451,15 @@ describe("HomeScreen orchestration", () => {
 
   it("shows the summary card with what TED understood", async () => {
     interpretIntentMock.mockResolvedValue(clearResult());
-    clarifyMock.mockResolvedValue(clearResult());
+    clarifyMock.mockResolvedValue(withKnowledge(clearResult()));
     renderHome();
 
     const textarea = screen.getByLabelText("What do you need help completing?");
     await userEvent.type(textarea, "I'm hiring someone next week");
     await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Yes, that's accurate" }));
+    expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
 
     await waitFor(() =>
       expect(screen.getByRole("region", { name: "What TED understood" })).toBeDefined(),
@@ -430,7 +469,7 @@ describe("HomeScreen orchestration", () => {
 
   it("confirming the primary recommendation hands off the chosen template", async () => {
     interpretIntentMock.mockResolvedValue(clearResult());
-    clarifyMock.mockResolvedValue(clearResult());
+    clarifyMock.mockResolvedValue(withKnowledge(clearResult()));
     const onConfirm = vi.fn();
     render(
       <ToastProvider>
@@ -442,6 +481,8 @@ describe("HomeScreen orchestration", () => {
     await userEvent.type(textarea, "I'm hiring someone next week");
     await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Yes, that's accurate" }));
+    expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
 
     const create = await screen.findByRole("button", { name: /Create Offer Letter/i });
     await userEvent.click(create);
@@ -453,9 +494,32 @@ describe("HomeScreen orchestration", () => {
     });
   });
 
+  it("checks a different document profile and reconfirms before handing it off", async () => {
+    const offer = clearResult();
+    offer.recommendation!.alternatives = [{ name: "Resume", format: "document", reason: "", use_case: "Applying", benefits: [] }];
+    interpretIntentMock.mockResolvedValue(offer);
+    clarifyMock.mockResolvedValueOnce(withKnowledge(offer)).mockResolvedValueOnce({ ...clearResumeResult(), knowledgeSummary: "Resume brief: confirmed work history, qualifications and evidence; detailed role-specific experience." });
+    const onConfirm = vi.fn();
+    render(<ToastProvider><HomeScreen fastLaneItems={[]} onConfirm={onConfirm} /></ToastProvider>);
+    await userEvent.type(screen.getByLabelText("What do you need help completing?"), "Help with an offer letter");
+    await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Yes, that's accurate" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
+    await userEvent.click(screen.getByText("See other options"));
+    await userEvent.click(screen.getByRole("button", { name: "Choose Resume" }));
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(clarifyMock.mock.calls.at(-1)?.[0].answer).toContain("Selected document:\nResume");
+    expect(screen.queryByRole("button", { name: "Create Resume" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Create Resume" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm.mock.calls[0]?.[0].conversationContext).toContain("User-confirmed knowledge summary:\nResume brief:");
+    expect(onConfirm.mock.calls[0]?.[0].templateName).toBe("Resume");
+  });
+
   it("keeps confirmation locked until an asynchronous handoff settles", async () => {
     interpretIntentMock.mockResolvedValue(clearResult());
-    clarifyMock.mockResolvedValue(clearResult());
+    clarifyMock.mockResolvedValue(withKnowledge(clearResult()));
     let resolveConfirmation!: () => void;
     const onConfirm = vi.fn(
       () => new Promise<void>((resolve) => {
@@ -472,6 +536,8 @@ describe("HomeScreen orchestration", () => {
     await userEvent.type(textarea, "I'm hiring someone next week");
     await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Yes, that's accurate" }));
+    expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
 
     const create = await screen.findByRole("button", { name: /Create Offer Letter/i });
     await userEvent.click(create);
@@ -685,7 +751,7 @@ describe("HomeScreen orchestration", () => {
       }),
     );
     interpretIntentMock.mockResolvedValue(clearResumeResult());
-    clarifyMock.mockResolvedValue(clearResumeResult());
+    clarifyMock.mockResolvedValue(withKnowledge(clearResumeResult()));
     const { container } = renderHome();
 
     const file = new File(["%PDF-1.4"], "resume.pdf", { type: "application/pdf" });
@@ -698,6 +764,8 @@ describe("HomeScreen orchestration", () => {
     await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
     await userEvent.click(await screen.findByRole("button", { name: /That.s right — continue/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Yes, that's accurate" }));
+    expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
     await userEvent.click(await screen.findByRole("button", { name: /Create Resume/i }));
 
     expect(upsertOutcomeMock).not.toHaveBeenCalled();
@@ -821,7 +889,7 @@ describe("HomeScreen orchestration", () => {
   it("continues a durably confirmed upload without confirming it twice after provider failure", async () => {
     arrangeDurableUpload("Confirmed warehouse source.", "Improve my resume");
     interpretIntentMock.mockRejectedValueOnce(new Error("provider unavailable"));
-    clarifyMock.mockResolvedValueOnce(clearResumeResult());
+    clarifyMock.mockResolvedValueOnce(withKnowledge(clearResumeResult()));
     const { container } = renderHome();
 
     const file = new File(["%PDF-1.4"], "resume.pdf", { type: "application/pdf" });
@@ -839,6 +907,7 @@ describe("HomeScreen orchestration", () => {
     expect(confirmIntakeMock).toHaveBeenCalledTimes(1);
 
     await userEvent.click(continueButton);
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
 
     await waitFor(() =>
       expect(screen.getByRole("region", { name: "TED's recommendation" })).toBeDefined(),
@@ -889,7 +958,7 @@ describe("HomeScreen orchestration", () => {
 
   it("allows a new text-only outcome while retaining a consumed upload recovery link", async () => {
     interpretIntentMock.mockResolvedValue(clearResult());
-    clarifyMock.mockResolvedValue(clearResult());
+    clarifyMock.mockResolvedValue(withKnowledge(clearResult()));
     renderHome(initialWith(intakeSnapshot({
       state: "consumed",
       revision: 3,
@@ -908,6 +977,8 @@ describe("HomeScreen orchestration", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: /Ask TED/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Yes, that's accurate" }));
+    expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
     await userEvent.click(await screen.findByRole("button", { name: /Create Offer Letter/i }));
 
     await waitFor(() => expect(upsertOutcomeMock).toHaveBeenCalledTimes(1));
@@ -1023,7 +1094,7 @@ describe("HomeScreen orchestration", () => {
   it("reports an unresolved final acknowledgement as unconfirmed rather than not created", async () => {
     const output = completedUpload("Raw source that must stay withheld.");
     interpretIntentMock.mockResolvedValue(clearResumeResult());
-    clarifyMock.mockResolvedValue(clearResumeResult());
+    clarifyMock.mockResolvedValue(withKnowledge(clearResumeResult()));
     commitIntakeMock.mockRejectedValue(new HomeUploadIntakeError(
       "HOME_UPLOAD_INTAKE_ACKNOWLEDGEMENT_UNKNOWN",
       true,
@@ -1044,6 +1115,8 @@ describe("HomeScreen orchestration", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Continue with confirmed text/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Yes, that's accurate" }));
+    expect(screen.queryByRole("region", { name: "TED's recommendation" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm knowledge summary" }));
     await userEvent.click(await screen.findByRole("button", { name: /Create Resume/i }));
 
     const alert = await screen.findByRole("alert");

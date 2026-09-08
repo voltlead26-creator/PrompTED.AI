@@ -1,9 +1,11 @@
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { assertWebBuildEnvironmentSafe } from "./check-web-build-environment.mjs";
 
 import {
   buildNetlifyBuildArgs,
@@ -21,6 +23,25 @@ import {
 } from "./deploy-netlify-production.mjs";
 
 const SUPABASE_PROJECT_REF = "jjsykocqpjlekgsbylkd";
+
+let fixtureRepoRoot;
+before(async () => {
+  fixtureRepoRoot = await mkdtemp(join(tmpdir(), "prompted-deployment-unit-env-"));
+});
+after(async () => {
+  if (fixtureRepoRoot) await rm(fixtureRepoRoot, { recursive: true, force: true });
+});
+
+// Release scenarios use the real guard with a controlled empty build environment.
+// Developer dotenv files and shell secrets are not inputs to mocked deployments.
+// The default production dependency is exercised separately with hostile fixtures.
+function assertFixtureBuildEnvironment({ allowOuterNetlifyToken }) {
+  return assertWebBuildEnvironmentSafe({
+    repoRoot: fixtureRepoRoot,
+    environment: {},
+    allowOuterNetlifyToken,
+  });
+}
 
 function fakeSupabaseJwt({ projectRef = SUPABASE_PROJECT_REF, role = "anon" } = {}) {
   const encode = (value) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -161,6 +182,7 @@ function canonicalSmokeFailureScenario({
   const draftFetch = smokeFetch([]);
   let siteLookupCalls = 0;
   const promise = deployNetlifyProduction(SAFE_INPUT, {
+    assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
     spawnImpl(command, args, options) {
       calls.push({ command, args, options });
       if (command === "git") return cleanGitAttestation(args);
@@ -630,6 +652,7 @@ test("hostile input fails before any process starts", async () => {
     deployNetlifyProduction(
       { ...SAFE_INPUT, siteId: `${SAFE_INPUT.siteId}; echo injected` },
       {
+        assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
         spawnImpl() {
           starts += 1;
           return { status: 0 };
@@ -658,6 +681,80 @@ test("an unsafe web-build environment fails before any process starts", async ()
   assert.equal(starts, 0);
 });
 
+test("mocked deployment scenarios ignore developer dotenv files and shell credentials", async () => {
+  const root = await mkdtemp(join(tmpdir(), "prompted-deployment-hostile-parent-"));
+  try {
+    await mkdir(join(root, "apps/web"), { recursive: true });
+    await writeFile(join(root, "apps/web/.env.local"), "OPENAI_API_KEY=synthetic-dotenv-value\n");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--test",
+        "--test-name-pattern=^production deployment uploads once,",
+        fileURLToPath(import.meta.url),
+      ],
+      {
+        cwd: root,
+        env: { OPENAI_API_KEY: "synthetic-shell-value" },
+        encoding: "utf8",
+        timeout: 10_000,
+        shell: false,
+      },
+    );
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /# pass 1\b/);
+    assert.match(result.stdout, /# fail 0\b/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the default deployment guard rejects hostile dotenv names and public credential values", async () => {
+  const root = await mkdtemp(join(tmpdir(), "prompted-deployment-real-guard-"));
+  const moduleUrl = new URL("./deploy-netlify-production.mjs", import.meta.url).href;
+  const serviceRoleKey = fakeSupabaseJwt({ role: "service_role" });
+  try {
+    await mkdir(join(root, "apps/web"), { recursive: true });
+    for (const fixture of [
+      {
+        dotenv: "OPENAI_API_KEY=synthetic-private-value\n",
+        rejectedName: "OPENAI_API_KEY",
+        privateValue: "synthetic-private-value",
+      },
+      {
+        dotenv: `NEXT_PUBLIC_APP_ENV=production\nNEXT_PUBLIC_SUPABASE_URL=${SAFE_INPUT.supabaseUrl}\nNEXT_PUBLIC_SUPABASE_ANON_KEY=${serviceRoleKey}\n`,
+        rejectedName: "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        privateValue: serviceRoleKey,
+      },
+    ]) {
+      await writeFile(join(root, "apps/web/.env.local"), fixture.dotenv);
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import assert from 'node:assert/strict';
+           import { deployNetlifyProduction } from ${JSON.stringify(moduleUrl)};
+           let starts = 0;
+           await assert.rejects(deployNetlifyProduction(${JSON.stringify(SAFE_INPUT)}, {
+             spawnImpl() { starts += 1; throw new Error('Unexpected deployment process'); }
+           }), error => {
+             assert.match(error.message, /Web build environment security check failed/);
+             assert.ok(error.message.includes(${JSON.stringify(fixture.rejectedName)}));
+             assert.equal(error.message.includes(${JSON.stringify(fixture.privateValue)}), false);
+             return true;
+           });
+           assert.equal(starts, 0);`,
+        ],
+        { cwd: root, env: {}, encoding: "utf8", timeout: 10_000, shell: false },
+      );
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("production deployment uploads once, smokes the draft, promotes its exact ID, and attests publication", async () => {
   const calls = [];
   const requests = [];
@@ -667,6 +764,7 @@ test("production deployment uploads once, smokes the draft, promotes its exact I
   const sealOptions = [];
   let siteLookupCalls = 0;
   const result = await deployNetlifyProduction(SAFE_INPUT, {
+    assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
     spawnImpl(command, args, options) {
       calls.push({ command, args, options });
       if (command === "git") return cleanGitAttestation(args);
@@ -831,6 +929,7 @@ test("a checkout SHA mismatch stops before Netlify is contacted", async () => {
   const calls = [];
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         return { status: 0, stdout: `${"0".repeat(40)}\n` };
@@ -850,6 +949,7 @@ test("dirty tracked or untracked source stops before Netlify is contacted", asyn
     const calls = [];
     await assert.rejects(
       deployNetlifyProduction(SAFE_INPUT, {
+        assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
         spawnImpl(command, args, options) {
           calls.push({ command, args, options });
           if (args[0] === "rev-parse") {
@@ -874,6 +974,7 @@ test("a site/origin mismatch stops before a deploy starts", async () => {
   const calls = [];
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -935,6 +1036,7 @@ test("a build or plugin source mutation stops before the draft upload", async ()
   let sealCalls = 0;
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git" && args[0] === "rev-parse") {
@@ -972,6 +1074,7 @@ test("a failed draft smoke never starts deploy promotion", async () => {
   const calls = [];
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -998,6 +1101,7 @@ test("a draft candidate cannot reuse the captured prior published deploy ID", as
   const calls = [];
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -1029,6 +1133,7 @@ test("a timed-out Netlify build fails closed before any upload", async () => {
   const calls = [];
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -1063,6 +1168,7 @@ test("a rejected Supabase anonymous key stops before deploy promotion", async ()
   const draftFetch = smokeFetch(requests);
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -1098,6 +1204,7 @@ test("an artifact mutation after draft smoke blocks deploy promotion", async () 
   let sealCalls = 0;
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -1141,6 +1248,7 @@ for (const scenario of [
     let siteLookupCalls = 0;
     await assert.rejects(
       deployNetlifyProduction(SAFE_INPUT, {
+        assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
         spawnImpl(command, args, options) {
           calls.push({ command, args, options });
           if (command === "git") return cleanGitAttestation(args);
@@ -1197,6 +1305,7 @@ for (const scenario of [
     const calls = [];
     let siteLookupCalls = 0;
     const result = await deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -1241,6 +1350,7 @@ test("an ambiguous promotion result fails when the exact draft is not published"
   let siteLookupCalls = 0;
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);
@@ -1282,6 +1392,7 @@ test("a stale published-deploy attestation fails before canonical smoke", async 
   const requests = [];
   await assert.rejects(
     deployNetlifyProduction(SAFE_INPUT, {
+      assertBuildEnvironmentImpl: assertFixtureBuildEnvironment,
       spawnImpl(command, args, options) {
         calls.push({ command, args, options });
         if (command === "git") return cleanGitAttestation(args);

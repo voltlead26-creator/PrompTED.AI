@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
       outputSchema: INTENT_OUTPUT_SCHEMA,
       systemPrompt,
       messages,
-      maxTokens: 1200,
+      maxTokens: 3000,
       signal: req.signal,
     });
 
@@ -110,11 +110,11 @@ Deno.serve(async (req) => {
             content:
               "Your last reply did not follow the required JSON schema -- it answered in prose instead. " +
               "Reply again with ONLY the JSON object described in your instructions: no prose, no markdown fences, no commentary. " +
-              "This is the first turn, so set intent_clear to false, keep recommendation null, and ask exactly one short clarification question. " +
-              "Use the highest-impact unresolved factual requirement from the resolved document profile; if none is unresolved, summarise the facts you understood and ask the user to confirm or correct them.",
+              "Use the resolved document profile to ask up to three unresolved factual questions together, keeping intent_clear false and recommendation null. " +
+              "If the requirements are sufficiently understood, return a complete knowledge_summary and proposed recommendation for explicit user confirmation.",
           },
         ],
-        maxTokens: 1200,
+        maxTokens: 3000,
         signal: req.signal,
       });
       parsed = repair.structured;

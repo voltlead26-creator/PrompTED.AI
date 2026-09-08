@@ -1,0 +1,38 @@
+{
+  "project": "prompted-db-20260906163458380-8b03111a",
+  "container": "07c1b85e3a5aa4ad431e285e85615c75249a5b90c62c411a50cf0821b89fd2b7",
+  "identity": {
+    "database": "postgres",
+    "cluster": "7682461811326255142",
+    "port": "5432",
+    "version": "17.6"
+  },
+  "ports": {
+    "5432/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": "58322"
+      },
+      {
+        "HostIp": "::",
+        "HostPort": "58322"
+      }
+    ]
+  },
+  "networks": [
+    "supabase_network_prompted-db-20260906163458380-8b03111a"
+  ],
+  "mounts": [
+    {
+      "Type": "volume",
+      "Name": "supabase_db_prompted-db-20260906163458380-8b03111a",
+      "Source": "/var/lib/docker/volumes/supabase_db_prompted-db-20260906163458380-8b03111a/_data",
+      "Destination": "/var/lib/postgresql/data",
+      "Driver": "local",
+      "Mode": "z",
+      "RW": true,
+      "Propagation": ""
+    }
+  ],
+  "image": "public.ecr.aws/supabase/postgres:17.6.1.158 sha256:99b1729aeb0bac314445024fc149fbd39306170b61dd50800ccf180327ab3459"
+}

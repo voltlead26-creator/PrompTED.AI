@@ -1,4 +1,13 @@
+// Edge tests retain the repository's existing lockfile-pinned JSR imports.
+// deno-lint-ignore no-import-prefix
 import { assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { resolveOpenAIRoute } from "./provider-router.ts";
+import { ModelCallAccountingError } from "./cost-tracker.ts";
+import {
+  legacyAuditSourceSha256,
+  legacyAuditTargetSha256,
+  legacyAuditTextSha256,
+} from "./document-audit-binding.ts";
 import {
   bindModelCallContext,
   claimOpenAICapacity,
@@ -16,6 +25,149 @@ import {
 } from "./model-call-context.ts";
 
 Deno.env.set("PROMPTED_DEPLOYMENT_ENV", "test");
+
+async function contextAuditInput() {
+  const sources: [string, string, string, string, string] = ["I was charged $10 twice.", "", "", "", ""];
+  const contentSha256 = await legacyAuditTextSha256(sources[0]);
+  return {
+    logicalStageKey: "generate-document.quality:round-0", requestSha256: "b".repeat(64),
+    attemptNumber: 1, maxAttempts: 2,
+    legacyAuditSources: sources,
+    legacyAuditBinding: {
+      version: "legacy-document-audit-binding.1" as const, digest_version: "legacy-document-audit-digests.1" as const,
+      validator_version: "legacy-wording-assessment.1" as const, unit_policy_version: "legacy-factual-units.2" as const,
+      review_kind: "quality" as const, round: 0,
+      output_schema_name: "prompted_document_quality_audit" as const, output_schema_version: "document-quality-audit.1" as const,
+      evidence_mode: "verbatim" as const, source_sha256: await legacyAuditSourceSha256(sources),
+      execution_policy_version: "legacy-template-policy.1" as const, execution_policy_sha256: "b".repeat(64),
+      target_sha256: await legacyAuditTargetSha256([{ key: "opening", label: "Opening", content: sources[0] }]),
+      sections: [{ key: "opening", label: "Opening", content_sha256: contentSha256 }],
+      units: [{ id: "opening#1", section_key: "opening", content_sha256: contentSha256 }],
+    },
+  };
+}
+
+for (const mismatch of [false, true]) {
+  Deno.test("audit preparation keeps its owned source/binding and requires matching durable proof with mismatch=" + mismatch, async () => {
+    const input = await contextAuditInput();
+    const accepted = structuredClone(input);
+    const admissionId = "20000000-0000-4000-8000-000000000002";
+    const claimToken = "10000000-0000-4000-8000-000000000002";
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const admin = {
+      rpc(name: string, args: Record<string, unknown>) {
+        calls.push({ name, args: structuredClone(args) });
+        input.legacyAuditSources[0] = "Changed after checkpoint read began.";
+        input.legacyAuditBinding.sections[0].label = "Changed caller label";
+        const checkpoint = {
+          state: "prepared", provider_permitted: true, attempt_number: 1,
+          attempt_admission_id: admissionId, execution_claim_token: claimToken,
+        };
+        const binding = structuredClone(accepted.legacyAuditBinding);
+        if (mismatch) binding.sections[0].label = "Different stored section";
+        return Promise.resolve({ data: name === "read_legacy_document_audit_checkpoint_v1"
+          ? { contract_version: "legacy-document-audit-checkpoint.1", checkpoint,
+            audit_binding: binding, audit_binding_sha256: "d".repeat(64) }
+          : checkpoint,
+        error: null });
+      },
+    } as never;
+    const signal = new AbortController().signal;
+    bindModelCallContext(signal, {
+      userId: "11111111-1111-4111-8111-111111111111", admin,
+      generationRequestId: "context-audit-binding-request",
+      checkpoint: {
+        scope: "generate-document", originReservationId: "30000000-0000-4000-8000-000000000001",
+        executionClaimToken: claimToken,
+      },
+    });
+    if (mismatch) {
+      await assertRejects(() => prepareLegacyModelAttempt(signal, input), ModelCallAccountingError,
+        "MODEL_CALL_AUDIT_CHECKPOINT_CONFLICT");
+    } else {
+      const prepared = await prepareLegacyModelAttempt(signal, input);
+      assertEquals(prepared.durableAdmissionId, admissionId);
+      assertEquals(Reflect.get(prepared, "legacyAuditBindingSha256"), "d".repeat(64));
+    }
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0].name, "read_legacy_document_audit_checkpoint_v1");
+    assertEquals(calls[0].args.p_audit_binding, accepted.legacyAuditBinding);
+    assertEquals(calls[0].args.p_source_snapshot, accepted.legacyAuditSources);
+    assertEquals(calls[0].args.p_allocate_attempt, true);
+    assertEquals(calls[0].args.p_with_fallback, false);
+  });
+}
+
+for (const checkpointEnabled of [false, true]) {
+  Deno.test("terminal context returns discriminated durable receipt with checkpoint=" + checkpointEnabled, async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const originReservationId = "33333333-3333-4333-8333-333333333333";
+    const usageLedgerId = "44444444-4444-4444-8444-444444444444";
+    const executionClaimToken = "55555555-5555-4555-8555-555555555555";
+    const logicalRequestId = "context-receipt-request";
+    const logicalStageKey = "generate-document.audit:wording";
+    const requestSha256 = "b".repeat(64);
+    // provider_attempt_id is SQL TEXT, not a UUID-only field.
+    const providerAttemptId = "response:resp_context_receipt";
+    const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+      logicalStageKey + "|" + requestSha256 + "|" + providerAttemptId,
+    ));
+    const modelCallKey = Array.from(new Uint8Array(bytes))
+      .map((value) => value.toString(16).padStart(2, "0")).join("");
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const admin = {
+      rpc(name: string, args: Record<string, unknown>) {
+        calls.push({ name, args });
+        return Promise.resolve({ data: {
+          usage_ledger_id: usageLedgerId, model_call_key: modelCallKey,
+          idempotent_replay: false,
+          result_id: args.p_result_envelope ? "66666666-6666-4666-8666-666666666666" : null,
+          result_response_sha256: args.p_result_envelope ? "c".repeat(64) : null,
+          result_idempotent_replay: args.p_result_envelope ? false : null,
+        }, error: null });
+      },
+    } as never;
+    const signal = new AbortController().signal;
+    bindModelCallContext(signal, {
+      userId, admin, generationRequestId: logicalRequestId,
+      ...(checkpointEnabled ? { checkpoint: {
+        scope: "generate-document", originReservationId, executionClaimToken,
+      } } : {}),
+    });
+    const resultEnvelope = {
+      version: "legacy-provider-result.1" as const,
+      text: '{"decision":"approve"}', structured: { decision: "approve" },
+      sources: [], route_snapshot: resolveOpenAIRoute("review"),
+    };
+    const receipt: unknown = await recordLegacyModelAttempt(signal, {
+      logicalStageKey, requestSha256, providerAttemptId, attemptNumber: 1,
+      attemptStatus: "succeeded", providerResponseId: "resp_context_receipt",
+      providerStatus: "completed", errorCode: null, inputTokens: 7, outputTokens: 4,
+      startedAt: "2026-09-01T00:00:00.000Z",
+      completedAt: "2026-09-01T00:00:01.000Z",
+      model: resultEnvelope.route_snapshot.model,
+      routingVersion: resultEnvelope.route_snapshot.routingVersion,
+      semanticRoute: resultEnvelope.route_snapshot.semanticRoute,
+      reasoningEffort: resultEnvelope.route_snapshot.reasoningEffort,
+      resultEnvelope,
+    });
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0].name, "record_legacy_model_call_attempt");
+    assertEquals(calls[0].args.p_result_envelope, checkpointEnabled ? resultEnvelope : null);
+    assertEquals(receipt, {
+      version: "terminal-model-attempt-receipt.1",
+      kind: checkpointEnabled ? "checkpoint" : "usage_only",
+      userId, logicalRequestId,
+      checkpointScope: checkpointEnabled ? "generate-document" : null,
+      authorityReservationId: checkpointEnabled ? originReservationId : null,
+      logicalStageKey, requestSha256, providerAttemptId, attemptNumber: 1,
+      provider: "openai", attemptStatus: "succeeded", providerStatus: "completed",
+      providerResponseId: "resp_context_receipt", errorCode: null,
+      usageLedgerId, modelCallKey,
+      ...(checkpointEnabled ? { resultResponseSha256: "c".repeat(64) } : {}),
+    });
+  });
+}
 
 Deno.test("capacity admission and release use one exact retry-safe lease", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -245,12 +397,18 @@ function fakeAdmin() {
   return {
     calls,
     admin: {
-      rpc(name: string, args: Record<string, unknown>) {
+      async rpc(name: string, args: Record<string, unknown>) {
         calls.push({ name, args });
+        const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+          String(args.p_logical_stage_key) + "|" + String(args.p_request_sha256) + "|" +
+            String(args.p_provider_attempt_id),
+        ));
+        const modelCallKey = Array.from(new Uint8Array(bytes))
+          .map((value) => value.toString(16).padStart(2, "0")).join("");
         return Promise.resolve({
           data: {
             usage_ledger_id: "10000000-0000-4000-8000-000000000001",
-            model_call_key: "a".repeat(64),
+            model_call_key: modelCallKey,
             idempotent_replay: false,
           },
           error: null,

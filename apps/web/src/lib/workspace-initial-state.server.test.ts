@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createClient as createSdkClient } from "@supabase/supabase-js";
 import { WORKSPACE_SNAPSHOT_VERSION } from "./workspace-initial-state";
 
 const createClientMock = vi.hoisted(() => vi.fn());
@@ -96,6 +97,35 @@ describe("loadWorkspaceInitialState", () => {
     expect(initial.intake?.templateId).toBe("resume");
     expect(initial.intake?.uploadId).toBe(UPLOAD_ID);
     expect(initial.workspace?.sections[0]?.content).toBe("Authoritative body");
+  });
+
+  it.each([false, true])("calls the real SDK snapshot method with its client receiver (foreign owner: %s)", async (foreignOwner) => {
+    const snapshot = validSnapshot();
+    if (foreignOwner) snapshot.owner_user_id = "94100000-0000-4000-8000-000000000099";
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://example.supabase.co/rest/v1/rpc/get_workspace_snapshot_v1");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ p_outcome_id: OUTCOME_ID, p_active_section_id: null });
+      return Response.json(snapshot);
+    });
+    const client = createSdkClient("https://example.supabase.co", "synthetic-anon-key", {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false,
+        storageKey: `workspace-server-receiver-${foreignOwner}` }, global: { fetch },
+    });
+    // Authentication is controlled here; RPC dispatch retains the actual SDK
+    // implementation, including its required receiver and response decoder.
+    vi.spyOn(client.auth, "getUser").mockResolvedValue({ data: { user: {
+      id: USER_ID, aud: "authenticated", app_metadata: {}, user_metadata: {}, created_at: "2026-09-01T00:00:00.000Z",
+    } }, error: null });
+    createClientMock.mockResolvedValue(client);
+
+    const initial = await loadWorkspaceInitialState(OUTCOME_ID);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(initial.truth.ownerUserId).toBe(USER_ID);
+    expect(initial.truth.persistence).toBe(foreignOwner ? "unavailable" : "persisted");
+    if (foreignOwner) expect(initial.workspace).toBeNull();
+    else expect(initial.workspace?.sections[0]?.content).toBe("Authoritative body");
   });
 
   it.each([

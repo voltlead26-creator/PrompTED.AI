@@ -3,6 +3,8 @@
 // Internal, resource-isolated parsing of an exact retained upload.
 // =====================================================
 
+// Preserve the repository's existing explicit deployed dependency specifier.
+// deno-lint-ignore no-import-prefix
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { jsonResponse } from "../_shared/cors.ts";
 import {
@@ -11,29 +13,14 @@ import {
 } from "../_shared/private-storage-object.ts";
 import {
   extractBoundedUploadText,
+  extractBoundedUploadWithSource,
+  extractBoundedUploadWithSourceV3,
   MAX_UPLOAD_BYTES,
 } from "../_shared/upload-extraction.ts";
 import {
   handleExtractUpload,
-  type UploadExtractionSnapshot,
+  parseUploadExtractionSnapshot,
 } from "./handler.ts";
-
-function snapshotRecord(value: unknown): UploadExtractionSnapshot | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  return {
-    uploadId: String(record.upload_id ?? ""),
-    userId: String(record.user_id ?? ""),
-    requestSha256: String(record.request_sha256 ?? ""),
-    claimToken: String(record.claim_token ?? ""),
-    storagePath: String(record.storage_path ?? ""),
-    filename: String(record.filename ?? ""),
-    fileType: String(record.file_type ?? ""),
-    byteLength: Number(record.byte_length),
-    contentSha256: String(record.content_sha256 ?? ""),
-    stage: String(record.stage ?? "") as UploadExtractionSnapshot["stage"],
-  };
-}
 
 Deno.serve(async (req) => {
   try {
@@ -54,7 +41,7 @@ Deno.serve(async (req) => {
           },
         );
         if (error) throw new Error("UPLOAD_EXTRACTION_SNAPSHOT_UNAVAILABLE");
-        return snapshotRecord(data);
+        return parseUploadExtractionSnapshot(data);
       },
       async readOriginal(input) {
         const bytes = await requestPrivateStorageObject({
@@ -69,6 +56,8 @@ Deno.serve(async (req) => {
         return bytes;
       },
       extract: extractBoundedUploadText,
+      extractWithSource: extractBoundedUploadWithSource,
+      extractWithSourceV3: extractBoundedUploadWithSourceV3,
     });
   } catch {
     return jsonResponse(

@@ -48,10 +48,14 @@ export interface WorkspaceDocumentState {
 }
 
 export type WorkspaceCacheScope =
-  { kind: "guest"; guestId: string } | { kind: "user"; userId: string };
+  | { kind: "guest"; guestId: string }
+  | { kind: "user"; userId: string };
 
 type OwnerBoundCacheKind =
-  "workspace" | "pending" | "generation-identities" | "captured-export-intents";
+  | "workspace"
+  | "pending"
+  | "generation-identities"
+  | "captured-export-intents";
 
 interface OwnerBoundCache<T> {
   version: 3;
@@ -496,17 +500,53 @@ export function loadWorkspace(
   }
 }
 
-export function saveWorkspace(scope: WorkspaceCacheScope, workspace: StoredWorkspace): void {
-  if (typeof window === "undefined") return;
-  if (
-    !validWorkspaceForScope(scope, workspace.outcomeId, workspace) ||
-    hasUnavailableSectionBody(workspace)
-  )
-    return;
+export type WorkspaceDeviceSaveStatus = "unknown" | "saved" | "quota_exceeded" | "unavailable";
+export type WorkspaceCacheWriteResult =
+  | { status: "saved" }
+  | {
+      status: "unavailable";
+      reason:
+        | "quota_exceeded"
+        | "storage_unavailable"
+        | "invalid_workspace"
+        | "incomplete_workspace"
+        | "guest_scope_unavailable";
+    };
+
+export function saveWorkspace(
+  scope: WorkspaceCacheScope,
+  workspace: StoredWorkspace,
+): WorkspaceCacheWriteResult {
+  if (typeof window === "undefined")
+    return { status: "unavailable", reason: "storage_unavailable" };
+  if (!validWorkspaceForScope(scope, workspace.outcomeId, workspace)) {
+    return { status: "unavailable", reason: "invalid_workspace" };
+  }
+  if (hasUnavailableSectionBody(workspace))
+    return { status: "unavailable", reason: "incomplete_workspace" };
   try {
+    if (scope.kind === "guest") {
+      if (guestCacheIsClaimed(scope, workspace.outcomeId))
+        return { status: "unavailable", reason: "guest_scope_unavailable" };
+      const currentScope = currentWorkspaceCacheScope();
+      if (
+        currentScope.kind !== "guest" ||
+        currentScope.guestId !== scope.guestId ||
+        sessionStorage.getItem(GUEST_SCOPE_KEY) !== scope.guestId
+      ) {
+        return { status: "unavailable", reason: "guest_scope_unavailable" };
+      }
+    }
     writeOwnerBound(scope, workspace.outcomeId, "workspace", workspace);
-  } catch {
-    // Storage may be full or unavailable.
+    return { status: "saved" };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      reason:
+        error instanceof DOMException && error.name === "QuotaExceededError"
+          ? "quota_exceeded"
+          : "storage_unavailable",
+    };
   }
 }
 

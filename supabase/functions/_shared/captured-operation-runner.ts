@@ -1,16 +1,23 @@
 import {
+  CAPTURED_GROUNDING_PIPELINE_VERSION,
   type CapturedAcceptedInputSnapshot,
   capturedDocumentOutputSchema,
   capturedDocumentSystemPrompt,
   capturedDocumentUserMessage,
+  type CapturedGroundingIdentity,
+  capturedGroundingReviewSchema,
+  capturedGroundingSystemPrompt,
   type CapturedInputPlan,
   CapturedOperationInputError,
   capturedOutputNeedsReview,
   type CapturedValidationIssue,
   planCapturedInputs,
+  prepareCapturedDocumentAssessment,
   restoreCapturedInputPlan,
+  validateCapturedDocumentAssessment,
   validateCapturedDocumentOutput,
 } from "./captured-document-operation.ts";
+import { GROUNDED_CAPTURED_LEDGER_VERSION } from "../../../packages/shared/src/document-ledger.ts";
 import {
   OpenAIAdapterError,
   type ProviderAttempt,
@@ -89,6 +96,7 @@ interface OperationState {
   review_checkpoint?: unknown;
   provider_attempt_number?: number;
   provider_client_request_id?: string;
+  provider_execution?: unknown;
   cancellation_requested?: boolean;
   cancellation_code?: string | null;
   capacity_resume_deferred?: boolean;
@@ -110,6 +118,8 @@ interface AcceptedExecution {
   ledgerSchemaVersion: string;
   ledgerVersion: string;
   ledgerContractSha256: string;
+  generationSnapshotSha256: string;
+  acceptedDocumentRevision: number;
   benchmarkVersion: string;
   pipelineVersion: string;
   routingVersion: string;
@@ -126,6 +136,7 @@ interface CapturedPipelineAdapter {
   readonly pipelineVersion: string;
   readonly workflow: string;
   readonly operationTtlSeconds: number;
+  readonly reviewKind: "replacement_document" | "exact_wording_assessment";
   restorePlan(snapshot: CapturedAcceptedInputSnapshot): CapturedInputPlan;
 }
 
@@ -134,6 +145,13 @@ const CAPTURED_PIPELINE_ADAPTERS: ReadonlyMap<string, CapturedPipelineAdapter> =
     pipelineVersion: CURRENT_PIPELINE_VERSION,
     workflow: WORKFLOW,
     operationTtlSeconds: OPERATION_TTL_SECONDS,
+    reviewKind: "replacement_document",
+    restorePlan: restoreCapturedInputPlan,
+  }], [CAPTURED_GROUNDING_PIPELINE_VERSION, {
+    pipelineVersion: CAPTURED_GROUNDING_PIPELINE_VERSION,
+    workflow: WORKFLOW,
+    operationTtlSeconds: OPERATION_TTL_SECONDS,
+    reviewKind: "exact_wording_assessment",
     restorePlan: restoreCapturedInputPlan,
   }]]);
 
@@ -199,7 +217,7 @@ function acceptedUuid(value: unknown, code: string): string {
 }
 
 function acceptedPositiveInteger(value: unknown, code: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new CapturedOperationRpcError(
       code,
       "get_captured_document_resume_payload",
@@ -277,6 +295,7 @@ function publicState(operation: OperationState): Record<string, unknown> {
     review_checkpoint: _ReviewCheckpoint,
     provider_attempt_number: _providerAttemptNumber,
     provider_client_request_id: _providerClientRequestId,
+    provider_execution: _providerExecution,
     lease_token: _leaseToken,
     cancellation_code: _cancellationCode,
     ...visible
@@ -286,7 +305,7 @@ function publicState(operation: OperationState): Record<string, unknown> {
 
 function structuredCheckpoint(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? structuredClone(value as Record<string, unknown>)
     : null;
 }
 
@@ -470,6 +489,19 @@ function parseAcceptedExecution(
     40,
     "CAPTURED_ACCEPTED_LOCALE_INVALID",
   );
+  const exactAssessment = adapter.reviewKind === "exact_wording_assessment";
+  if (
+    exactAssessment
+      ? ledgerVersion !== GROUNDED_CAPTURED_LEDGER_VERSION ||
+        plan.template.validationPolicy.groundingReview !== "exact_wording_v2"
+      : ledgerVersion === GROUNDED_CAPTURED_LEDGER_VERSION ||
+        plan.template.validationPolicy.groundingReview !== undefined
+  ) {
+    throw new CapturedOperationRpcError(
+      "CAPTURED_ACCEPTED_PIPELINE_CONTRACT_INVALID",
+      "get_captured_document_resume_payload",
+    );
+  }
   const jurisdiction = acceptedText(
     accepted.jurisdiction,
     40,
@@ -514,6 +546,11 @@ function parseAcceptedExecution(
     ledgerSchemaVersion,
     ledgerVersion,
     ledgerContractSha256,
+    generationSnapshotSha256,
+    acceptedDocumentRevision: acceptedPositiveInteger(
+      accepted.accepted_document_revision,
+      "CAPTURED_ACCEPTED_DOCUMENT_REVISION_INVALID",
+    ),
     benchmarkVersion,
     pipelineVersion,
     routingVersion,
@@ -601,16 +638,32 @@ function routePrompt(
   task: "document" | "review",
   routeSnapshot: OpenAIRouteSnapshot,
   prior?: { output: unknown; issues: CapturedValidationIssue[] },
+  assessmentMessage?: string,
 ): ProviderRequest {
+  const assessment = task === "review" &&
+    pipelineAdapter(accepted.pipelineVersion).reviewKind ===
+      "exact_wording_assessment";
+  if (assessment && !assessmentMessage) {
+    throw new CapturedOperationRpcError(
+      "CAPTURED_GROUNDING_TARGET_REQUIRED",
+      "complete_captured_document_provider_attempt",
+    );
+  }
   return {
     task,
-    systemPrompt: capturedDocumentSystemPrompt(plan, task === "review"),
+    systemPrompt: assessment
+      ? capturedGroundingSystemPrompt()
+      : capturedDocumentSystemPrompt(plan, task === "review"),
     messages: [{
       role: "user",
-      content: capturedDocumentUserMessage(plan, prior),
+      content: assessment
+        ? assessmentMessage!
+        : capturedDocumentUserMessage(plan, prior),
     }],
     maxTokens: 16_000,
-    outputSchema: capturedDocumentOutputSchema(plan),
+    outputSchema: assessment
+      ? capturedGroundingReviewSchema(plan)
+      : capturedDocumentOutputSchema(plan),
     background: false,
     routeSnapshot,
     metadata: {
@@ -647,8 +700,12 @@ function acceptedRoute(
   const routingVersion = typeof root.routingVersion === "string"
     ? root.routingVersion.trim()
     : "";
-  const expectedSchema = capturedDocumentOutputSchema(plan).version ??
-    capturedDocumentOutputSchema(plan).name;
+  const schema = semanticRoute === "review" &&
+      pipelineAdapter(accepted.pipelineVersion).reviewKind ===
+        "exact_wording_assessment"
+    ? capturedGroundingReviewSchema(plan)
+    : capturedDocumentOutputSchema(plan);
+  const expectedSchema = schema.version ?? schema.name;
   const validationIssues = validateOpenAIRouteSnapshot(route);
   if (
     root.provider !== "openai" ||
@@ -737,6 +794,7 @@ function acceptedAttemptBudgetExhausted(
 
 function preparedAttemptRequiresReconciliation(code: string): boolean {
   return code === "OPENAI_PROVIDER_RECONCILIATION_REQUIRED" ||
+    code === "OLLAMA_PROVIDER_RECONCILIATION_REQUIRED" ||
     code === "CAPTURED_PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED";
 }
 
@@ -845,6 +903,8 @@ export async function runCapturedDocumentOperation(params: {
     if (
       operation.operation_id !== accepted.operationId ||
       operation.document_id !== accepted.documentId ||
+      operation.accepted_document_revision !==
+        accepted.acceptedDocumentRevision ||
       operation.routing_version !== accepted.routingVersion ||
       canonicalJson(operation.route_snapshot) !==
         canonicalJson(accepted.routeSnapshot)
@@ -855,6 +915,19 @@ export async function runCapturedDocumentOperation(params: {
       );
     }
     const plan = accepted.plan;
+    const groundingIdentity: CapturedGroundingIdentity | null =
+      pipelineAdapter(accepted.pipelineVersion).reviewKind ===
+          "exact_wording_assessment"
+        ? {
+          operation_id: accepted.operationId,
+          document_id: accepted.documentId,
+          accepted_document_revision: accepted.acceptedDocumentRevision,
+          input_revision: accepted.inputRevision,
+          generation_snapshot_sha256: accepted.generationSnapshotSha256,
+          ledger_version: accepted.ledgerVersion,
+          pipeline_version: accepted.pipelineVersion,
+        }
+        : null;
 
     // Validate both routes from the immutable accepted snapshot before the
     // first provider call. The adapter receives these exact effective routes;
@@ -1083,6 +1156,12 @@ export async function runCapturedDocumentOperation(params: {
             "record_captured_document_provider_attempt",
           );
         }
+        if (prepared.provider_execution !== undefined && prepared.provider_execution !== null) {
+          if (!route.creditFallback || canonicalJson(prepared.provider_execution) !== canonicalJson(route.creditFallback)) {
+            throw new CapturedOperationRpcError("OLLAMA_ATTEMPT_POLICY_MISMATCH", "record_captured_document_provider_attempt");
+          }
+          return { attemptNumber, clientRequestId, execution: route.creditFallback };
+        }
         return { attemptNumber, clientRequestId };
       },
       complete: async ({ attempt, requestSha256, structuredOutput }) => {
@@ -1279,6 +1358,18 @@ export async function runCapturedDocumentOperation(params: {
       operation.generation_checkpoint,
     );
     const reviewCheckpoint = structuredCheckpoint(operation.review_checkpoint);
+    if (
+      groundingIdentity && (
+        (operation.generation_checkpoint != null && !generationOutput) ||
+        (operation.review_checkpoint != null && !reviewCheckpoint) ||
+        (reviewCheckpoint && !generationOutput)
+      )
+    ) {
+      throw new CapturedOperationRpcError(
+        "CAPTURED_PROVIDER_CHECKPOINT_RECONCILIATION_REQUIRED",
+        "complete_captured_document_provider_attempt",
+      );
+    }
     if (["accepted", "retryable_failure"].includes(operation.status)) {
       operation = await advance(
         params.gateway,
@@ -1322,7 +1413,21 @@ export async function runCapturedDocumentOperation(params: {
             template_id: plan.templateId,
           },
         });
-        generationOutput = generated.structured ?? null;
+        if (
+          groundingIdentity && (
+            !structuredCheckpoint(operation.generation_checkpoint) ||
+            canonicalJson(operation.generation_checkpoint) !==
+              canonicalJson(generated.structured)
+          )
+        ) {
+          throw new CapturedOperationRpcError(
+            "CAPTURED_PROVIDER_COMPLETION_RECONCILIATION_REQUIRED",
+            "complete_captured_document_provider_attempt",
+          );
+        }
+        generationOutput = groundingIdentity
+          ? structuredCheckpoint(operation.generation_checkpoint)
+          : generated.structured ?? null;
       } catch (error) {
         const info = providerErrorInfo(error);
         await renewLease();
@@ -1395,12 +1500,32 @@ export async function runCapturedDocumentOperation(params: {
     );
     if (cancelledAfterGeneration) return cancelledAfterGeneration;
 
-    let evaluated = validateCapturedDocumentOutput(
+    const structural = validateCapturedDocumentOutput(
       plan,
-      reviewCheckpoint ?? generationOutput,
+      groundingIdentity
+        ? generationOutput
+        : reviewCheckpoint ?? generationOutput,
     );
+    const preparedAssessment = groundingIdentity
+      ? await prepareCapturedDocumentAssessment(
+        plan,
+        generationOutput,
+        groundingIdentity,
+      )
+      : null;
+    let evaluated = groundingIdentity
+      ? await validateCapturedDocumentAssessment(
+        plan,
+        generationOutput,
+        groundingIdentity,
+        reviewCheckpoint,
+      )
+      : structural;
     if (
-      !reviewCheckpoint && capturedOutputNeedsReview(plan, evaluated.validation)
+      !reviewCheckpoint &&
+      (preparedAssessment
+        ? preparedAssessment.issues.length === 0
+        : capturedOutputNeedsReview(plan, structural.validation))
     ) {
       if (operation.status === "persisting") {
         throw new CapturedOperationRpcError(
@@ -1427,17 +1552,31 @@ export async function runCapturedDocumentOperation(params: {
           ...routePrompt(plan, accepted, "review", reviewRoute, {
             output: generationOutput,
             issues: evaluated.validation.issues,
-          }),
+          }, preparedAssessment?.reviewUserMessage),
           signal: params.signal,
           attemptLifecycle: attemptLifecycle("review", reviewRoute),
           metadata: {
             operation_id: operation.operation_id,
-            stage_id: "conditional-review",
+            stage_id: groundingIdentity
+              ? "grounding-review"
+              : "conditional-review",
             ledger_version: accepted.ledgerVersion,
             routing_version: reviewRoute.routingVersion,
             template_id: plan.templateId,
           },
         });
+        if (
+          groundingIdentity && (
+            !structuredCheckpoint(operation.review_checkpoint) ||
+            canonicalJson(operation.review_checkpoint) !==
+              canonicalJson(reviewed.structured)
+          )
+        ) {
+          throw new CapturedOperationRpcError(
+            "CAPTURED_PROVIDER_COMPLETION_RECONCILIATION_REQUIRED",
+            "complete_captured_document_provider_attempt",
+          );
+        }
       } catch (error) {
         const info = providerErrorInfo(error);
         await renewLease();
@@ -1503,7 +1642,14 @@ export async function runCapturedDocumentOperation(params: {
           body: { ...publicState(operation), retryable },
         };
       }
-      evaluated = validateCapturedDocumentOutput(plan, reviewed.structured);
+      evaluated = groundingIdentity
+        ? await validateCapturedDocumentAssessment(
+          plan,
+          generationOutput,
+          groundingIdentity,
+          operation.review_checkpoint,
+        )
+        : validateCapturedDocumentOutput(plan, reviewed.structured);
       const cancelledAfterReview = await finishRequestedCancellation(
         "CAPTURED_PROVIDER_REVIEW_COMPLETED_AFTER_CANCELLATION",
       );
@@ -1630,7 +1776,13 @@ export async function runCapturedDocumentOperation(params: {
       const capacityConfigurationUnavailable =
         error.code === "CAPTURED_OPENAI_CAPACITY_CONFIGURATION_UNAVAILABLE";
       const rolloutNotAssigned = error.code === "CAPTURED_ROLLOUT_NOT_ASSIGNED";
+      const staleDocument =
+        error.code === "STALE_CAPTURED_DOCUMENT_FINALIZATION";
+      const checkpointUncertain =
+        error.code === "CAPTURED_PROVIDER_CHECKPOINT_RECONCILIATION_REQUIRED";
       const conflict = activationDisabled || rolloutNotAssigned ||
+        staleDocument ||
+        error.code === "CAPTURED_ACCEPTED_PIPELINE_CONTRACT_INVALID" ||
         error.code === "CAPTURED_PIPELINE_VERSION_UNSUPPORTED" ||
         error.code === "CAPTURED_OPERATION_RESUME_CONFLICT" ||
         error.code === "CAPTURED_OPERATION_RESUME_STATUS_INVALID";
@@ -1638,7 +1790,11 @@ export async function runCapturedDocumentOperation(params: {
         !error.code.startsWith("CAPTURED_ACCEPTED_") &&
         error.code !== "CAPTURED_CANCELLATION_REQUESTED";
       return {
-        status: conflict ? 409 : capacityConfigurationUnavailable ? 503 : 500,
+        status: conflict
+          ? 409
+          : capacityConfigurationUnavailable || checkpointUncertain
+          ? 503
+          : 500,
         body: {
           error: {
             code: error.code,
@@ -1646,6 +1802,10 @@ export async function runCapturedDocumentOperation(params: {
               ? "This captured document workflow is not active for this account."
               : capacityConfigurationUnavailable
               ? "This document workflow is not ready for generation capacity."
+              : staleDocument
+              ? "This document changed after generation was accepted. Reload the saved document before continuing."
+              : checkpointUncertain
+              ? "TED is confirming the stored provider checkpoints. Reconnect to this same operation before continuing."
               : "TED could not persist the document operation safely.",
           },
           retryable,

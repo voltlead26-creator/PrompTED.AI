@@ -163,4 +163,21 @@ describe("owner-scoped Supabase transport", () => {
       });
     }
   });
+  it("cancels a response body delivered after owner retirement without waiting on cleanup", async () => {
+    let resolve!: (response: Response) => void;
+    const transport = vi.fn(() => new Promise<Response>((done) => { resolve = done; }));
+    vi.stubGlobal("fetch", transport);
+    const cancel = vi.fn(() => new Promise<void>(() => undefined));
+    const response = new Response(new ReadableStream({ cancel }));
+    const lease = captureOwnerDispatch(USER_A);
+    await withOwnerSupabase(lease, async () => undefined);
+    const ownerFetch = createDataClient.mock.calls[0]?.[2]?.global?.fetch as typeof fetch;
+    const pending = ownerFetch("https://project.supabase.co/storage/v1/object/original-documents/source", {
+      headers: { Authorization: `Bearer ${accessToken(USER_A)}` },
+    });
+    recordBrowserPrincipal(USER_B);
+    resolve(response);
+    await expect(pending).rejects.toMatchObject({ code: "OWNER_DISPATCH_STALE" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
 });

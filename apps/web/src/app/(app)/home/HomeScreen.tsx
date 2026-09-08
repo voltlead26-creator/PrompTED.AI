@@ -36,6 +36,7 @@ import type {
 import {
   captureOwnerDispatch,
   ownerDispatchIsCurrent,
+  OwnerDispatchError,
 } from "@/lib/browser-principal-state";
 import { signInHref } from "@/lib/auth-return";
 import { ApiError, ingestUpload } from "@prompted/shared/api-client";
@@ -459,8 +460,18 @@ export function HomeScreen({
       }
     }
 
-    setValue("");
-    await rec.submit(typed);
+    let requestContext;
+    try {
+      requestContext = captureOwnerDispatch(user.id);
+    } catch (error) {
+      if (!(error instanceof OwnerDispatchError)) throw error;
+      showToast({ tone: "error", message: "Your sign-in changed. Wait for your account to finish loading, then send this message again." });
+      return;
+    }
+    const accepted = await rec.submit(typed);
+    if (accepted && ownerDispatchIsCurrent(requestContext)) {
+      setValue((current) => current.trim() === typed ? "" : current);
+    }
   }, [
     activeIntake,
     attachment,
@@ -586,7 +597,13 @@ export function HomeScreen({
 
   const handleConfirm = useCallback(
     async (item: RecommendationItem) => {
-      if (authLoading || !user || confirmationInFlightRef.current) return;
+      if (authLoading || !user || confirmationInFlightRef.current || !rec.showRecommendation) return;
+      const recommendation = rec.result?.recommendation;
+      if (!recommendation || ![recommendation.primary, ...recommendation.alternatives].some((candidate) => candidate.name === item.name)) return;
+      if (item.name !== recommendation.primary.name) {
+        await rec.submit(`Selected document:\n${item.name}\nCheck this document's requirements using my existing answers, ask for any missing details, and present an updated knowledge summary for confirmation.`);
+        return;
+      }
       confirmationInFlightRef.current = true;
       setConfirming(true);
       const situation = rec.result?.situation ?? "";

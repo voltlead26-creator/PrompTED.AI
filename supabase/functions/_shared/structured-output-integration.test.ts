@@ -30,7 +30,7 @@ const EXPECTATIONS: StageExpectation[] = [
   },
   {
     path: "../clarify/index.ts",
-    stage: "clarify.forced-commit",
+    stage: "clarify.resolve-repeat",
     schema: "CLARIFY_OUTPUT_SCHEMA",
   },
   {

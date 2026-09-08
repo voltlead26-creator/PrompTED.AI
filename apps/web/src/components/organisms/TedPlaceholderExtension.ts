@@ -3,6 +3,12 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 
 const TOKEN_PATTERN = /\{\{TED_PLACEHOLDER:([A-Za-z0-9._-]+):([^{}]+)\}\}/g;
+const SERIALISED_TEXT_ENTITIES: Readonly<Record<string, string>> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&nbsp;": "\u00a0",
+};
 
 function escapeHtml(value: string): string {
   return value
@@ -15,8 +21,17 @@ function escapeHtml(value: string): string {
 export function renderTedPlaceholdersForEditor(content: string): string {
   return content.replace(
     TOKEN_PATTERN,
-    (_token, id, label) =>
-      `<span data-ted-placeholder-id="${escapeHtml(String(id))}" data-ted-placeholder-label="${escapeHtml(String(label).trim())}">${escapeHtml(String(label).trim())}</span>`,
+    (_token, id, label) => {
+      const text = String(label).trim();
+      // Undo only the entities emitted by TextNode HTML serialisation, once.
+      // Broader decoding could turn numeric/named references into token braces.
+      const decoded = text.replace(
+        /&(?:amp|lt|gt|nbsp);/g,
+        (entity) => SERIALISED_TEXT_ENTITIES[entity] ?? entity,
+      );
+      const escapedLabel = escapeHtml(decoded.trim() ? decoded : text);
+      return `<span data-ted-placeholder-id="${escapeHtml(String(id))}" data-ted-placeholder-label="${escapedLabel}">${escapedLabel}</span>`;
+    },
   );
 }
 

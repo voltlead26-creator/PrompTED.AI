@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChecklistItem, EditAction } from "@prompted/shared";
 import { useChecklist } from "@/hooks/useChecklist";
 import { useEditWithTED } from "@/hooks/useEditWithTED";
@@ -22,8 +22,12 @@ function splitItem(text: string) {
 }
 
 interface PendingChange {
+  outcomeId: string;
+  userId: string;
+  epoch: number;
   itemId: string;
   section: string;
+  originalText: string;
   suggested: string;
   changes: string[];
   action: EditAction;
@@ -35,7 +39,30 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
   const editor = useEditWithTED();
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [showTEdit, setShowTEdit] = useState(false);
-  const [pending, setPending] = useState<PendingChange | null>(null);
+  const [pendingSnapshot, setPending] = useState<PendingChange | null>(null);
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(false);
+  const requestRef = useRef<symbol | null>(null);
+  const currentRef = useRef({ outcomeId, epoch: 0, checklist });
+  const previous = currentRef.current;
+  if (previous.outcomeId !== outcomeId) requestRef.current = null;
+  currentRef.current = {
+    outcomeId,
+    epoch: previous.epoch + Number(previous.outcomeId !== outcomeId),
+    checklist,
+  };
+  const pending = pendingSnapshot?.outcomeId === outcomeId && pendingSnapshot.epoch === currentRef.current.epoch
+    ? pendingSnapshot : null;
+
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      currentRef.current.epoch += 1;
+      requestRef.current = null;
+    };
+  }, []);
 
   const groups = useMemo(() => {
     const map = new Map<string, Array<{ item: ChecklistItem; label: string }>>();
@@ -49,51 +76,115 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
   }, [checklist.items]);
 
   const selectedItem = checklist.items.find((item) => item.id === selectedItemId) ?? checklist.items[0] ?? null;
-  const selectedParsed = selectedItem ? splitItem(selectedItem.text) : null;
   const selectedItemSaving = selectedItem ? checklist.isSavingItem(selectedItem.id) : false;
 
-  if (checklist.loading) return <Spinner label="Loading plan" />;
+  if (checklist.loading) return <><Spinner label="Loading plan" />{renderReview()}</>;
   if (checklist.error) {
     return (
-      <div role="alert">
-        <p>{checklist.error}</p>
-        <button type="button" onClick={() => void checklist.retry()}>Try again</button>
-      </div>
+      <>
+        <div role="alert">
+          <p>{checklist.error}</p>
+          <button type="button" onClick={() => void checklist.retry()}>Try again</button>
+        </div>
+        {renderReview()}
+      </>
     );
   }
-  if (!checklist.items.length) return <p>No checklist items were generated.</p>;
+  if (!checklist.items.length) return <><p>No checklist items were generated.</p>{renderReview()}</>;
 
-  async function requestEdit(action: EditAction, instruction?: string) {
-    if (!selectedItem || !selectedParsed || pending || selectedItemSaving) return;
-    const result = await editor.run({ action, content: selectedParsed.text, instruction });
-    if (!result?.content.trim()) return;
-    setPending({
-      itemId: selectedItem.id,
-      section: selectedParsed.section,
-      suggested: result.content.trim(),
-      changes: result.changes,
+  function sameLifetime(accepted: Pick<PendingChange, "outcomeId" | "epoch">): boolean {
+    return mountedRef.current && accepted.outcomeId === currentRef.current.outcomeId &&
+      accepted.epoch === currentRef.current.epoch;
+  }
+
+  function currentSource(accepted: Pick<PendingChange, "outcomeId" | "epoch" | "itemId" | "userId" | "originalText">): ChecklistItem | null {
+    const live = currentRef.current.checklist;
+    if (!sameLifetime(accepted) || live.loading || live.error || live.isSavingItem(accepted.itemId)) return null;
+    const item = live.items.find((candidate) => candidate.id === accepted.itemId);
+    return item && item.outcome_id === accepted.outcomeId && item.user_id === accepted.userId &&
+      item.text === accepted.originalText ? item : null;
+  }
+
+  async function requestEdit(action: EditAction, instruction?: string, reviewed?: PendingChange) {
+    if (requestRef.current || (pending && reviewed !== pending)) return;
+    const live = currentRef.current;
+    const item = reviewed ? currentSource(reviewed) : selectedItem;
+    const parsed = item ? splitItem(item.text) : null;
+    if (reviewed && !item) {
+      setReviewNotice("This checklist item changed after TED prepared the suggestion. Discard it and review the latest item before editing again.");
+      return;
+    }
+    if (!item || !parsed) return;
+    const accepted = {
+      outcomeId: live.outcomeId,
+      userId: item.user_id,
+      epoch: live.epoch,
+      itemId: item.id,
+      section: parsed.section,
+      originalText: item.text,
       action,
       instruction,
-    });
-    setShowTEdit(false);
+    };
+    if (!currentSource(accepted)) return;
+    const token = Symbol("checklist-edit");
+    requestRef.current = token;
+    setReviewNotice(null);
+    try {
+      const result = await editor.run({ action, content: parsed.text, instruction });
+      if (requestRef.current !== token || !sameLifetime(accepted)) return;
+      if (!currentSource(accepted)) {
+        setReviewNotice("This checklist item changed while TED was preparing the suggestion. Review the latest item and try again.");
+        return;
+      }
+      if (!result?.content.trim()) return;
+      setPending({ ...accepted, suggested: result.content.trim(), changes: result.changes });
+      setShowTEdit(false);
+    } finally {
+      if (requestRef.current === token) requestRef.current = null;
+    }
   }
 
   async function applyChange() {
     if (!pending || checklist.isSavingItem(pending.itemId)) return;
+    const accepted = pending;
+    if (!currentSource(accepted)) {
+      setReviewNotice("This checklist item changed after TED prepared the suggestion. Discard it and review the latest item before editing again.");
+      return;
+    }
     try {
-      await checklist.updateText(pending.itemId, `${pending.section}${SEP}${pending.suggested}`);
-      setPending(null);
+      const saved = await currentRef.current.checklist.updateText(accepted.itemId, `${accepted.section}${SEP}${accepted.suggested}`);
+      if (!sameLifetime(accepted)) return;
+      if (saved) {
+        setPending((current) => current === accepted ? null : current);
+        setReviewNotice(null);
+      } else {
+        setReviewNotice("PrompTED could not confirm this change. Review the latest saved item before trying Apply again.");
+      }
     } catch {
       // The hook exposes exact reconciliation or unconfirmed-save truth.
       // Keep the review open so the user does not lose the proposed wording.
     }
   }
 
-  function retryChange() {
+  async function retryChange() {
     if (!pending) return;
-    const { action, instruction } = pending;
-    setPending(null);
-    window.setTimeout(() => void requestEdit(action, instruction), 0);
+    await requestEdit(pending.action, pending.instruction, pending);
+  }
+
+  function renderReview() {
+    return pending && (
+      <TedChangeReview
+        suggested={pending.suggested}
+        changes={pending.changes}
+        explanation="TED has suggested clearer wording for this item. Nothing changes until you apply it."
+        onDiscard={() => { setPending(null); setReviewNotice(null); }}
+        onRetry={retryChange}
+        onApply={applyChange}
+        busy={checklist.isSavingItem(pending.itemId)}
+        notice={reviewNotice || checklist.error || (checklist.loading ? "Checking the latest checklist. Your suggestion is retained; wait before applying it." : null) || checklist.saveError || editor.error}
+        returnFocusRef={toolbarRef}
+      />
+    );
   }
 
   return (
@@ -128,19 +219,6 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
                         {item.reason ? <small>{item.reason}</small> : null}
                       </button>
                     </div>
-                    {pending && pending.itemId === item.id && (
-                      <div className={styles.pendingReview}>
-                        <TedChangeReview
-                          suggested={pending.suggested}
-                          changes={pending.changes}
-                          explanation="TED has suggested clearer wording for this item. Nothing changes until you apply it."
-                          onDiscard={() => setPending(null)}
-                          onRetry={retryChange}
-                          onApply={() => void applyChange()}
-                          busy={checklist.isSavingItem(item.id)}
-                        />
-                      </div>
-                    )}
                   </li>
                 );
               })}
@@ -149,7 +227,9 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
         ))}
       </div>
 
-      <div className={styles.contextBar} role="toolbar" aria-label="Edit selected checklist item">
+      {renderReview()}
+      {!pending && reviewNotice && <p role="alert">{reviewNotice}</p>}
+      <div ref={toolbarRef} tabIndex={-1} className={styles.contextBar} role="toolbar" aria-label="Edit selected checklist item">
         <button type="button" onClick={() => void requestEdit("expand")} disabled={!selectedItem || selectedItemSaving || editor.streaming || Boolean(pending)}>
           <Icon name="arrows-maximize" size={17} />Expand
         </button>
@@ -177,7 +257,7 @@ export function SectionedChecklistScreen({ outcomeId }: { outcomeId: string }) {
         </aside>
       )}
 
-      {checklist.saveError && <span className={styles.saving} role="status" aria-live="polite">{checklist.saveError}</span>}
+      {!pending && checklist.saveError && <span className={styles.saving} role="status" aria-live="polite">{checklist.saveError}</span>}
       {checklist.savingItemIds.length > 0 && <span className={styles.saving} role="status" aria-live="polite">Saving change…</span>}
     </section>
   );

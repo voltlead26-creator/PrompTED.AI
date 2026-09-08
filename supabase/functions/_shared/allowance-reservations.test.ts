@@ -1,3 +1,4 @@
+// deno-lint-ignore-file no-import-prefix -- Edge test dependencies use direct JSR specifiers pinned by the repository lockfile.
 import {
   assertEquals,
   assertRejects,
@@ -363,8 +364,19 @@ Deno.test("failed provider work releases through the service-only RPC", async ()
 });
 
 Deno.test("legacy generation routes derive missing identities and expose output only after atomic settlement", async () => {
+  const documentEntry = await Deno.readTextFile(
+    new URL("../generate-document/index.ts", import.meta.url),
+  );
+  assertStringIncludes(
+    documentEntry,
+    'import { handleGenerateDocument } from "./handler.ts"',
+  );
+  assertStringIncludes(
+    documentEntry,
+    "Deno.serve((req) => handleGenerateDocument(req))",
+  );
   const routeFiles = [
-    ["generate-document", "../generate-document/index.ts"],
+    ["generate-document", "../generate-document/handler.ts"],
     ["generate-checklist", "../generate-checklist/index.ts"],
     ["generate-report", "../generate-report/index.ts"],
   ] as const;
@@ -379,7 +391,7 @@ Deno.test("legacy generation routes derive missing identities and expose output 
   }
 
   const document = await Deno.readTextFile(
-    new URL("../generate-document/index.ts", import.meta.url),
+    new URL("../generate-document/handler.ts", import.meta.url),
   );
   const checklist = await Deno.readTextFile(
     new URL("../generate-checklist/index.ts", import.meta.url),

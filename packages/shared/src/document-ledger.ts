@@ -178,6 +178,12 @@ export interface LedgerSectionDefinition {
     requiredFields?: string[];
   };
   missingInformationBehaviour: LedgerMissingInformationBehaviour;
+  /** New contracts only; absence does not authorise arbitrary neutral prose. */
+  neutralFallback?: {
+    comparison: "exact_utf8";
+    content: string;
+    whenInputsAbsent: string[];
+  };
   validationRules: string[];
   qualityExpectation: SectionQualityExpectation;
   examples?: { good: string[]; bad: string[] };
@@ -201,6 +207,7 @@ export interface MissingInformationPolicy {
 }
 
 export interface ValidationPolicy {
+  groundingReview?: "exact_wording_v2";
   deterministicRules: string[];
   qualityRules: string[];
   exportBlockingIssueCodes: string[];
@@ -509,6 +516,9 @@ export function validatePersistedRevisionState(
 }
 
 export type LedgerValidationIssueCode =
+  | "invalid_neutral_fallback_contract"
+  | "captured_grounding_policy_required"
+  | "captured_neutral_wording_required"
   | "invalid_runtime_shape"
   | "captured_cohort_mismatch"
   | "captured_ledger_version_mismatch"
@@ -782,6 +792,28 @@ export function validateDocumentGenerationLedger(
           "a required section cannot use omitIfOptional",
         );
       }
+      if (section.neutralFallback !== undefined) {
+        const fallback = section.neutralFallback;
+        if (
+          !fallback || typeof fallback !== "object" ||
+          Array.isArray(fallback) ||
+          section.missingInformationBehaviour !== "useNeutralFallback" ||
+          fallback.comparison !== "exact_utf8" || !hasText(fallback.content) ||
+          fallback.content.length > 2_000 ||
+          !Array.isArray(fallback.whenInputsAbsent) ||
+          new Set(fallback.whenInputsAbsent).size !==
+            fallback.whenInputsAbsent.length ||
+          fallback.whenInputsAbsent.some((key) =>
+            !section.dependsOnInputs.includes(key)
+          )
+        ) {
+          add(
+            "invalid_neutral_fallback_contract",
+            sectionPath,
+            "neutral fallback requires exact wording and declared absent input dependencies",
+          );
+        }
+      }
       for (const inputKey of section.dependsOnInputs) {
         if (!inputKeys.has(inputKey)) {
           add(
@@ -973,6 +1005,10 @@ export function assertValidDocumentGenerationLedger(
 
 export const FIRST_CAPTURED_LEDGER_VERSION =
   "ledger.2026-08-first-cohort.1" as const;
+
+/** Prepared contract; registration and cohort activation are separate gates. */
+export const GROUNDED_CAPTURED_LEDGER_VERSION =
+  "ledger.2026-09-first-cohort.2" as const;
 
 interface CapturedInputSpec {
   key: string;
@@ -1948,16 +1984,41 @@ export function validateCapturedDocumentLedger(
       message: "captured ledger must contain the exact ordered first cohort",
     });
   }
-  if (value.ledgerVersion !== FIRST_CAPTURED_LEDGER_VERSION) {
+  if (
+    value.ledgerVersion !== FIRST_CAPTURED_LEDGER_VERSION &&
+    value.ledgerVersion !== GROUNDED_CAPTURED_LEDGER_VERSION
+  ) {
     issues.push({
       code: "captured_ledger_version_mismatch",
       path: "ledgerVersion",
-      message: `captured ledger must use ${FIRST_CAPTURED_LEDGER_VERSION}`,
+      message: "captured ledger must use a supported immutable version",
     });
   }
 
   for (const [templateId, template] of Object.entries(value.templates)) {
     const path = `templates.${templateId}`;
+    if (value.ledgerVersion === GROUNDED_CAPTURED_LEDGER_VERSION) {
+      if (template.validationPolicy?.groundingReview !== "exact_wording_v2") {
+        issues.push({
+          code: "captured_grounding_policy_required",
+          path,
+          message:
+            "v2 requires an assessment of the exact wording and accepted sources",
+        });
+      }
+      for (const section of template.sections) {
+        if (
+          section.missingInformationBehaviour === "useNeutralFallback" &&
+          !section.neutralFallback
+        ) {
+          issues.push({
+            code: "captured_neutral_wording_required",
+            path: `${path}.sections.${section.sectionKey}`,
+            message: "v2 neutral fallback requires an exact permitted string",
+          });
+        }
+      }
+    }
     if (template.lifecycle?.status !== "active") {
       issues.push({
         code: "captured_template_not_active",
@@ -2042,4 +2103,68 @@ if (capturedIssues.length > 0) {
 
 export const CAPTURED_DOCUMENT_LEDGER = deepFreeze(
   CAPTURED_DOCUMENT_LEDGER_SOURCE,
+);
+
+// v1 remains byte-for-byte unchanged, including its historical benchmark
+// provenance. v2 adds assessment and exact neutral-state rules; it is not a new model-quality
+// evaluation or an activation instruction. Current callers still select v1.
+const groundedCapturedLedger = structuredClone(CAPTURED_DOCUMENT_LEDGER_SOURCE);
+groundedCapturedLedger.ledgerVersion = GROUNDED_CAPTURED_LEDGER_VERSION;
+for (const template of Object.values(groundedCapturedLedger.templates)) {
+  template.validationPolicy.groundingReview = "exact_wording_v2";
+  template.validationPolicy.deterministicRules.push(
+    "exact_neutral_wording",
+    "exact_wording_assessment_identity",
+  );
+  template.validationPolicy.exportBlockingIssueCodes.push(
+    "grounding_review_required",
+    "grounding_identity_mismatch",
+  );
+  for (const section of template.sections) {
+    if (section.missingInformationBehaviour !== "useNeutralFallback") continue;
+    section.allowedContent = section.allowedContent.filter((value) =>
+      !value.includes("user-confirmed neutral wording")
+    );
+    section.allowedContent.push(
+      "the exact neutral wording defined in this section contract",
+    );
+    if (
+      template.templateId === "resume" && section.sectionKey === "education"
+    ) {
+      section.purpose =
+        "Record supplied qualifications; when none were supplied, use the exact statement that no qualification details are included.";
+      section.validationRules.push(
+        "exact_neutral_state_replaces_final_qualification_and_depth_requirements_without_asserting_qualifications_or_owner_confirmation",
+      );
+      section.neutralFallback = {
+        comparison: "exact_utf8",
+        content:
+          "No education or qualification details are included in this document.",
+        whenInputsAbsent: ["education_history"],
+      };
+    } else if (
+      template.templateId === "complaint-letter" &&
+      section.sectionKey === "close"
+    ) {
+      section.neutralFallback = {
+        comparison: "exact_utf8",
+        content:
+          "Please respond in writing to the concerns and requested resolution set out in this letter.",
+        whenInputsAbsent: [],
+      };
+    }
+  }
+}
+const groundedCapturedIssues = validateCapturedDocumentLedger(
+  groundedCapturedLedger,
+);
+if (groundedCapturedIssues.length) {
+  throw new Error(
+    `Invalid grounded captured ledger: ${
+      groundedCapturedIssues.map((issue) => issue.code).join(", ")
+    }`,
+  );
+}
+export const GROUNDED_CAPTURED_DOCUMENT_LEDGER = deepFreeze(
+  groundedCapturedLedger,
 );

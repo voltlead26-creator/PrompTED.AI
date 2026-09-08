@@ -1,4 +1,6 @@
+// deno-lint-ignore no-import-prefix -- Existing Edge assertions are pinned by the repository lockfile.
 import { assert, assertEquals } from "jsr:@std/assert@1";
+import { createHash } from "node:crypto";
 import {
   callOpenAIResponses,
   chatToResponsesBody,
@@ -6,6 +8,7 @@ import {
   parsePromptedControl,
 } from "./openai-proxy.ts";
 import { bindModelCallContext } from "./model-call-context.ts";
+// deno-lint-ignore no-import-prefix -- Match the existing locked Edge SDK type boundary.
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 function meteredSignal(): AbortSignal {
@@ -101,7 +104,13 @@ function meteredSignal(): AbortSignal {
         return Promise.resolve({
           data: {
             usage_ledger_id: "44444444-4444-4444-8444-444444444444",
-            model_call_key: "b".repeat(64),
+            model_call_key: createHash("sha256").update(
+              `${args.p_logical_stage_key}|${args.p_request_sha256}|${args.p_provider_attempt_id}`,
+            ).digest("hex"),
+            idempotent_replay: false,
+            result_id: null,
+            result_response_sha256: null,
+            result_idempotent_replay: null,
           },
           error: null,
         });

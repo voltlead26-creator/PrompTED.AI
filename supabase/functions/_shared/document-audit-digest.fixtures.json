@@ -1,0 +1,135 @@
+{
+  "provenance": "Synthetic digest vectors independently computed with Python hashlib and exact UTF-8 length framing; no provider or user data.",
+  "digestVersion": "legacy-document-audit-digests.1",
+  "fixtures": [
+    {
+      "name": "empty",
+      "sources": [
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "sections": [
+        {
+          "key": "empty",
+          "label": "Empty",
+          "content": ""
+        }
+      ],
+      "sourceSha256": "1009ad9c92a61b6dce4ebf20c46d32951d671abfd35187a264ec2b52ddf1dd25",
+      "targetSha256": "142a2a9b08fabbbd5efc41affabf007488d96cd4427ffc13d67557dbbba2e92a"
+    },
+    {
+      "name": "delimiters",
+      "sources": [
+        "a:b",
+        "ab",
+        "c",
+        "",
+        "line\r\nnext\n\"quoted\"\\file"
+      ],
+      "sections": [
+        {
+          "key": "first",
+          "label": "First: item",
+          "content": "a:b\r\n\"quoted\"\\file"
+        },
+        {
+          "key": "second",
+          "label": "Second",
+          "content": "last\nline"
+        }
+      ],
+      "sourceSha256": "7cfdcfea551a76f8ef8c169e638cefe352793d4c54cdbe3b02bfd11e1b216c7f",
+      "targetSha256": "e1ccf8d37146ac9da13275bb07a08f45ee70eb56fd71ddcffcb9134ffd8cb781"
+    },
+    {
+      "name": "unicode",
+      "sources": [
+        "Café",
+        "Café",
+        "私は医師です。",
+        "😀",
+        "−10 != 10"
+      ],
+      "sections": [
+        {
+          "key": "first",
+          "label": "日本語",
+          "content": "私は医師です。\n😀"
+        },
+        {
+          "key": "second",
+          "label": "Café",
+          "content": "Café −10"
+        }
+      ],
+      "sourceSha256": "94f842e87be44ec59357d6a4aa7455c670de4bf51205d780eac077176266af17",
+      "targetSha256": "b0ff62554fa9afceafc028506eeee15e244f74b9136c395fe9eee26890345d77"
+    },
+    {
+      "name": "source-left-boundary",
+      "sources": [
+        "ab",
+        "c",
+        "",
+        "",
+        ""
+      ],
+      "sections": [
+        {
+          "key": "a",
+          "label": "bc",
+          "content": "d"
+        }
+      ],
+      "sourceSha256": "4c5bea7a98c7c99f647d166b966e8c9c610faa94e3b24ea64152a6ea56985508",
+      "targetSha256": "0d052c59b4f68c29db3168798eef9c39e9a8d185c36e01d9589a295256b88a9d"
+    },
+    {
+      "name": "source-right-boundary",
+      "sources": [
+        "a",
+        "bc",
+        "",
+        "",
+        ""
+      ],
+      "sections": [
+        {
+          "key": "ab",
+          "label": "c",
+          "content": "d"
+        }
+      ],
+      "sourceSha256": "286fe95da533ae5e7404c8761f5a05469de7ed87b8cb9b1767fa3a0fd3fde448",
+      "targetSha256": "1b4fbd60958d02ef92a00068436c31c88a13e3c1b03431d33ee67b54aec77aa0"
+    },
+    {
+      "name": "complaint",
+      "sources": [
+        "I was charged $10 twice.",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "sections": [
+        {
+          "key": "issue",
+          "label": "Issue",
+          "content": "I was charged $10 twice."
+        },
+        {
+          "key": "request",
+          "label": "Request",
+          "content": "Please review the duplicate charge."
+        }
+      ],
+      "sourceSha256": "d21b160c94ff9d6bb1cccb2f6cf93d6d10771fccc6be2e723a5aed46aeb50cc6",
+      "targetSha256": "2a766372d7a82a4b574bd6b02fe4a9c9d2abd7cafa245c6380b217681a925eea"
+    }
+  ]
+}

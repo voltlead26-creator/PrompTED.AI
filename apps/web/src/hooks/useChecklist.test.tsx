@@ -118,6 +118,34 @@ describe("useChecklist durable truth", () => {
 
   afterEach(() => recordBrowserPrincipal(undefined));
 
+  it.each(["committed", "revision_conflict"] as const)("reports wording acceptance explicitly for %s", async (status) => {
+    const expected = status === "committed";
+    mocks.results.push({ data: [item(OUTCOME_A)], error: null });
+    mocks.updateOwnChecklistItem.mockResolvedValue({
+      status, affectedRows: expected ? 1 : 0,
+      item: item(OUTCOME_A, { token: TOKEN_2, text: expected ? "Revised task" : "Another tab's wording" }),
+    });
+    const { result } = renderHook(() => useChecklist(OUTCOME_A));
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    await act(async () => {
+      expect(await result.current.updateText(ITEM_A, "Revised task")).toBe(expected);
+    });
+    expect(result.current.items[0]?.text).toBe(expected ? "Revised task" : "Another tab's wording");
+    if (!expected) expect(result.current.saveError).toMatch(/changed elsewhere/i);
+  });
+
+  it.each([true, false])("reports exact wording readback after a lost response (matches: %s)", async (matches) => {
+    mocks.results.push({ data: [item(OUTCOME_A)], error: null }, {
+      data: [item(OUTCOME_A, { token: TOKEN_2, text: matches ? "Revised task" : "Different saved text" })], error: null,
+    });
+    mocks.updateOwnChecklistItem.mockRejectedValue(new Error("response lost"));
+    const { result } = renderHook(() => useChecklist(OUTCOME_A));
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    await act(async () => {
+      expect(await result.current.updateText(ITEM_A, "Revised task")).toBe(matches);
+    });
+  });
+
   it("does not turn a signed read failure into an authoritative empty checklist", async () => {
     mocks.results.push({ data: null, error: new Error("offline") });
     const { result } = renderHook(() => useChecklist(OUTCOME_A));

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import {
   assertValidDocumentGenerationLedger,
   CAPTURED_DOCUMENT_LEDGER,
   FIRST_CAPTURED_LEDGER_VERSION,
+  GROUNDED_CAPTURED_DOCUMENT_LEDGER,
+  GROUNDED_CAPTURED_LEDGER_VERSION,
   type DocumentGenerationLedger,
   validateCapturedDocumentLedger,
   validateImmutableGenerationSnapshotIdentity,
@@ -11,6 +14,108 @@ import {
   validatePersistedRevisionState,
   validatePersistedSectionLedgerIdentity,
 } from "@prompted/shared/document-ledger";
+
+function capturedFixtureTemplate(ledger: typeof CAPTURED_DOCUMENT_LEDGER, key: string) {
+  const template = ledger.templates[key];
+  if (!template) throw new Error(`Missing captured fixture template: ${key}`);
+  return template;
+}
+
+describe("prepared captured grounding contract", () => {
+  it("preserves exact v1 bytes and its default identity", () => {
+    expect(CAPTURED_DOCUMENT_LEDGER.ledgerVersion).toBe(FIRST_CAPTURED_LEDGER_VERSION);
+    expect(
+      createHash("sha256").update(JSON.stringify(CAPTURED_DOCUMENT_LEDGER), "utf8").digest("hex"),
+    ).toBe("8119b55bc340781f2a8e12e4f4860dd6a5f2ad3931235fd3d99e37a45b800f2a");
+    expect(
+      Object.isFrozen(capturedFixtureTemplate(CAPTURED_DOCUMENT_LEDGER, "resume").sections),
+    ).toBe(true);
+  });
+
+  it("prepares a separate valid immutable v2 without relabelling historical benchmarks", () => {
+    expect(GROUNDED_CAPTURED_DOCUMENT_LEDGER.ledgerVersion).toBe(GROUNDED_CAPTURED_LEDGER_VERSION);
+    expect(validateCapturedDocumentLedger(GROUNDED_CAPTURED_DOCUMENT_LEDGER)).toEqual([]);
+    expect(
+      Object.isFrozen(
+        capturedFixtureTemplate(GROUNDED_CAPTURED_DOCUMENT_LEDGER, "resume").sections,
+      ),
+    ).toBe(true);
+    for (const [key, template] of Object.entries(GROUNDED_CAPTURED_DOCUMENT_LEDGER.templates)) {
+      expect(template.qualityBenchmark).toEqual(
+        capturedFixtureTemplate(CAPTURED_DOCUMENT_LEDGER, key).qualityBenchmark,
+      );
+      expect(template.validationPolicy.groundingReview).toBe("exact_wording_v2");
+    }
+  });
+
+  it("defines exact neutral wording and absent-input conditions only in v2", () => {
+    const education = capturedFixtureTemplate(
+      GROUNDED_CAPTURED_DOCUMENT_LEDGER,
+      "resume",
+    ).sections.find((section) => section.sectionKey === "education")!;
+    expect(education.neutralFallback).toEqual({
+      comparison: "exact_utf8",
+      content: "No education or qualification details are included in this document.",
+      whenInputsAbsent: ["education_history"],
+    });
+    expect(
+      capturedFixtureTemplate(CAPTURED_DOCUMENT_LEDGER, "resume").sections.find(
+        (section) => section.sectionKey === "education",
+      )?.neutralFallback,
+    ).toBeUndefined();
+  });
+
+  it("rejects incomplete v2 policy", () => {
+    const ledger = structuredClone(GROUNDED_CAPTURED_DOCUMENT_LEDGER);
+    const template = capturedFixtureTemplate(ledger, "complaint-letter");
+    const invalid = {
+      ...ledger,
+      templates: {
+        ...ledger.templates,
+        "complaint-letter": {
+          ...template,
+          validationPolicy: { ...template.validationPolicy, groundingReview: undefined },
+          sections: template.sections.map((section) => ({
+            ...section,
+            neutralFallback: undefined,
+          })),
+        },
+      },
+    };
+    expect(validateCapturedDocumentLedger(invalid).map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "captured_grounding_policy_required",
+        "captured_neutral_wording_required",
+      ]),
+    );
+  });
+
+  it.each([
+    null,
+    "neutral",
+    [],
+    { comparison: "normalised", content: "safe", whenInputsAbsent: [] },
+    { comparison: "exact_utf8", content: "safe", whenInputsAbsent: ["unknown_input"] },
+    { comparison: "exact_utf8", content: " ", whenInputsAbsent: [] },
+  ])("rejects malformed fallback %j without throwing", (neutralFallback) => {
+    const template = capturedFixtureTemplate(GROUNDED_CAPTURED_DOCUMENT_LEDGER, "complaint-letter");
+    const invalid = {
+      ...GROUNDED_CAPTURED_DOCUMENT_LEDGER,
+      templates: {
+        ...GROUNDED_CAPTURED_DOCUMENT_LEDGER.templates,
+        "complaint-letter": {
+          ...template,
+          sections: template.sections.map((section) =>
+            section.sectionKey === "close" ? { ...section, neutralFallback } : section,
+          ),
+        },
+      },
+    };
+    expect(validateCapturedDocumentLedger(invalid).map((issue) => issue.code)).toContain(
+      "invalid_neutral_fallback_contract",
+    );
+  });
+});
 
 function validLedger(): DocumentGenerationLedger {
   return {

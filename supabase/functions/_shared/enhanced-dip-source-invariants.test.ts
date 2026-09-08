@@ -1,4 +1,5 @@
-import { assert, assertEquals } from "jsr:@std/assert";
+// deno-lint-ignore-file no-import-prefix -- Edge test dependencies use direct JSR specifiers pinned by the repository lockfile.
+import { assert, assertEquals } from "jsr:@std/assert@1";
 
 Deno.test("document pipeline has no blocked-section blanking release path", async () => {
   const source = await Deno.readTextFile(
@@ -25,8 +26,15 @@ Deno.test("workspace missing-info answers do not regenerate the whole section", 
 });
 
 Deno.test("generation stream exposes canonical unresolved placeholder metadata", async () => {
-  const source = await Deno.readTextFile(
+  const entry = await Deno.readTextFile(
     new URL("../generate-document/index.ts", import.meta.url),
+  );
+  assert(
+    entry.includes('import { handleGenerateDocument } from "./handler.ts"'),
+  );
+  assert(entry.includes("Deno.serve((req) => handleGenerateDocument(req))"));
+  const source = await Deno.readTextFile(
+    new URL("../generate-document/handler.ts", import.meta.url),
   );
   assert(source.includes('type: "unresolved_placeholders"'));
 });

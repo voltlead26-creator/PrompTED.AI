@@ -46,6 +46,8 @@ export interface IntentResult {
    * an honest gap report, not a excuse to guess.
    */
   missingInformation: string[];
+  /** Proposed factual brief; it is not user-confirmed merely because TED returned it. */
+  knowledgeSummary?: string | null;
 }
 
 export interface ChecklistItemResult {
@@ -143,6 +145,7 @@ export function coerceIntentResult(raw: unknown): IntentResult {
     recommendation,
     jobSearch,
     missingInformation,
+    knowledgeSummary: asString(obj.knowledge_summary ?? obj.knowledgeSummary).trim() || null,
   };
 }
 
@@ -163,6 +166,11 @@ export function requireInitialClarification(
   result: IntentResult,
   originalRequest: string,
 ): IntentResult {
+  // A complete proposed brief is held for explicit confirmation by the
+  // recommendation controller; do not replace it with a second generic check.
+  if (result.intentClear && result.knowledgeSummary?.trim() && result.recommendation) {
+    return result.jobSearch ? { ...result, jobSearch: false } : result;
+  }
   if (!result.intentClear && result.question) {
     return result.jobSearch ? { ...result, jobSearch: false } : result;
   }

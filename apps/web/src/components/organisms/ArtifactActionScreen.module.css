@@ -84,6 +84,7 @@
   display: grid;
   gap: 4px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .stepContent strong {
@@ -94,6 +95,38 @@
   color: var(--text-secondary);
   font-size: 0.88rem;
   line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.editFields {
+  grid-column: 2;
+  justify-self: start;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fieldChoice {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.84rem;
+}
+
+.fieldChoice select {
+  min-height: 44px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  font: inherit;
 }
 
 .selectStep time {

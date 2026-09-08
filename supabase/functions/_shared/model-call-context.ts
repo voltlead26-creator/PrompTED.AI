@@ -1,10 +1,15 @@
+// Edge imports retain the repository's existing lockfile-pinned JSR boundary.
+// deno-lint-ignore no-import-prefix
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import {
   type LegacyModelCheckpoint,
+  type LegacyCheckpointReceiptIdentity,
   readLegacyModelCheckpoint,
   type TerminalModelAttemptRecord,
+  type TerminalModelAttemptReceipt,
   trackTerminalModelAttempt,
 } from "./cost-tracker.ts";
+import type { LegacyAuditSources, LegacyDocumentAuditBinding } from "./document-audit-binding.ts";
 
 export interface ModelCallContext {
   userId: string;
@@ -24,11 +29,17 @@ export class ModelCallContextError extends Error {
   }
 }
 
+export type LegacyCheckpointContextIdentity = Readonly<Pick<
+  LegacyCheckpointReceiptIdentity,
+  "userId" | "logicalRequestId" | "checkpointScope" | "authorityReservationId"
+>>;
+
 export interface PreparedLegacyModelAttempt {
   clientRequestId: string;
   attemptNumber: number;
   durableAdmissionId?: string;
   checkpoint?: LegacyModelCheckpoint;
+  readonly legacyAuditBindingSha256?: string;
 }
 
 export interface ProviderDispatchClaim {
@@ -74,6 +85,38 @@ function requiredContext(signal: AbortSignal | undefined): ModelCallContext {
   const context = signal ? contexts.get(signal) : undefined;
   if (!context) throw new ModelCallContextError("MODEL_CALL_CONTEXT_MISSING");
   return context;
+}
+
+/**
+ * Captures only the trusted identity authorising a legacy checkpoint read or
+ * write. The current reservation is not a claim about the original result's
+ * persisted origin: a later reservation may read the same durable result.
+ * Execution-claim renewal deliberately does not change this identity.
+ */
+export function requireLegacyCheckpointContext(
+  signal: AbortSignal | undefined,
+  expected?: LegacyCheckpointContextIdentity,
+): LegacyCheckpointContextIdentity {
+  const context = requiredContext(signal);
+  if (!context.checkpoint || !context.generationRequestId) {
+    throw new ModelCallContextError("MODEL_CALL_CHECKPOINT_CONTEXT_MISSING");
+  }
+  const identity: LegacyCheckpointContextIdentity = Object.freeze({
+    userId: context.userId,
+    logicalRequestId: context.generationRequestId,
+    checkpointScope: context.checkpoint.scope,
+    authorityReservationId: context.checkpoint.originReservationId ?? null,
+  });
+  if (
+    expected &&
+    (identity.userId !== expected.userId ||
+      identity.logicalRequestId !== expected.logicalRequestId ||
+      identity.checkpointScope !== expected.checkpointScope ||
+      identity.authorityReservationId !== expected.authorityReservationId)
+  ) {
+    throw new ModelCallContextError("MODEL_CALL_CHECKPOINT_IDENTITY_CHANGED");
+  }
+  return identity;
 }
 
 export function bindModelCallContext(
@@ -122,9 +165,20 @@ export async function prepareLegacyModelAttempt(
     requestSha256: string;
     attemptNumber: number;
     maxAttempts?: number;
+    allowCreditFallback?: boolean;
+    expectedCheckpointContext?: LegacyCheckpointContextIdentity;
+    legacyAuditBinding?: LegacyDocumentAuditBinding;
+    legacyAuditSources?: LegacyAuditSources;
   },
 ): Promise<PreparedLegacyModelAttempt> {
+  input = { ...input };
   const context = requiredContext(signal);
+  if ((input.legacyAuditBinding !== undefined || input.legacyAuditSources !== undefined) && !context.checkpoint) {
+    throw new ModelCallContextError("MODEL_CALL_CHECKPOINT_CONTEXT_MISSING");
+  }
+  if (input.expectedCheckpointContext) {
+    requireLegacyCheckpointContext(signal, input.expectedCheckpointContext);
+  }
   if (!input.logicalStageKey || !STAGE_PATTERN.test(input.logicalStageKey)) {
     throw new ModelCallContextError("MODEL_CALL_STAGE_INVALID");
   }
@@ -150,7 +204,15 @@ export async function prepareLegacyModelAttempt(
       requestSha256: input.requestSha256,
       maxAttempts: input.maxAttempts ?? 2,
       allocateAttempt: true,
+      allowCreditFallback: input.allowCreditFallback,
+      ...(input.legacyAuditBinding === undefined && input.legacyAuditSources === undefined ? {} : {
+        legacyAuditBinding: input.legacyAuditBinding,
+        legacyAuditSources: input.legacyAuditSources,
+      }),
     });
+    if (input.expectedCheckpointContext) {
+      requireLegacyCheckpointContext(signal, input.expectedCheckpointContext);
+    }
     if (checkpoint.state === "prepared") {
       attemptNumber = Number(checkpoint.attempt_number);
       if (
@@ -199,6 +261,9 @@ export async function prepareLegacyModelAttempt(
     attemptNumber,
     durableAdmissionId: checkpoint?.attempt_admission_id,
     checkpoint,
+    ...(checkpoint?.legacyAuditBindingSha256 === undefined ? {} : {
+      legacyAuditBindingSha256: checkpoint.legacyAuditBindingSha256,
+    }),
   };
 }
 
@@ -213,6 +278,9 @@ export async function inspectLegacyModelCheckpointBeforeCapacity(
     logicalStageKey: string | undefined;
     requestSha256: string;
     maxAttempts?: number;
+    allowCreditFallback?: boolean;
+    legacyAuditBinding?: LegacyDocumentAuditBinding;
+    legacyAuditSources?: LegacyAuditSources;
   },
 ): Promise<LegacyModelCheckpoint | undefined> {
   const context = requiredContext(signal);
@@ -236,6 +304,11 @@ export async function inspectLegacyModelCheckpointBeforeCapacity(
     requestSha256: input.requestSha256,
     maxAttempts: input.maxAttempts ?? 2,
     allocateAttempt: false,
+    allowCreditFallback: input.allowCreditFallback,
+    ...(input.legacyAuditBinding === undefined && input.legacyAuditSources === undefined ? {} : {
+      legacyAuditBinding: input.legacyAuditBinding,
+      legacyAuditSources: input.legacyAuditSources,
+    }),
   });
 }
 
@@ -259,7 +332,7 @@ export async function markLegacyModelAttemptDispatched(
   const args = {
     p_user_id: context.userId,
     p_checkpoint_scope: context.checkpoint.scope,
-    p_origin_reservation_id: context.checkpoint.originReservationId,
+    p_origin_reservation_id: context.checkpoint.originReservationId ?? null,
     p_logical_request_id: context.generationRequestId,
     p_logical_stage_key: input.logicalStageKey,
     p_request_sha256: input.requestSha256,
@@ -575,9 +648,9 @@ export async function completeUserProviderDispatch(
 export async function recordLegacyModelAttempt(
   signal: AbortSignal | undefined,
   record: Omit<TerminalModelAttemptRecord, "userId" | "logicalRequestId">,
-): Promise<void> {
+): Promise<TerminalModelAttemptReceipt> {
   const context = requiredContext(signal);
-  await trackTerminalModelAttempt(context.admin, {
+  return await trackTerminalModelAttempt(context.admin, {
     ...record,
     resultEnvelope: context.checkpoint ? record.resultEnvelope : undefined,
     userId: context.userId,

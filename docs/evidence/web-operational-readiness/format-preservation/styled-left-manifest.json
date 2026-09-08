@@ -1,0 +1,58 @@
+{
+  "version": "docx-source-manifest.1",
+  "assessment": "source_only",
+  "archiveSha256": "a096ad4a8de77f395cef7f999d2e0037147945ae62c6663fabf6b43556c3b799",
+  "archiveByteLength": 1370,
+  "rosterEncodingVersion": "office-part-roster-json.1",
+  "partRosterSha256": "07b8b7bb4adb894c32d73c83c0c58ca81bb8ccf77f094be87d29c2220fc7be11",
+  "parts": [
+    {
+      "path": "[Content_Types].xml",
+      "compressionMethod": 0,
+      "compressedByteLength": 374,
+      "uncompressedByteLength": 374,
+      "crc32": 1971342327,
+      "contentSha256": "be93955457110f3ebc23e1adae61d6f74f304482e1a2de069aa44e7804fcd0c6"
+    },
+    {
+      "path": "_rels/.rels",
+      "compressionMethod": 0,
+      "compressedByteLength": 242,
+      "uncompressedByteLength": 242,
+      "crc32": 1127185249,
+      "contentSha256": "22c01d12e912dc45bdf191c382dd5b80cdeca1a9e95af86a477798a9f7e541e9"
+    },
+    {
+      "path": "word/document.xml",
+      "compressionMethod": 0,
+      "compressedByteLength": 410,
+      "uncompressedByteLength": 410,
+      "crc32": 3329854434,
+      "contentSha256": "0e25a6cd1eb6b80519f8b622946c99be228b6e1d5a6238af4883647896fc515a"
+    }
+  ],
+  "mainPart": {
+    "path": "word/document.xml",
+    "source": {
+      "version": "word-xml-source.1",
+      "originalSha256": "0e25a6cd1eb6b80519f8b622946c99be228b6e1d5a6238af4883647896fc515a",
+      "assessment": "source_only",
+      "blockers": [],
+      "nodes": [
+        {
+          "id": "t:1",
+          "text": "Format protected document",
+          "start": 223,
+          "end": 248,
+          "xmlSpace": "default",
+          "lexicallyPatchable": true
+        }
+      ]
+    }
+  },
+  "blockers": [
+    "layout_unassessed",
+    "package_semantics_unassessed",
+    "styles_and_visibility_unassessed"
+  ]
+}

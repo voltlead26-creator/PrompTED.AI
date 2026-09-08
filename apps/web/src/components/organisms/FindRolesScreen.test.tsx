@@ -118,6 +118,14 @@ describe("FindRolesScreen Profile resources", () => {
   });
 
   it("accepts XLSX resumes and rejects oversized text before ingest", async () => {
+    let finishUpload!: () => void;
+    mocks.ingestUpload.mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = () => resolve({
+        upload_id: "upload-xlsx",
+        extracted_text: "Synthetic resume evidence",
+        confirm_payload: { summary: "Synthetic resume" },
+      });
+    }));
     const { container } = render(<FindRolesScreen />);
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
@@ -133,7 +141,15 @@ describe("FindRolesScreen Profile resources", () => {
       expect.objectContaining({ expectedUserId: "user-1" }),
     ));
 
-    mocks.ingestUpload.mockClear();
+    expect(input).toBeDisabled();
+    // Dispatch alone is not completion: a user cannot select a replacement
+    // while this input is disabled for the preceding upload.
+    await act(async () => finishUpload());
+    expect(await screen.findByText("resume.xlsx", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Synthetic resume", { exact: true })).toBeInTheDocument();
+    expect(input).toBeEnabled();
+    expect(mocks.ingestUpload).toHaveBeenCalledTimes(1);
+
     const oversized = new File(["not read"], "resume.txt", { type: "text/plain" });
     Object.defineProperty(oversized, "size", { value: 1024 * 1024 + 1 });
     fireEvent.change(input!, { target: { files: [oversized] } });
@@ -141,7 +157,10 @@ describe("FindRolesScreen Profile resources", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "TXT, Markdown and CSV files need to be 1MB or smaller.",
     );
-    expect(mocks.ingestUpload).not.toHaveBeenCalled();
+    expect(mocks.ingestUpload).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("resume.xlsx", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Synthetic resume", { exact: true })).toBeInTheDocument();
+    expect(input).toBeEnabled();
   });
 
   it("explains which Profile resources affect matching and later documents", async () => {

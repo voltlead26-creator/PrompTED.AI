@@ -80,6 +80,13 @@ export interface OpenAIRouteFallbackSnapshot {
 }
 
 /** Effective server-owned route captured before provider work begins. */
+export interface OllamaCreditFallbackPolicy {
+  readonly provider: "ollama";
+  readonly model: string;
+  readonly modelDigest: string;
+  readonly configurationVersion: string;
+}
+
 export interface OpenAIRouteSnapshot {
   readonly provider: "openai";
   readonly semanticRoute: SemanticOpenAIRoute;
@@ -93,6 +100,8 @@ export interface OpenAIRouteSnapshot {
   readonly background: boolean;
   readonly store: false;
   readonly fallback: OpenAIRouteFallbackSnapshot | null;
+  /** Optional immutable fallback policy; actual execution is recorded separately. */
+  readonly creditFallback?: OllamaCreditFallbackPolicy;
 }
 
 /**
@@ -290,6 +299,16 @@ function validateRequiredTextFields(
   );
 }
 
+/** Validates server-persisted execution metadata without inventing historical provenance. */
+export function isOllamaCreditFallbackPolicy(value: unknown): value is OllamaCreditFallbackPolicy {
+  return isRecord(value) && value.provider === "ollama" &&
+    typeof value.model === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,159}$/.test(value.model) &&
+    !value.model.toLowerCase().includes("cloud") &&
+    typeof value.modelDigest === "string" && /^[0-9a-f]{64}$/.test(value.modelDigest) &&
+    typeof value.configurationVersion === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(value.configurationVersion) &&
+    Object.keys(value).sort().join(",") === "configurationVersion,model,modelDigest,provider";
+}
+
 export function validateOpenAIRouteSnapshot(value: unknown): DocumentOperationValidationIssue[] {
   if (!isRecord(value)) {
     return [issue("invalid_contract", "route", "route must be an object")];
@@ -300,6 +319,13 @@ export function validateOpenAIRouteSnapshot(value: unknown): DocumentOperationVa
     ["model", "routingVersion", "structuredOutputSchemaVersion"],
     "route.",
   );
+
+  if (value.creditFallback !== undefined && (
+    !isOllamaCreditFallbackPolicy(value.creditFallback) || value.maxAttempts !== 2 ||
+    value.background !== false || !Array.isArray(value.allowedTools) || value.allowedTools.length !== 0
+  )) {
+    issues.push(issue("invalid_route_configuration", "route.creditFallback", "credit fallback requires an exact pinned Ollama policy, two attempts and no provider tools"));
+  }
 
   if (value.provider !== "openai") {
     issues.push(

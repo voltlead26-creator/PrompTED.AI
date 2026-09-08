@@ -25,7 +25,30 @@ export type BoundedXmlEvent =
   | { kind: "end"; name: string }
   | { kind: "text"; text: string };
 
+/**
+ * Half-open UTF-16 offsets into the exact input string (not decoded text or
+ * UTF-8 bytes). Tag ranges include their delimiters; CDATA ranges cover only
+ * the literal payload. Synthetic self-close ends have zero width after />.
+ * Source-aware consumers must validate the complete scan before using ranges.
+ */
+export interface BoundedXmlSourceRange {
+  readonly start: number;
+  readonly end: number;
+  readonly syntax: "tag" | "text" | "cdata" | "synthetic";
+}
+
+export interface BoundedXmlObservations {
+  /** Lexically recognised PIs, including the XML declaration; comments/CDATA never qualify. */
+  readonly onProcessingInstruction?: (
+    target: string,
+    source: BoundedXmlSourceRange,
+  ) => void;
+}
+
 const XML_NAME = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
+const XML_SPACE = /^[ \t\r\n]$/;
+const XML_DECLARATION =
+  /^xml[ \t\r\n]+version[ \t\r\n]*=[ \t\r\n]*(['"])1\.0\1(?:[ \t\r\n]+encoding[ \t\r\n]*=[ \t\r\n]*(['"])[A-Za-z][A-Za-z0-9._-]*\2)?(?:[ \t\r\n]+standalone[ \t\r\n]*=[ \t\r\n]*(['"])(?:yes|no)\3)?[ \t\r\n]*$/;
 
 function invalid(): never {
   throw new BoundedXmlError("invalid");
@@ -42,7 +65,18 @@ function validXmlScalar(value: number): boolean {
     (value >= 0x10000 && value <= 0x10ffff);
 }
 
+function assertXmlCharacters(value: string): void {
+  for (const character of value) {
+    if (!validXmlScalar(character.codePointAt(0)!)) invalid();
+  }
+}
+
+function normaliseLineEndings(value: string): string {
+  return value.replace(/\r\n?/g, "\n");
+}
+
 export function decodeBoundedXmlText(value: string): string {
+  assertXmlCharacters(value);
   let cursor = 0;
   let decoded = "";
   while (cursor < value.length) {
@@ -62,7 +96,7 @@ export function decodeBoundedXmlText(value: string): string {
     else if (entity === "quot") replacement = '"';
     else if (entity === "apos") replacement = "'";
     else {
-      const hexadecimal = entity.startsWith("#x") || entity.startsWith("#X");
+      const hexadecimal = entity.startsWith("#x");
       const decimal = entity.startsWith("#") && !hexadecimal;
       const digits = entity.slice(hexadecimal ? 2 : decimal ? 1 : 0);
       if (
@@ -107,27 +141,27 @@ function parseStartTag(
   let cursor = 0;
   const length = source.length;
   const skipWhitespace = () => {
-    while (cursor < length && /\s/.test(source[cursor]!)) cursor += 1;
+    while (cursor < length && XML_SPACE.test(source[cursor]!)) cursor += 1;
   };
-  skipWhitespace();
   const nameStart = cursor;
-  while (cursor < length && !/[\s/]/.test(source[cursor]!)) cursor += 1;
+  while (cursor < length && !/[ \t\r\n/]/.test(source[cursor]!)) cursor += 1;
   const name = source.slice(nameStart, cursor);
   if (!XML_NAME.test(name)) invalid();
   const attributes = new Map<string, string>();
   let selfClosing = false;
   while (cursor < length) {
+    const beforeWhitespace = cursor;
     skipWhitespace();
     if (cursor >= length) break;
     if (source[cursor] === "/") {
       cursor += 1;
-      skipWhitespace();
       if (cursor !== length) invalid();
       selfClosing = true;
       break;
     }
+    if (cursor === beforeWhitespace) invalid();
     const attributeStart = cursor;
-    while (cursor < length && !/[\s=]/.test(source[cursor]!)) cursor += 1;
+    while (cursor < length && !/[ \t\r\n=]/.test(source[cursor]!)) cursor += 1;
     const attributeName = source.slice(attributeStart, cursor);
     if (!XML_NAME.test(attributeName) || attributes.has(attributeName)) {
       invalid();
@@ -148,8 +182,19 @@ function parseStartTag(
     }
     if (cursor >= length) invalid();
     const attributeValue = source.slice(valueStart, cursor);
+    if (attributeValue.length > BOUNDED_XML_POLICY.maxAttributeValueChars) {
+      resourceLimit();
+    }
+    if (attributeValue.includes("<")) invalid();
     cursor += 1;
-    attributes.set(attributeName, decodeBoundedXmlText(attributeValue));
+    // XML normalises literal whitespace before resolving references. A
+    // referenced CR/tab remains that character, rather than becoming a space.
+    attributes.set(
+      attributeName,
+      decodeBoundedXmlText(
+        normaliseLineEndings(attributeValue).replace(/[\t\n]/g, " "),
+      ),
+    );
     if (attributes.size > BOUNDED_XML_POLICY.maxAttributesPerElement) {
       resourceLimit();
     }
@@ -164,56 +209,90 @@ export function localXmlName(name: string): string {
 
 export function scanBoundedXml(
   xml: string,
-  visitor: (event: BoundedXmlEvent) => void,
+  visitor: (event: BoundedXmlEvent, source: BoundedXmlSourceRange) => void,
+  observations: BoundedXmlObservations = {},
 ): void {
   if (xml.length > BOUNDED_XML_POLICY.maxInputChars) resourceLimit();
+  assertXmlCharacters(xml);
   const stack: string[] = [];
-  let cursor = 0;
+  const contentStart = xml.startsWith("\ufeff") ? 1 : 0;
+  let cursor = contentStart;
   let tokens = 0;
   let roots = 0;
   let decodedChars = 0;
-  const emit = (event: BoundedXmlEvent) => {
+  const consumeToken = () => {
     tokens += 1;
     if (tokens > BOUNDED_XML_POLICY.maxTokens) resourceLimit();
+  };
+  const emit = (
+    event: BoundedXmlEvent,
+    start: number,
+    end: number,
+    syntax: BoundedXmlSourceRange["syntax"],
+  ) => {
+    consumeToken();
     if (event.kind === "text") {
       decodedChars += event.text.length;
       if (decodedChars > BOUNDED_XML_POLICY.maxDecodedChars) resourceLimit();
     }
-    visitor(event);
+    visitor(event, { start, end, syntax });
   };
 
   while (cursor < xml.length) {
     const opening = xml.indexOf("<", cursor);
     if (opening < 0) {
-      const text = decodeBoundedXmlText(xml.slice(cursor));
-      if (stack.length === 0 && text.trim()) invalid();
-      if (text) emit({ kind: "text", text });
+      const raw = xml.slice(cursor);
+      if (raw.includes("]]>")) invalid();
+      if (stack.length === 0 && /[^ \t\r\n]/.test(raw)) invalid();
+      const text = decodeBoundedXmlText(normaliseLineEndings(raw));
+      if (text) emit({ kind: "text", text }, cursor, xml.length, "text");
       cursor = xml.length;
       break;
     }
     if (opening > cursor) {
-      const text = decodeBoundedXmlText(xml.slice(cursor, opening));
-      if (stack.length === 0 && text.trim()) invalid();
-      if (text) emit({ kind: "text", text });
+      const raw = xml.slice(cursor, opening);
+      if (raw.includes("]]>")) invalid();
+      if (stack.length === 0 && /[^ \t\r\n]/.test(raw)) invalid();
+      const text = decodeBoundedXmlText(normaliseLineEndings(raw));
+      if (text) emit({ kind: "text", text }, cursor, opening, "text");
     }
     if (xml.startsWith("<!--", opening)) {
       const end = xml.indexOf("-->", opening + 4);
       if (end < 0 || end - opening > BOUNDED_XML_POLICY.maxTagChars) invalid();
+      const body = xml.slice(opening + 4, end);
+      if (body.includes("--") || body.endsWith("-")) invalid();
+      consumeToken();
       cursor = end + 3;
       continue;
     }
     if (xml.startsWith("<?", opening)) {
       const end = xml.indexOf("?>", opening + 2);
       if (end < 0 || end - opening > BOUNDED_XML_POLICY.maxTagChars) invalid();
+      const body = xml.slice(opening + 2, end);
+      const target = body.match(
+        /^([A-Za-z_][A-Za-z0-9_.:-]*)(?:[ \t\r\n]+[\s\S]*)?$/,
+      )?.[1];
+      if (!target) invalid();
+      if (
+        target.toLowerCase() === "xml" && (
+          opening !== contentStart || !XML_DECLARATION.test(body)
+        )
+      ) invalid();
+      consumeToken();
+      observations.onProcessingInstruction?.(target, {
+        start: opening,
+        end: end + 2,
+        syntax: "tag",
+      });
       cursor = end + 2;
       continue;
     }
     if (xml.startsWith("<![CDATA[", opening)) {
       const end = xml.indexOf("]]>", opening + 9);
-      if (end < 0) invalid();
-      const text = xml.slice(opening + 9, end);
-      if (stack.length === 0 && text.trim()) invalid();
-      if (text) emit({ kind: "text", text });
+      if (end < 0 || stack.length === 0) invalid();
+      const text = normaliseLineEndings(xml.slice(opening + 9, end));
+      if (text) emit({ kind: "text", text }, opening + 9, end, "cdata");
+      else consumeToken();
       cursor = end + 3;
       continue;
     }
@@ -223,19 +302,20 @@ export function scanBoundedXml(
     const end = tagEnd(xml, opening + 1);
     const source = xml.slice(opening + 1, end);
     if (source.startsWith("/")) {
-      const name = source.slice(1).trim();
-      if (!XML_NAME.test(name) || stack.pop() !== name) invalid();
-      emit({ kind: "end", name });
+      const name = source.match(/^\/([A-Za-z_][A-Za-z0-9_.:-]*)[ \t\r\n]*$/)
+        ?.[1];
+      if (!name || stack.pop() !== name) invalid();
+      emit({ kind: "end", name }, opening, end + 1, "tag");
     } else {
       const parsed = parseStartTag(source);
       if (stack.length === 0) roots += 1;
       if (roots > 1) invalid();
-      emit({ kind: "start", ...parsed });
+      if (stack.length + 1 > BOUNDED_XML_POLICY.maxDepth) resourceLimit();
+      emit({ kind: "start", ...parsed }, opening, end + 1, "tag");
       if (!parsed.selfClosing) {
         stack.push(parsed.name);
-        if (stack.length > BOUNDED_XML_POLICY.maxDepth) resourceLimit();
       } else {
-        emit({ kind: "end", name: parsed.name });
+        emit({ kind: "end", name: parsed.name }, end + 1, end + 1, "synthetic");
       }
     }
     cursor = end + 1;

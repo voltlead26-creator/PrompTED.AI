@@ -38,6 +38,7 @@ export function useAutosave<T>(
   delay = 500,
   ownerEpoch = "default",
   mutationEpochSource: string | number | (() => string | number) = 0,
+  mutationTransitionPolicy: "discard" | "schedule-current" = "discard",
 ): void {
   const mutationEpoch =
     typeof mutationEpochSource === "function"
@@ -92,7 +93,10 @@ export function useAutosave<T>(
     }
     if (mutationTransition.current) {
       mutationTransition.current = false;
-      return;
+      // Both policies fence the previous snapshot synchronously above. A
+      // workspace whose epoch advances for local edits must also schedule
+      // the new committed value; authoritative-only callers keep discarding.
+      if (mutationTransitionPolicy === "discard") return;
     }
     if (timer.current) clearTimeout(timer.current);
     let lease: OwnerDispatchLease | null;
@@ -133,7 +137,7 @@ export function useAutosave<T>(
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [value, delay, ownerEpoch, mutationEpoch]);
+  }, [value, delay, ownerEpoch, mutationEpoch, mutationTransitionPolicy]);
 
   // Flush on unmount if a debounced save is still pending.
   useEffect(() => {

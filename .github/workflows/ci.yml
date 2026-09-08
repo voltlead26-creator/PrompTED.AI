@@ -56,6 +56,114 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
+  browser-workflows:
+    name: Real local upload, Profile and tEdit browser gate
+    # Every canonical release push and PR into it must run this job. Other PR
+    # targets retain the pre-existing web, Edge and database gates below.
+    if: github.event_name == 'push' || github.base_ref == 'Thought-Enhanced-Document'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout the exact event revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js 22.23.2
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.2"
+
+      - name: Enable pnpm 10.33.0
+        run: corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+      - name: Setup Deno 2.9.5
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.5
+
+      - name: Setup Supabase CLI 2.114.0
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
+        with:
+          version: "2.114.0"
+
+      - name: Install the reviewed lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the pinned Chromium browser and Linux dependencies
+        run: pnpm exec playwright install --with-deps chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/node_modules/.cache/playwright
+
+      - name: Cache frozen upload dependencies before offline function execution
+        run: >-
+          deno cache --frozen
+          docs/evidence/web-operational-readiness/workspace-upload-deno.ts
+          supabase/functions/ingest-upload/index.ts
+          supabase/functions/extract-upload/index.ts
+
+      - name: Exercise tEdit in the current viewport with keyboard recovery
+        run: pnpm test:e2e:tedit
+
+      - name: Exercise uploads and Profile against an attested disposable database
+        # The runner creates its own unique project, attests SQL/network/volume
+        # identity before reset, restricts provider traffic to a synthetic local
+        # adapter and removes only that project. No hosted credentials are used.
+        run: pnpm test:e2e:uploads
+        env:
+          PROMPTED_ACCEPTANCE_EXPECTED_HEAD: ${{ github.sha }}
+
+      - name: Prove all current SQL fresh and the exact 79-to-80 workspace core upgrade
+        # A separate sequential disposable run checks all current SQL fresh,
+        # then preserves the reviewed 79-migration baseline through the exact
+        # workspace core upgrade, including historical public receipt replay.
+        run: pnpm test:db:workspace-core-upgrade
+        env:
+          PROMPTED_ACCEPTANCE_EXPECTED_HEAD: ${{ github.sha }}
+
+      - name: Upload selected synthetic workflow evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-workflow-evidence-${{ github.sha }}
+          # Deliberately omit scratch fixtures, Auth/status response dumps,
+          # private environment files, browser traces and generated bundles.
+          path: |
+            docs/evidence/web-operational-readiness/tedit-browser-*/summary.json
+            docs/evidence/web-operational-readiness/tedit-browser-*/dialog-*.png
+            docs/evidence/web-operational-readiness/tedit-browser-*/failure-*.png
+            docs/evidence/web-operational-readiness/db-*/summary.json
+            docs/evidence/web-operational-readiness/db-*/manifest.json
+            docs/evidence/web-operational-readiness/db-*/results.json
+            docs/evidence/web-operational-readiness/db-*/source-before.sha256.json
+            docs/evidence/web-operational-readiness/db-*/source-after.sha256.json
+            docs/evidence/web-operational-readiness/db-*/failure.txt
+            docs/evidence/web-operational-readiness/db-*/cleanup-failure.txt
+            docs/evidence/web-operational-readiness/db-*/source-failure.txt
+            docs/evidence/web-operational-readiness/db-*/web-failure.txt
+            docs/evidence/web-operational-readiness/db-*/new-upload-workflow-failure.txt
+            docs/evidence/web-operational-readiness/db-*/new-upload-runtime.json
+            docs/evidence/web-operational-readiness/db-*/new-upload-independent-proofs.json
+            docs/evidence/web-operational-readiness/db-*/profile-browser-independent-proofs.json
+            docs/evidence/web-operational-readiness/db-*/legacy-policy-upgrade-proofs.json
+            docs/evidence/web-operational-readiness/db-*/legacy-policy-upgrade-http-checks.json
+            docs/evidence/web-operational-readiness/db-*/catalogue-upgrade-proofs.json
+            docs/evidence/web-operational-readiness/db-*/catalogue-upgrade-http-checks.json
+            docs/evidence/web-operational-readiness/db-*/catalogue-upgrade-phases.json
+            docs/evidence/web-operational-readiness/db-*/catalogue-phase-restore-failure.txt
+            docs/evidence/web-operational-readiness/db-*/legacy-workspace-core-upgrade-summary.json
+            docs/evidence/web-operational-readiness/db-*/legacy-workspace-core-upgrade-http-checks.json
+            docs/evidence/web-operational-readiness/db-*/legacy-workspace-core-direct-denials.json
+            docs/evidence/web-operational-readiness/db-*/workspace-core-upgrade-phases.json
+            docs/evidence/web-operational-readiness/db-*/upload-browser/**/upload-browser-checks.json
+            docs/evidence/web-operational-readiness/db-*/upload-browser/**/*.png
+          if-no-files-found: warn
+          retention-days: 3
+
   edge-functions:
     name: OpenAI-only Edge Function gate
     runs-on: ubuntu-latest

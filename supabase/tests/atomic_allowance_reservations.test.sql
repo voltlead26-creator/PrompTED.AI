@@ -452,16 +452,84 @@ select ok(
 -- transaction advisory lock after reserving.  The second request starts while
 -- the first row is still uncommitted.  It can reject at cap only if it waits for
 -- that lock; an unlocked count-then-insert implementation would admit both.
+-- dblink executes inside PostgreSQL. Require the same database/cluster and
+-- genuinely independent backends before a remote session may commit fixtures.
+-- An identity error raises and aborts this test transaction; a TAP failure alone
+-- would not prevent later dblink writes.
+create or replace function pg_temp.require_local_test_sessions(p_names text[])
+returns boolean
+language plpgsql
+set search_path = ''
+as $function$
+declare
+  v_name text;
+  v_remote record;
+  v_cluster bigint := (select system_identifier from pg_catalog.pg_control_system());
+  v_backends integer[] := array[pg_catalog.pg_backend_pid()];
+begin
+  if cardinality(p_names) is distinct from 2 then
+    raise exception 'DATABASE_TEST_SESSION_IDENTITY_MISMATCH';
+  end if;
+  foreach v_name in array p_names loop
+    select * into strict v_remote
+    from extensions.dblink(
+      v_name,
+      'select current_database()::text, system_identifier, pg_backend_pid() from pg_catalog.pg_control_system()'
+    ) as identity(database_name text, cluster_id bigint, backend_pid integer);
+    if v_remote.database_name is distinct from pg_catalog.current_database()::text
+      or v_remote.cluster_id is distinct from v_cluster
+      or v_remote.backend_pid is null
+      or v_remote.backend_pid = any(v_backends) then
+      raise exception 'DATABASE_TEST_SESSION_IDENTITY_MISMATCH';
+    end if;
+    v_backends := array_append(v_backends, v_remote.backend_pid);
+  end loop;
+  return true;
+end;
+$function$;
+
+-- Use this server's TCP address, not a Docker name or loopback trust rule.
+-- Supabase's postgres role is not a superuser: dblink must actually authenticate
+-- with the supplied synthetic local password. Unix sockets/loopback fail closed.
+create or replace function pg_temp.local_test_connection_string()
+returns text
+language plpgsql
+set search_path = ''
+as $function$
+declare
+  v_address inet := pg_catalog.inet_server_addr();
+begin
+  if v_address is null
+    or v_address <<= '127.0.0.0/8'::inet
+    or v_address = '::1'::inet then
+    raise exception 'DATABASE_TEST_NON_LOOPBACK_TCP_REQUIRED';
+  end if;
+  return pg_catalog.format(
+    'hostaddr=%s port=%s dbname=%L user=postgres password=postgres connect_timeout=5',
+    pg_catalog.host(v_address), pg_catalog.current_setting('port'), pg_catalog.current_database()
+  );
+end;
+$function$;
+
 select extensions.dblink_connect(
   'allowance_concurrent_one',
-  'host=supabase_db_jjsykocqpjlekgsbylkd port=5432 dbname=' || current_database()
-    || ' user=postgres password=postgres'
+  pg_temp.local_test_connection_string()
 );
 select extensions.dblink_connect(
   'allowance_concurrent_two',
-  'host=supabase_db_jjsykocqpjlekgsbylkd port=5432 dbname=' || current_database()
-    || ' user=postgres password=postgres'
+  pg_temp.local_test_connection_string()
 );
+-- These successful checks are positive fixture evidence, with a raising fence.
+select ok(
+  pg_temp.require_local_test_sessions(array['allowance_concurrent_one', 'allowance_concurrent_two']),
+  'both concurrency sessions are independent backends in this exact database and cluster'
+);
+select throws_ok(
+  $$select pg_temp.require_local_test_sessions(array['allowance_concurrent_one', 'allowance_concurrent_one'])$$,
+  'P0001', 'DATABASE_TEST_SESSION_IDENTITY_MISMATCH',
+  'the identity fence rejects reuse of one backend before fixture writes'
+);
+
 select extensions.dblink_exec(
   'allowance_concurrent_one',
   $sql$

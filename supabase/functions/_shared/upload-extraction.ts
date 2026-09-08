@@ -5,6 +5,7 @@ import {
   MAX_TEXT_UPLOAD_BYTES,
   MAX_UPLOAD_BYTES,
   UPLOAD_RESOURCE_POLICY_VERSION,
+  UPLOAD_RESOURCE_POLICY_VERSION_V2,
   type UploadExtractionResult,
   type UploadFormat,
 } from "./upload-extraction-contract.ts";
@@ -14,6 +15,33 @@ import {
   localXmlName,
   scanBoundedXml,
 } from "./bounded-xml.ts";
+import {
+  applyWordXmlSourcePatches,
+  captureWordXmlSourcePatches,
+  mapWordXmlSource,
+  WORD_XML_SOURCE_POLICY,
+  type WordXmlSource,
+  WordXmlSourceError,
+} from "./wordprocessingml-source.ts";
+import {
+  DOCX_SOURCE_POLICY,
+  docxSourceBlockers,
+  type DocxSourceManifest,
+  encodeOfficePartRoster,
+  type OfficeSourcePart,
+  RTF_SOURCE_POLICY,
+  type RtfSourceManifest,
+  type SourceUploadExtractionResult,
+  type SourceUploadExtractionResultV3,
+} from "./document-source-contract.ts";
+import { readRtfText, RtfSourceError } from "./rtf-source.ts";
+import { BoundedRtfError } from "./bounded-rtf.ts";
+export {
+  DOCX_SOURCE_POLICY,
+  type DocxSourceManifest,
+  type OfficeSourcePart,
+  type SourceUploadExtractionResult,
+} from "./document-source-contract.ts";
 export {
   MAX_EXTRACTED_TEXT_CHARS,
   MAX_TEXT_UPLOAD_BYTES,
@@ -22,6 +50,35 @@ export {
   type UploadExtractionResult,
   type UploadFormat,
 } from "./upload-extraction-contract.ts";
+export { assertFormatMetadata as assertUploadFormatMetadata };
+
+/** V3 metadata authority is shared by the producer and its privileged publisher. */
+export function assertUploadFormatMetadataV3(
+  format: SourceUploadExtractionResultV3["format"],
+  filename: string,
+  mime: string,
+): void {
+  if (format !== "rtf") return assertFormatMetadata(format, filename, mime);
+  const normalizedMime = mime.normalize("NFKC").trim().toLowerCase();
+  if (
+    extensionOf(filename) !== "rtf" ||
+    ![
+      "",
+      "application/octet-stream",
+      "binary/octet-stream",
+      "application/rtf",
+      "text/rtf",
+      // Existing empty-MIME JSON claims retain the extension as file_type.
+      "rtf",
+    ].includes(normalizedMime)
+  ) {
+    throw extractionError(
+      422,
+      "UPLOAD_FORMAT_MISMATCH",
+      "The file contents do not match its name or declared file type.",
+    );
+  }
+}
 
 const MAX_PDF_PAGES = 80;
 const MAX_ARCHIVE_ENTRIES = 512;
@@ -61,17 +118,20 @@ interface ZipEntry {
   compressedSize: number;
   uncompressedSize: number;
   localOffset: number;
+  centralEntryOffset: number;
 }
 
 interface ArchiveInspection {
   names: Set<string>;
   selectedContents: Map<string, Uint8Array>;
+  sourceParts?: readonly OfficeSourcePart[];
 }
 
-const archiveInspections = new WeakMap<
-  Uint8Array,
-  Promise<ArchiveInspection>
->();
+type ResolvedUpload =
+  | { format: "docx"; archive: ArchiveInspection }
+  | { format: "xlsx"; archive: ArchiveInspection }
+  | { format: "pdf" }
+  | { format: "text"; text: string };
 
 function extractionError(
   status: 413 | 422 | 503,
@@ -354,6 +414,7 @@ function parseCentralDirectory(bytes: Uint8Array): {
       compressedSize,
       uncompressedSize,
       localOffset,
+      centralEntryOffset: cursor,
     });
     cursor += 46 + nameLength + extraLength + commentLength;
   }
@@ -385,6 +446,7 @@ async function inspectInflatedEntry(
   expectedCrc32: number,
   signal: AbortSignal | undefined,
   deadline: number,
+  retain: boolean,
 ): Promise<{ size: number; bytes?: Uint8Array }> {
   let stream: ReadableStream<Uint8Array>;
   try {
@@ -402,18 +464,18 @@ async function inspectInflatedEntry(
   let total = 0;
   const chunks: Uint8Array[] = [];
   let crcState = 0xffffffff;
+  let finished = false;
   try {
     while (true) {
       assertParserWork(signal, deadline);
       const { done, value } = await reader.read();
-      if (done) break;
+      assertParserWork(signal, deadline);
+      if (done) {
+        finished = true;
+        break;
+      }
       total += value.byteLength;
       if (total > maximumBytes) {
-        try {
-          await reader.cancel("UPLOAD_ARCHIVE_EXPANSION_LIMIT");
-        } catch {
-          // Preserve the resource-limit result if cancellation fails.
-        }
         throw extractionError(
           413,
           "UPLOAD_ARCHIVE_EXPANSION_LIMIT",
@@ -421,7 +483,7 @@ async function inspectInflatedEntry(
         );
       }
       crcState = updateCrc32(crcState, value);
-      chunks.push(Uint8Array.from(value));
+      if (retain) chunks.push(Uint8Array.from(value));
     }
   } catch (error) {
     if (error instanceof UploadExtractionError) throw error;
@@ -431,6 +493,15 @@ async function inspectInflatedEntry(
       "That Office file contains invalid compressed data.",
     );
   } finally {
+    if (!finished) {
+      try {
+        // Abandon remaining work on cancellation, deadline or malformed data.
+        // Cleanup cannot postpone or replace the primary extraction failure.
+        void reader.cancel("UPLOAD_ARCHIVE_READ_ABANDONED").catch(() => {});
+      } catch {
+        // Preserve the existing failure if cleanup cannot be initiated.
+      }
+    }
     reader.releaseLock();
   }
   if (((crcState ^ 0xffffffff) >>> 0) !== expectedCrc32) {
@@ -440,6 +511,7 @@ async function inspectInflatedEntry(
       "That Office file contains damaged internal data.",
     );
   }
+  if (!retain) return { size: total };
   const output = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {
@@ -449,14 +521,21 @@ async function inspectInflatedEntry(
   return { size: total, bytes: output };
 }
 
-async function inspectOfficeArchiveUncached(
+async function inspectOfficeArchive(
   bytes: Uint8Array,
   signal?: AbortSignal,
   deadline = Date.now() + PARSER_DEADLINE_MS,
+  describeSourceParts = false,
 ): Promise<ArchiveInspection> {
   const { entries, centralOffset } = parseCentralDirectory(bytes);
   const names = new Set<string>();
   const selectedContents = new Map<string, Uint8Array>();
+  // Only a DOCX candidate needs a source roster. Keep non-DOCX extraction's
+  // existing streaming resource behaviour when this reader is requested.
+  const sourceParts: OfficeSourcePart[] | undefined = describeSourceParts &&
+      entries.some((entry) => entry.name === "word/document.xml")
+    ? []
+    : undefined;
   const resolved: Array<
     ZipEntry & { contentOffset: number; endOffset: number }
   > = [];
@@ -549,11 +628,15 @@ async function inspectOfficeArchiveUncached(
     previousEnd = entry.endOffset;
   }
 
-  let retainedTotal = 0;
+  let inspectedTotal = 0;
   for (const entry of resolved) {
-    if (!shouldRetainArchiveEntry(entry.name)) continue;
+    const retain = shouldRetainArchiveEntry(entry.name);
+    // Manifest inspection hashes one additional part at a time and discards
+    // it. Ordinary text extraction still streams unselected parts without
+    // collecting them. Both use this same inspection and expansion budget.
+    const inspectContent = retain || sourceParts !== undefined;
     assertParserWork(signal, deadline);
-    const remaining = MAX_ARCHIVE_UNCOMPRESSED_BYTES - retainedTotal;
+    const remaining = MAX_ARCHIVE_UNCOMPRESSED_BYTES - inspectedTotal;
     const maximumBytes = Math.min(
       entry.uncompressedSize,
       MAX_ARCHIVE_ENTRY_BYTES,
@@ -567,7 +650,7 @@ async function inspectOfficeArchiveUncached(
       );
     }
     const compressed = bytes.subarray(entry.contentOffset, entry.endOffset);
-    let content: Uint8Array;
+    let content: Uint8Array | undefined;
     if (entry.method === 0) {
       if (
         compressed.byteLength !== entry.uncompressedSize ||
@@ -579,7 +662,7 @@ async function inspectOfficeArchiveUncached(
           "That Office file contains damaged internal data.",
         );
       }
-      content = Uint8Array.from(compressed);
+      if (inspectContent) content = Uint8Array.from(compressed);
     } else {
       const inspected = await inspectInflatedEntry(
         compressed,
@@ -587,8 +670,12 @@ async function inspectOfficeArchiveUncached(
         entry.crc32,
         signal,
         deadline,
+        inspectContent,
       );
-      if (inspected.size !== entry.uncompressedSize || !inspected.bytes) {
+      if (
+        inspected.size !== entry.uncompressedSize ||
+        (inspectContent && !inspected.bytes)
+      ) {
         throw extractionError(
           422,
           "UPLOAD_ARCHIVE_INVALID",
@@ -597,22 +684,335 @@ async function inspectOfficeArchiveUncached(
       }
       content = inspected.bytes;
     }
-    retainedTotal += content.byteLength;
-    selectedContents.set(entry.name, content);
+    // Every entry has now passed actual-size and CRC checks, even styles,
+    // images and other parts that do not contribute extracted wording.
+    inspectedTotal += entry.uncompressedSize;
+    if (sourceParts && content) {
+      sourceParts.push(Object.freeze({
+        path: entry.name,
+        compressionMethod: entry.method,
+        compressedByteLength: entry.compressedSize,
+        uncompressedByteLength: entry.uncompressedSize,
+        crc32: entry.crc32,
+        contentSha256: await sourceSha256(content, signal, deadline),
+      }));
+    }
+    if (retain && content) selectedContents.set(entry.name, content);
   }
-  return { names, selectedContents };
+  assertParserWork(signal, deadline);
+  return { names, selectedContents, sourceParts };
 }
 
-function inspectOfficeArchive(
+async function sourceSha256(
   bytes: Uint8Array,
+  signal: AbortSignal | undefined,
+  deadline: number,
+): Promise<string> {
+  assertParserWork(signal, deadline);
+  const hash = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes));
+  assertParserWork(signal, deadline);
+  return Array.from(
+    new Uint8Array(hash),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/**
+ * Build from the owned original, never a caller-supplied part list or offsets.
+ * Kept private to the server source adapter: the v1 extraction response and
+ * immutable checkpoints are unchanged and do not carry this larger manifest.
+ */
+export async function inspectDocxSource(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
   signal?: AbortSignal,
   deadline = Date.now() + PARSER_DEADLINE_MS,
-): Promise<ArchiveInspection> {
-  const cached = archiveInspections.get(bytes);
-  if (cached) return cached;
-  const inspection = inspectOfficeArchiveUncached(bytes, signal, deadline);
-  archiveInspections.set(bytes, inspection);
-  return inspection;
+): Promise<DocxSourceManifest> {
+  const owned = copyUploadBytes(bytes, signal, deadline);
+  const resolved = await resolveOwnedUpload(
+    owned,
+    filename,
+    mime,
+    signal,
+    deadline,
+    true,
+  );
+  assertParserWork(signal, deadline);
+  if (resolved.format !== "docx") {
+    throw extractionError(
+      422,
+      "UPLOAD_DOCX_SOURCE_REQUIRED",
+      "That source inspection requires a Word DOCX document.",
+    );
+  }
+  return await assembleDocxSource(owned, resolved.archive, signal, deadline);
+}
+
+export const DOCX_SOURCE_CANDIDATE_VERSION = "docx-source-candidate.1" as const;
+
+export interface DocxSourceCandidate {
+  readonly version: typeof DOCX_SOURCE_CANDIDATE_VERSION;
+  readonly originalArchiveSha256: string;
+  readonly bytes: Uint8Array;
+  readonly manifest: DocxSourceManifest;
+}
+
+/**
+ * Unactivated source compiler, not edit/approval/export authority. Rebuild only
+ * exact main-part text nodes from the owned original. Package semantics,
+ * visibility and rendered layout remain unassessed in the immutable manifest.
+ * A future consumer must bind owner, source, section and document revisions.
+ */
+export async function compileDocxSourceCandidate(
+  bytes: Uint8Array,
+  request: unknown,
+  signal?: AbortSignal,
+  deadline = Date.now() + PARSER_DEADLINE_MS,
+): Promise<DocxSourceCandidate> {
+  if (!Number.isFinite(deadline)) throw new WordXmlSourceError("invalid_patch");
+  const boundedDeadline = Math.min(deadline, Date.now() + PARSER_DEADLINE_MS);
+  const owned = copyUploadBytes(bytes, signal, boundedDeadline);
+  if (
+    request === null || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).length !== 3 ||
+    !Object.hasOwn(request, "version") ||
+    !Object.hasOwn(request, "archiveSha256") ||
+    !Object.hasOwn(request, "patches") ||
+    !("version" in request) ||
+    request.version !== DOCX_SOURCE_CANDIDATE_VERSION ||
+    !("archiveSha256" in request) ||
+    typeof request.archiveSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(request.archiveSha256) || !("patches" in request)
+  ) throw new WordXmlSourceError("invalid_patch");
+  const archiveSha256 = request.archiveSha256;
+  const patches = captureWordXmlSourcePatches(request.patches);
+  const resolved = await resolveOwnedUpload(
+    owned,
+    "source.docx",
+    "",
+    signal,
+    boundedDeadline,
+    true,
+  );
+  if (resolved.format !== "docx") {
+    throw new WordXmlSourceError("unsupported_edit");
+  }
+  const before = await assembleDocxSource(
+    owned,
+    resolved.archive,
+    signal,
+    boundedDeadline,
+  );
+  if (before.archiveSha256 !== archiveSha256) {
+    throw new WordXmlSourceError("identity_mismatch");
+  }
+  const unassessed = new Set([
+    "package_semantics_unassessed",
+    "styles_and_visibility_unassessed",
+    "layout_unassessed",
+  ]);
+  if (before.blockers.some((blocker) => !unassessed.has(blocker))) {
+    throw new WordXmlSourceError("unsupported_edit");
+  }
+  const main = resolved.archive.selectedContents.get("word/document.xml")!;
+  const changed = await applyWordXmlSourcePatches(main, {
+    version: WORD_XML_SOURCE_POLICY.version,
+    originalSha256: before.mainPart.source.originalSha256,
+    patches,
+  }, { signal, deadline: boundedDeadline });
+  assertParserWork(signal, boundedDeadline);
+  if (
+    changed.length === main.length &&
+    changed.every((byte, i) => byte === main[i])
+  ) {
+    return {
+      version: DOCX_SOURCE_CANDIDATE_VERSION,
+      originalArchiveSha256: archiveSha256,
+      bytes: owned,
+      manifest: before,
+    };
+  }
+
+  // The same reader has already validated every local record, payload and CRC.
+  // Central order need not be physical order. Preserve every other raw record;
+  // only the main payload and its ZIP method/CRC/sizes/offsets may change.
+  const { entries, centralOffset } = parseCentralDirectory(owned);
+  for (const entry of entries) {
+    if (
+      readUint16(owned, entry.localOffset + 28) !== 0 ||
+      readUint16(owned, entry.centralEntryOffset + 30) !== 0
+    ) {
+      // Unknown extras can contain content- or offset-dependent metadata.
+      // This compiler restriction does not change original upload admission.
+      throw new WordXmlSourceError("unsupported_edit");
+    }
+  }
+  const entry = entries.find((part) => part.name === "word/document.xml")!;
+  const payloadOffset = entry.localOffset + 30 +
+    readUint16(owned, entry.localOffset + 26);
+  const delta = changed.length - entry.compressedSize;
+  if (owned.length + delta > MAX_UPLOAD_BYTES) {
+    throw new WordXmlSourceError("resource_limit");
+  }
+  const output = new Uint8Array(owned.length + delta);
+  output.set(owned.subarray(0, payloadOffset));
+  output.set(changed, payloadOffset);
+  output.set(
+    owned.subarray(payloadOffset + entry.compressedSize),
+    payloadOffset + changed.length,
+  );
+  const view = new DataView(output.buffer);
+  const changedCrc = crc32(changed);
+  view.setUint16(entry.localOffset + 8, 0, true);
+  view.setUint32(entry.localOffset + 14, changedCrc, true);
+  view.setUint32(entry.localOffset + 18, changed.length, true);
+  view.setUint32(entry.localOffset + 22, changed.length, true);
+  for (const part of entries) {
+    const central = part.centralEntryOffset + delta;
+    if (part.localOffset > entry.localOffset) {
+      view.setUint32(central + 42, part.localOffset + delta, true);
+    }
+    if (part === entry) {
+      view.setUint16(central + 10, 0, true);
+      view.setUint32(central + 16, changedCrc, true);
+      view.setUint32(central + 20, changed.length, true);
+      view.setUint32(central + 24, changed.length, true);
+    }
+  }
+  view.setUint32(findZipEnd(owned) + delta + 16, centralOffset + delta, true);
+  assertParserWork(signal, boundedDeadline);
+  const after = await inspectDocxSource(
+    output,
+    "candidate.docx",
+    "",
+    signal,
+    boundedDeadline,
+  );
+  const expectedText = new Map(
+    patches.map((patch) => [patch.nodeId, patch.text]),
+  );
+  if (
+    after.parts.length !== before.parts.length ||
+    after.mainPart.source.nodes.length !==
+      before.mainPart.source.nodes.length ||
+    JSON.stringify(after.blockers) !== JSON.stringify(before.blockers)
+  ) throw new WordXmlSourceError("invalid_patch");
+  for (let i = 0; i < before.parts.length; i += 1) {
+    const previous = before.parts[i]!;
+    const current = after.parts[i]!;
+    if (
+      current.path !== previous.path ||
+      (previous.path !== "word/document.xml" && (
+        current.contentSha256 !== previous.contentSha256 ||
+        current.crc32 !== previous.crc32 ||
+        current.compressionMethod !== previous.compressionMethod ||
+        current.compressedByteLength !== previous.compressedByteLength ||
+        current.uncompressedByteLength !== previous.uncompressedByteLength
+      ))
+    ) throw new WordXmlSourceError("invalid_patch");
+  }
+  for (let i = 0; i < before.mainPart.source.nodes.length; i += 1) {
+    const previous = before.mainPart.source.nodes[i]!;
+    const current = after.mainPart.source.nodes[i]!;
+    if (
+      current.id !== previous.id || current.xmlSpace !== previous.xmlSpace ||
+      current.lexicallyPatchable !== previous.lexicallyPatchable ||
+      current.text !== (expectedText.get(previous.id) ?? previous.text)
+    ) throw new WordXmlSourceError("invalid_patch");
+  }
+  assertParserWork(signal, boundedDeadline);
+  return {
+    version: DOCX_SOURCE_CANDIDATE_VERSION,
+    originalArchiveSha256: archiveSha256,
+    bytes: output,
+    manifest: after,
+  };
+}
+
+async function assembleDocxSource(
+  owned: Uint8Array,
+  archive: ArchiveInspection,
+  signal: AbortSignal | undefined,
+  deadline: number,
+): Promise<DocxSourceManifest> {
+  assertParserWork(signal, deadline);
+  const mainBytes = archive.selectedContents.get("word/document.xml");
+  if (!mainBytes || !archive.sourceParts) {
+    throw extractionError(
+      422,
+      "UPLOAD_OFFICE_FORMAT_INVALID",
+      "That Word document is missing its source parts.",
+    );
+  }
+  // Exact admitted paths, code-unit order (not locale order). JSON arrays with
+  // fixed field order and a domain/version prefix define the roster encoding;
+  // PostgreSQL jsonb serialisation is not this hash encoding.
+  const parts = Object.freeze(
+    [...archive.sourceParts].sort((left, right) =>
+      left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+    ),
+  );
+  const rosterBytes = encodeOfficePartRoster(parts);
+  const partRosterSha256 = await sourceSha256(rosterBytes, signal, deadline);
+  const archiveSha256 = await sourceSha256(owned, signal, deadline);
+  let source: WordXmlSource;
+  try {
+    source = await mapWordXmlSource(mainBytes, { signal, deadline });
+  } catch (error) {
+    if (!(error instanceof WordXmlSourceError)) throw error;
+    if (
+      error.code === "cancelled" ||
+      (error.code === "resource_limit" && Date.now() >= deadline)
+    ) {
+      throw extractionError(
+        503,
+        "UPLOAD_EXTRACTION_RESOURCE_UNAVAILABLE",
+        "TED could not safely finish reading that file right now. Please try again.",
+        true,
+      );
+    }
+    if (error.code === "resource_limit") {
+      throw extractionError(
+        413,
+        "UPLOAD_DOCX_SOURCE_LIMIT",
+        "That Word source is too complex to map completely within the safe limit.",
+      );
+    }
+    if (error.code === "invalid_xml" || error.code === "unsupported_encoding") {
+      throw extractionError(
+        422,
+        "UPLOAD_DOCX_SOURCE_INVALID",
+        "That Word document contains malformed or unsupported source text.",
+      );
+    }
+    throw error;
+  }
+  assertParserWork(signal, deadline);
+  const blockers = docxSourceBlockers(parts, source.blockers);
+  const manifest: DocxSourceManifest = Object.freeze({
+    version: DOCX_SOURCE_POLICY.version,
+    assessment: "source_only",
+    archiveSha256,
+    archiveByteLength: owned.byteLength,
+    rosterEncodingVersion: DOCX_SOURCE_POLICY.rosterEncodingVersion,
+    partRosterSha256,
+    parts,
+    mainPart: Object.freeze({ path: "word/document.xml", source }),
+    blockers,
+  });
+  if (
+    new TextEncoder().encode(JSON.stringify(manifest)).byteLength >
+      DOCX_SOURCE_POLICY.maxManifestBytes
+  ) {
+    throw extractionError(
+      413,
+      "UPLOAD_DOCX_SOURCE_LIMIT",
+      "That Word source is too complex to map completely within the safe limit.",
+    );
+  }
+  assertParserWork(signal, deadline);
+  return manifest;
 }
 
 function assertFormatMetadata(
@@ -669,14 +1069,23 @@ function assertFormatMetadata(
   }
 }
 
-export async function resolveUploadFormat(
+// Each public read owns a stable source before yielding. PDF parser cleanup may
+// detach its working buffer; the caller's original must remain intact.
+function copyUploadBytes(
   bytes: Uint8Array,
-  filename: string,
-  mime: string,
-  signal?: AbortSignal,
-  deadline = Date.now() + PARSER_DEADLINE_MS,
-): Promise<UploadFormat> {
+  signal: AbortSignal | undefined,
+  deadline: number,
+): Uint8Array {
   assertParserWork(signal, deadline);
+  if (
+    !(bytes instanceof Uint8Array) || bytes.buffer instanceof SharedArrayBuffer
+  ) {
+    throw extractionError(
+      422,
+      "UPLOAD_BUFFER_UNSUPPORTED",
+      "TED cannot safely read that file. Please try the original file again.",
+    );
+  }
   if (bytes.byteLength === 0) {
     throw extractionError(
       422,
@@ -691,6 +1100,37 @@ export async function resolveUploadFormat(
       "Files need to be 8MB or smaller.",
     );
   }
+  return Uint8Array.from(bytes);
+}
+
+export async function resolveUploadFormat(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
+  signal?: AbortSignal,
+  deadline = Date.now() + PARSER_DEADLINE_MS,
+): Promise<UploadFormat> {
+  const owned = copyUploadBytes(bytes, signal, deadline);
+  const resolved = await resolveOwnedUpload(
+    owned,
+    filename,
+    mime,
+    signal,
+    deadline,
+  );
+  assertParserWork(signal, deadline);
+  return resolved.format;
+}
+
+async function resolveOwnedUpload(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
+  signal: AbortSignal | undefined,
+  deadline: number,
+  describeSourceParts = false,
+): Promise<ResolvedUpload> {
+  assertParserWork(signal, deadline);
   const extension = extensionOf(filename);
   const normalizedMime = mime.normalize("NFKC").trim().toLowerCase();
   if (
@@ -719,10 +1159,16 @@ export async function resolveUploadFormat(
   }
   if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) {
     assertFormatMetadata("pdf", filename, mime);
-    return "pdf";
+    return { format: "pdf" };
   }
   if (startsWith(bytes, [0x50, 0x4b, 0x03, 0x04])) {
-    const archive = await inspectOfficeArchive(bytes, signal, deadline);
+    const archive = await inspectOfficeArchive(
+      bytes,
+      signal,
+      deadline,
+      describeSourceParts,
+    );
+    assertParserWork(signal, deadline);
     if (
       Array.from(archive.names).some((name) =>
         /(?:^|\/)(?:vbaproject[.]bin|activex\/|embeddings\/)/i.test(name) ||
@@ -746,7 +1192,7 @@ export async function resolveUploadFormat(
         "That archive is not a supported Word or Excel document.",
       );
     }
-    const format: UploadFormat = isDocx ? "docx" : "xlsx";
+    const format = isDocx ? "docx" : "xlsx";
     validateOfficePackage(
       archive,
       isDocx ? "word/document.xml" : "xl/workbook.xml",
@@ -755,7 +1201,7 @@ export async function resolveUploadFormat(
         : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
     );
     assertFormatMetadata(format, filename, mime);
-    return format;
+    return { format, archive };
   }
 
   if (
@@ -779,24 +1225,35 @@ export async function resolveUploadFormat(
         "Text files need to be 1MB or smaller.",
       );
     }
-    if (bytes.includes(0)) {
+    // UTF-16 text contains zero bytes as part of ordinary characters. Decode
+    // only a BOM-declared byte order, then reject actual NUL characters. The
+    // original owned bytes remain unchanged for retention and request identity.
+    const encoding = startsWith(bytes, [0xff, 0xfe])
+      ? "utf-16le"
+      : startsWith(bytes, [0xfe, 0xff])
+      ? "utf-16be"
+      : "utf-8";
+    let text: string;
+    try {
+      text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      throw extractionError(
+        422,
+        "UPLOAD_TEXT_ENCODING_INVALID",
+        "Save this file as UTF-8 or Unicode (UTF-16) text and try again.",
+      );
+    }
+    assertParserWork(signal, deadline);
+    if (text.includes("\u0000")) {
       throw extractionError(
         422,
         "UPLOAD_TEXT_ENCODING_INVALID",
         "That text file contains unsupported binary data.",
       );
     }
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      throw extractionError(
-        422,
-        "UPLOAD_TEXT_ENCODING_INVALID",
-        "Text files must use UTF-8 encoding.",
-      );
-    }
     assertFormatMetadata("text", filename, mime);
-    return "text";
+    return { format: "text", text };
   }
   throw extractionError(
     422,
@@ -815,10 +1272,14 @@ function boundedResult(
     .join("")
     .replace(/[ \t]+\n/g, "\n")
     .trim();
-  const truncated = alreadyTruncated ||
-    cleaned.length > MAX_EXTRACTED_TEXT_CHARS;
+  let end = Math.min(cleaned.length, MAX_EXTRACTED_TEXT_CHARS);
+  // A UTF-16 code-unit ceiling must not emit half of a supplementary character.
+  // This also handles a source reader that reached its own bound mid-pair.
+  const lastUnit = cleaned.charCodeAt(end - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) end -= 1;
+  const truncated = alreadyTruncated || end < cleaned.length;
   return {
-    text: cleaned.slice(0, MAX_EXTRACTED_TEXT_CHARS),
+    text: cleaned.slice(0, end),
     format,
     truncated,
     resourcePolicyVersion: UPLOAD_RESOURCE_POLICY_VERSION,
@@ -848,6 +1309,33 @@ function normalizePdfFailure(error: unknown): UploadExtractionError {
     "TED cannot safely read that PDF right now. Please try again.",
     true,
   );
+}
+
+/** Always finish PDF resource cleanup, preserving the original failure if both fail. */
+export async function withPdfCleanup<T>(
+  read: () => Promise<T>,
+  cleanup: () => void | Promise<void>,
+): Promise<T> {
+  let result: { ok: true; value: T } | { ok: false; error: unknown };
+  try {
+    result = { ok: true, value: await read() };
+  } catch (error) {
+    result = { ok: false, error };
+  }
+  try {
+    await cleanup();
+  } catch {
+    if (result.ok) {
+      throw extractionError(
+        503,
+        "UPLOAD_PDF_RUNTIME_UNAVAILABLE",
+        "TED cannot safely finish reading that PDF right now.",
+        true,
+      );
+    }
+  }
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
 async function extractPdf(
@@ -882,130 +1370,102 @@ async function extractPdf(
   } catch (error) {
     throw normalizePdfFailure(error);
   }
-  let primaryError: unknown = null;
   try {
-    if (
-      !Number.isInteger(pdf.numPages) || pdf.numPages < 1 ||
-      pdf.numPages > MAX_PDF_PAGES
-    ) {
-      throw extractionError(
-        413,
-        "UPLOAD_PDF_PAGE_LIMIT",
-        `PDF files may contain at most ${MAX_PDF_PAGES} pages.`,
-      );
-    }
-    const parts: string[] = [];
-    let textChars = 0;
-    let chunks = 0;
-    let items = 0;
-    let truncated = false;
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      assertParserWork(signal, deadline);
-      const page = await pdf.getPage(pageNumber);
-      let pageError: unknown = null;
-      try {
-        const reader = page.streamTextContent().getReader();
-        try {
-          while (!truncated) {
-            assertParserWork(signal, deadline);
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks += 1;
-            if (
-              chunks > MAX_PDF_TEXT_CHUNKS || !value ||
-              !Array.isArray(value.items)
-            ) {
-              throw extractionError(
-                413,
-                "UPLOAD_PDF_TEXT_LIMIT",
-                "That PDF contains too much text structure to process safely.",
-              );
-            }
-            for (const item of value.items) {
-              items += 1;
-              if (items > MAX_PDF_TEXT_ITEMS) {
+    return await withPdfCleanup(async () => {
+      if (
+        !Number.isInteger(pdf.numPages) || pdf.numPages < 1 ||
+        pdf.numPages > MAX_PDF_PAGES
+      ) {
+        throw extractionError(
+          413,
+          "UPLOAD_PDF_PAGE_LIMIT",
+          `PDF files may contain at most ${MAX_PDF_PAGES} pages.`,
+        );
+      }
+      const parts: string[] = [];
+      let textChars = 0;
+      let chunks = 0;
+      let items = 0;
+      let truncated = false;
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        assertParserWork(signal, deadline);
+        const page = await pdf.getPage(pageNumber);
+        await withPdfCleanup(async () => {
+          const reader = page.streamTextContent().getReader();
+          try {
+            while (!truncated) {
+              assertParserWork(signal, deadline);
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks += 1;
+              if (
+                chunks > MAX_PDF_TEXT_CHUNKS || !value ||
+                !Array.isArray(value.items)
+              ) {
                 throw extractionError(
                   413,
                   "UPLOAD_PDF_TEXT_LIMIT",
                   "That PDF contains too much text structure to process safely.",
                 );
               }
-              if (!item || typeof item !== "object" || !("str" in item)) {
-                continue;
-              }
-              const candidate = item as { str?: unknown; hasEOL?: unknown };
-              if (typeof candidate.str !== "string") continue;
-              if (candidate.str.length > MAX_PDF_ITEM_CHARS) {
-                throw extractionError(
-                  413,
-                  "UPLOAD_PDF_TEXT_LIMIT",
-                  "That PDF contains an oversized text item.",
-                );
-              }
-              const suffix = candidate.hasEOL === true ? "\n" : "";
-              const remaining = MAX_EXTRACTED_TEXT_CHARS + 1 - textChars;
-              const piece = `${candidate.str}${suffix}`.slice(
-                0,
-                Math.max(0, remaining),
-              );
-              if (piece) {
-                parts.push(piece);
-                textChars += piece.length;
-              }
-              if (candidate.str.length + suffix.length > remaining) {
-                truncated = true;
-                try {
-                  await reader.cancel("UPLOAD_TEXT_LIMIT_REACHED");
-                } catch {
-                  // Preserve the successful bounded truncation decision.
+              for (const item of value.items) {
+                items += 1;
+                if (items > MAX_PDF_TEXT_ITEMS) {
+                  throw extractionError(
+                    413,
+                    "UPLOAD_PDF_TEXT_LIMIT",
+                    "That PDF contains too much text structure to process safely.",
+                  );
                 }
-                break;
+                if (!item || typeof item !== "object" || !("str" in item)) {
+                  continue;
+                }
+                const candidate = item as { str?: unknown; hasEOL?: unknown };
+                if (typeof candidate.str !== "string") continue;
+                if (candidate.str.length > MAX_PDF_ITEM_CHARS) {
+                  throw extractionError(
+                    413,
+                    "UPLOAD_PDF_TEXT_LIMIT",
+                    "That PDF contains an oversized text item.",
+                  );
+                }
+                const suffix = candidate.hasEOL === true ? "\n" : "";
+                const remaining = MAX_EXTRACTED_TEXT_CHARS + 1 - textChars;
+                const piece = `${candidate.str}${suffix}`.slice(
+                  0,
+                  Math.max(0, remaining),
+                );
+                if (piece) {
+                  parts.push(piece);
+                  textChars += piece.length;
+                }
+                if (candidate.str.length + suffix.length > remaining) {
+                  truncated = true;
+                  try {
+                    await reader.cancel("UPLOAD_TEXT_LIMIT_REACHED");
+                  } catch {
+                    // Preserve the successful bounded truncation decision.
+                  }
+                  break;
+                }
               }
             }
+          } finally {
+            reader.releaseLock();
           }
-        } finally {
-          reader.releaseLock();
-        }
-      } catch (error) {
-        pageError = error;
-        throw error;
-      } finally {
-        try {
+        }, () => {
           page.cleanup();
-        } catch {
-          if (!pageError) {
-            throw extractionError(
-              503,
-              "UPLOAD_PDF_RUNTIME_UNAVAILABLE",
-              "TED cannot safely finish reading that PDF right now.",
-              true,
-            );
-          }
+        });
+        if (truncated) break;
+        if (textChars < MAX_EXTRACTED_TEXT_CHARS + 1) {
+          parts.push("\n");
+          textChars += 1;
         }
       }
-      if (truncated) break;
-      if (textChars < MAX_EXTRACTED_TEXT_CHARS + 1) {
-        parts.push("\n");
-        textChars += 1;
-      }
-    }
-    return boundedResult(parts.join(""), "pdf", truncated);
+      return boundedResult(parts.join(""), "pdf", truncated);
+    }, () => pdf.destroy());
   } catch (error) {
-    primaryError = normalizePdfFailure(error);
-    throw primaryError;
-  } finally {
-    try {
-      await pdf.destroy();
-    } catch {
-      if (!primaryError) {
-        throw extractionError(
-          503,
-          "UPLOAD_PDF_RUNTIME_UNAVAILABLE",
-          "TED cannot safely finish reading that PDF right now.",
-          true,
-        );
-      }
-    }
+    throw normalizePdfFailure(error);
   }
 }
 
@@ -1253,12 +1713,12 @@ function wordPartText(xml: string): string {
   return output.join("");
 }
 
-async function extractDocx(
-  bytes: Uint8Array,
-  signal?: AbortSignal,
-  deadline = Date.now() + PARSER_DEADLINE_MS,
-): Promise<UploadExtractionResult> {
-  const archive = await inspectOfficeArchive(bytes, signal, deadline);
+function extractDocx(
+  archive: ArchiveInspection,
+  signal: AbortSignal | undefined,
+  deadline: number,
+): UploadExtractionResult {
+  assertParserWork(signal, deadline);
   validateOfficePackage(
     archive,
     "word/document.xml",
@@ -1517,12 +1977,12 @@ function worksheetText(
   return { text: lines.join("\n"), cells, rows, truncated };
 }
 
-async function extractXlsx(
-  bytes: Uint8Array,
-  signal?: AbortSignal,
-  deadline = Date.now() + PARSER_DEADLINE_MS,
-): Promise<UploadExtractionResult> {
-  const archive = await inspectOfficeArchive(bytes, signal, deadline);
+function extractXlsx(
+  archive: ArchiveInspection,
+  signal: AbortSignal | undefined,
+  deadline: number,
+): UploadExtractionResult {
+  assertParserWork(signal, deadline);
   validateOfficePackage(
     archive,
     "xl/workbook.xml",
@@ -1604,18 +2064,203 @@ export async function extractBoundedUploadText(
   signal?: AbortSignal,
 ): Promise<UploadExtractionResult> {
   const deadline = Date.now() + PARSER_DEADLINE_MS;
-  const format = await resolveUploadFormat(
-    bytes,
+  const owned = copyUploadBytes(bytes, signal, deadline);
+  // Share one inspection only inside this read. No caller-owned buffer identity,
+  // failed promise or old cancellation/deadline can be replayed across calls.
+  const resolved = await resolveOwnedUpload(
+    owned,
     filename,
     mime,
     signal,
     deadline,
   );
-  if (format === "pdf") return await extractPdf(bytes, signal, deadline);
-  if (format === "docx") return await extractDocx(bytes, signal, deadline);
-  if (format === "xlsx") return await extractXlsx(bytes, signal, deadline);
-  return boundedResult(
-    new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    "text",
+  return await extractResolvedUploadText(owned, resolved, signal, deadline);
+}
+
+async function extractResolvedUploadText(
+  owned: Uint8Array,
+  resolved: ResolvedUpload,
+  signal: AbortSignal | undefined,
+  deadline: number,
+): Promise<UploadExtractionResult> {
+  assertParserWork(signal, deadline);
+  let result: UploadExtractionResult;
+  if (resolved.format === "pdf") {
+    result = await extractPdf(owned, signal, deadline);
+  } else if (resolved.format === "docx") {
+    result = extractDocx(resolved.archive, signal, deadline);
+  } else if (resolved.format === "xlsx") {
+    result = extractXlsx(resolved.archive, signal, deadline);
+  } else {
+    result = boundedResult(resolved.text, "text");
+  }
+  assertParserWork(signal, deadline);
+  return result;
+}
+
+/**
+ * A single owned read for the forthcoming private source checkpoint. This is
+ * not the v1 wire response, and source_only never authorizes an edit or export.
+ * A required DOCX manifest failure rejects the whole result, without fallback.
+ */
+export async function extractBoundedUploadWithSource(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
+  signal?: AbortSignal,
+): Promise<SourceUploadExtractionResult> {
+  const deadline = Date.now() + PARSER_DEADLINE_MS;
+  const owned = copyUploadBytes(bytes, signal, deadline);
+  return await extractOwnedUploadWithSource(
+    owned,
+    filename,
+    mime,
+    signal,
+    deadline,
   );
+}
+
+async function extractOwnedUploadWithSource(
+  owned: Uint8Array,
+  filename: string,
+  mime: string,
+  signal: AbortSignal | undefined,
+  deadline: number,
+): Promise<SourceUploadExtractionResult> {
+  const resolved = await resolveOwnedUpload(
+    owned,
+    filename,
+    mime,
+    signal,
+    deadline,
+    true,
+  );
+  const result = await extractResolvedUploadText(
+    owned,
+    resolved,
+    signal,
+    deadline,
+  );
+  if (resolved.format === "docx") {
+    const sourceManifest = await assembleDocxSource(
+      owned,
+      resolved.archive,
+      signal,
+      deadline,
+    );
+    assertParserWork(signal, deadline);
+    return Object.freeze({ ...result, format: "docx", sourceManifest });
+  }
+  assertParserWork(signal, deadline);
+  return Object.freeze({
+    ...result,
+    format: resolved.format,
+    sourceManifest: null,
+  });
+}
+
+/** Prepared v3 producer; stored contract identity must select it before any read. */
+export async function extractBoundedUploadWithSourceV3(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
+  signal?: AbortSignal,
+): Promise<SourceUploadExtractionResultV3> {
+  const deadline = Date.now() + PARSER_DEADLINE_MS;
+  const owned = copyUploadBytes(bytes, signal, deadline);
+  const extension = extensionOf(filename);
+  const normalizedMime = mime.normalize("NFKC").trim().toLowerCase();
+  const rtfMimes = new Set(["application/rtf", "text/rtf"]);
+  const hasRtfSignature = startsWith(owned, [123, 92, 114, 116, 102]);
+  if (
+    extension !== "rtf" && !rtfMimes.has(normalizedMime) && !hasRtfSignature
+  ) {
+    const result = await extractOwnedUploadWithSource(
+      owned,
+      filename,
+      mime,
+      signal,
+      deadline,
+    );
+    assertParserWork(signal, deadline);
+    return Object.freeze({
+      ...result,
+      resourcePolicyVersion: UPLOAD_RESOURCE_POLICY_VERSION_V2,
+    });
+  }
+  assertUploadFormatMetadataV3("rtf", filename, mime);
+  let rawText: string;
+  try {
+    const read = readRtfText(owned, { signal, deadline });
+    // An unknown destination can contain semantics outside this subset. Keep
+    // source inspection separate from accepting a prefix as classifier evidence.
+    if (read.hasOpaqueDestinations) {
+      throw new RtfSourceError("unsupported_content");
+    }
+    rawText = read.text;
+  } catch (error) {
+    if (error instanceof RtfSourceError) {
+      const failures = {
+        invalid_rtf: [
+          "UPLOAD_RTF_INVALID",
+          "That RTF file is malformed or incomplete. Save a new RTF copy and upload it again.",
+        ],
+        unsupported_encoding: [
+          "UPLOAD_RTF_ENCODING_UNSUPPORTED",
+          "TED cannot safely read this RTF file's character encoding. Save a supported copy and upload it again.",
+        ],
+        unsupported_content: [
+          "UPLOAD_RTF_CONTENT_UNSUPPORTED",
+          "This RTF contains content TED cannot safely interpret yet. Its text has not been used.",
+        ],
+      } as const;
+      const [code, message] = failures[error.code];
+      throw extractionError(422, code, message);
+    }
+    if (error instanceof BoundedRtfError) {
+      if (error.code === "invalid") {
+        throw extractionError(
+          422,
+          "UPLOAD_RTF_INVALID",
+          "That RTF file is malformed or incomplete. Save a new RTF copy and upload it again.",
+        );
+      }
+      if (error.code === "resource_limit") {
+        throw extractionError(
+          413,
+          "UPLOAD_RTF_RESOURCE_LIMIT",
+          "That RTF is too complex to read completely within the safe limit. Upload a smaller supported copy.",
+        );
+      }
+      throw extractionError(
+        503,
+        "UPLOAD_EXTRACTION_RESOURCE_UNAVAILABLE",
+        "TED could not safely finish reading that file right now. Please try again.",
+        true,
+      );
+    }
+    throw error;
+  }
+  // Reuse the existing preview normalization and surrogate-safe text ceiling.
+  // RTF rejects decoded NUL before reaching this compatibility helper.
+  const preview = boundedResult(rawText, "text");
+  const sourceManifest: RtfSourceManifest = Object.freeze({
+    version: RTF_SOURCE_POLICY.version,
+    assessment: "source_only",
+    originalSha256: await sourceSha256(owned, signal, deadline),
+    originalByteLength: owned.byteLength,
+    extractedTextSha256: await sourceSha256(
+      new TextEncoder().encode(preview.text),
+      signal,
+      deadline,
+    ),
+    blockers: Object.freeze([RTF_SOURCE_POLICY.editingBlocker] as const),
+  });
+  assertParserWork(signal, deadline);
+  return Object.freeze({
+    ...preview,
+    format: "rtf",
+    sourceManifest,
+    resourcePolicyVersion: UPLOAD_RESOURCE_POLICY_VERSION_V2,
+  });
 }

@@ -234,7 +234,7 @@ export function renderDocumentIntelligenceContract(
       "ROUTING CONTROL",
       "Recommend the document that best achieves the user's outcome, not merely the document name they used.",
       "Identify outcome, audience, decision, urgency, stakes, supplied evidence and missing vital facts before recommending.",
-      "Ask only one or two useful questions at a time and never turn the flow into a form.",
+      "Ask up to three useful profile-specific questions together when multiple material details are missing. Confirm a knowledge summary before advancing to document creation.",
     );
   }
 

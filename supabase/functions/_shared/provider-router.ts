@@ -13,6 +13,7 @@ import {
   claimUserProviderDispatch,
   completeUserProviderDispatch,
   inspectLegacyModelCheckpointBeforeCapacity,
+  type LegacyCheckpointContextIdentity,
   markLegacyModelAttemptDispatched,
   markOpenAICapacityDispatched,
   ModelCallContextError,
@@ -21,13 +22,33 @@ import {
   prepareLegacyModelAttempt,
   type ProviderDispatchClaim,
   recordLegacyModelAttempt,
+  requireLegacyCheckpointContext,
   releaseOpenAICapacity,
 } from "./model-call-context.ts";
 import {
+  checkpointReceiptFromReplay,
+  type LegacyAuditAdmission,
+  type LegacyCheckpointReceiptIdentity,
   type LegacyModelCheckpoint,
   type LegacyProviderResultEnvelope,
   ModelCallAccountingError,
+  type TerminalModelAttemptReceipt,
 } from "./cost-tracker.ts";
+import { isOpenAICreditExhaustion } from "./openai-credit-exhaustion.ts";
+import {
+  configurationForPolicy,
+  configuredOllama,
+  ollamaPolicy,
+} from "./ollama-configuration.ts";
+import { OllamaError, requestOllama } from "./ollama-transport.ts";
+import type { OllamaCreditFallbackPolicy } from "../../../packages/shared/src/document-operation.ts";
+import {
+  type LegacyAuditSources,
+  type LegacyDocumentAuditBinding,
+  legacyAuditSourceSha256,
+  validateLegacyAuditSources,
+  validateLegacyDocumentAuditBinding,
+} from "./document-audit-binding.ts";
 
 export type { OpenAIRouteSnapshot } from "../../../packages/shared/src/document-operation.ts";
 
@@ -60,6 +81,11 @@ export interface ProviderRequest {
   attemptLifecycle?: ProviderAttemptLifecycle;
   /** Stable caller-owned stage identity for non-captured model accounting. */
   logicalStageKey?: string;
+  /** Internal legacy audit requirement; never sent to a provider or the browser. */
+  readonly requireLegacyCheckpointReceipt?: boolean;
+  /** Internal reviewer commitments; never supplied by browser request bodies. */
+  readonly legacyAuditBinding?: LegacyDocumentAuditBinding;
+  readonly legacyAuditSources?: LegacyAuditSources;
 }
 
 export interface ProviderSource {
@@ -74,15 +100,20 @@ export interface ProviderResponse {
   structured?: Record<string, unknown>;
   inputTokens: number;
   outputTokens: number;
-  _provider: "openai";
+  _provider: "openai" | "ollama";
+  execution?: OllamaCreditFallbackPolicy;
   responseId: string;
   status: string;
   routeSnapshot: OpenAIRouteSnapshot;
   attempts: ProviderAttempt[];
   sources: ProviderSource[];
+  /** Exact durable result identity, not a semantic audit verdict. Present only
+   * when explicitly required by a trusted legacy caller. */
+  readonly legacyCheckpointReceipt?: Extract<TerminalModelAttemptReceipt, { kind: "checkpoint" }>;
 }
 
 export interface ProviderAttempt {
+  execution?: OllamaCreditFallbackPolicy;
   attemptNumber: number;
   startedAt: string;
   completedAt: string;
@@ -95,6 +126,7 @@ export interface ProviderAttempt {
 }
 
 export interface ProviderAttemptPreparation {
+  execution?: OllamaCreditFallbackPolicy;
   attemptNumber: number;
   clientRequestId: string;
   durableAdmissionId?: string;
@@ -123,7 +155,9 @@ export const USER_SAFE_ERROR = {
 };
 
 export class OpenAIAdapterError extends Error {
-  readonly provider = "openai" as const;
+  get provider(): "openai" | "ollama" {
+    return this.code.startsWith("OLLAMA_") ? "ollama" : "openai";
+  }
   attempts: ProviderAttempt[] = [];
 
   constructor(
@@ -262,6 +296,7 @@ function semanticRouteForTask(task: string): OpenAISemanticRoute {
 export function resolveOpenAIRoute(task: string): OpenAIRouteSnapshot {
   assertHostedRouteConfiguration();
   const route = semanticRouteForTask(task);
+  const localFallback = configuredOllama();
   return {
     provider: "openai",
     semanticRoute: route,
@@ -275,6 +310,7 @@ export function resolveOpenAIRoute(task: string): OpenAIRouteSnapshot {
     background: false,
     store: false,
     fallback: null,
+    ...(localFallback ? { creditFallback: ollamaPolicy(localFallback) } : {}),
   };
 }
 
@@ -298,6 +334,7 @@ function effectiveRouteSnapshot(request: ProviderRequest): OpenAIRouteSnapshot {
       ...configured,
       structuredOutputSchemaVersion: schemaVersion,
       allowedTools,
+      ...(allowedTools.length ? { creditFallback: undefined } : {}),
     };
   }
 
@@ -442,6 +479,10 @@ function providerOutcomeIsAmbiguous(error: OpenAIAdapterError): boolean {
   return (
     error.code === "OPENAI_TIMEOUT" ||
     error.code === "OPENAI_NETWORK_ERROR" ||
+    // Permission/dispatch acknowledgement is unresolved in the durable egress
+    // record even when this worker did not reach fetch. Preserve that state in
+    // the attempt ledger and capacity receipt until reconciliation completes.
+    error.code === "OPENAI_PROVIDER_DISPATCH_RECONCILIATION_REQUIRED" ||
     (error.code === "OPENAI_UPSTREAM_ERROR" &&
       (error.status === 408 || error.status >= 500))
   );
@@ -572,6 +613,19 @@ function replayLegacyCheckpoint(
   ) {
     throw new OpenAIAdapterError("OPENAI_CHECKPOINT_MALFORMED", 409, false);
   }
+  if (
+    usage.provider !== undefined && usage.provider !== "openai" &&
+    usage.provider !== "ollama"
+  ) {
+    throw new OpenAIAdapterError("OPENAI_CHECKPOINT_MALFORMED", 409, false);
+  }
+  if (
+    usage.provider === "ollama" && (!routeSnapshot.creditFallback ||
+      usage.model !== routeSnapshot.creditFallback.model ||
+      Number(checkpoint.attempt_number) !== 2)
+  ) {
+    throw new OpenAIAdapterError("OLLAMA_CHECKPOINT_MALFORMED", 409, false);
+  }
   const text = envelope.text;
   if (!text.trim()) {
     throw new OpenAIAdapterError("OPENAI_EMPTY_RESPONSE", 502, false);
@@ -588,7 +642,7 @@ function replayLegacyCheckpoint(
   }
   if (usage.attempt_status === "failed") {
     const retainedCode = String(usage.error_code ?? "");
-    if (!/^OPENAI_[A-Z0-9_]+$/.test(retainedCode)) {
+    if (!/^(OPENAI|OLLAMA)_[A-Z0-9_]+$/.test(retainedCode)) {
       throw new OpenAIAdapterError("OPENAI_CHECKPOINT_MALFORMED", 409, false);
     }
     throw new OpenAIAdapterError(retainedCode, 502, false);
@@ -597,6 +651,9 @@ function replayLegacyCheckpoint(
     throw new OpenAIAdapterError("OPENAI_CHECKPOINT_MALFORMED", 409, false);
   }
   const attempt: ProviderAttempt = {
+    ...(usage.provider === "ollama" && routeSnapshot.creditFallback
+      ? { execution: routeSnapshot.creditFallback }
+      : {}),
     attemptNumber: Number(checkpoint.attempt_number),
     startedAt: String(usage.started_at ?? ""),
     completedAt: String(usage.completed_at ?? ""),
@@ -614,7 +671,10 @@ function replayLegacyCheckpoint(
     structured,
     inputTokens: attempt.inputTokens,
     outputTokens: attempt.outputTokens,
-    _provider: "openai",
+    _provider: usage.provider === "ollama" ? "ollama" : "openai",
+    ...(usage.provider === "ollama" && routeSnapshot.creditFallback
+      ? { execution: routeSnapshot.creditFallback }
+      : {}),
     responseId: attempt.responseId,
     status: "completed",
     routeSnapshot,
@@ -663,7 +723,9 @@ function checkpointBlockError(checkpoint: LegacyModelCheckpoint): Error {
       const providerStatus = String(usage.provider_status ?? "");
       const contract = retainedErrorContract(code, providerStatus);
       return new OpenAIAdapterError(
-        /^OPENAI_[A-Z0-9_]+$/.test(code) ? code : "OPENAI_UNKNOWN_ERROR",
+        /^(OPENAI|OLLAMA)_[A-Z0-9_]+$/.test(code)
+          ? code
+          : "OPENAI_UNKNOWN_ERROR",
         contract.status,
         contract.retryable,
       );
@@ -724,11 +786,14 @@ function retainedErrorContract(
   providerStatus: string,
 ): { status: number; retryable: boolean } {
   const upstream = /^http_([0-9]{3})$/.exec(providerStatus);
+  if (code.startsWith("OLLAMA_")) return { status: 503, retryable: false };
   if (code === "OPENAI_UPSTREAM_ERROR" && upstream) {
     const status = Number(upstream[1]);
     return { status, retryable: isRetryableProviderStatus(status) };
   }
   switch (code) {
+    case "OPENAI_CREDIT_EXHAUSTED":
+      return { status: 429, retryable: false };
     case "OPENAI_KEY_UNAVAILABLE":
       return { status: 503, retryable: false };
     case "OPENAI_ROUTE_BUDGET_EXHAUSTED":
@@ -791,12 +856,143 @@ async function waitForRetry(
 export async function routeRequest(
   request: ProviderRequest,
 ): Promise<ProviderResponse> {
+  const requireCheckpointReceipt = request.requireLegacyCheckpointReceipt === true;
+  const auditRequested = request.legacyAuditBinding !== undefined || request.legacyAuditSources !== undefined;
+  let legacyAuditBinding: LegacyDocumentAuditBinding | undefined;
+  let legacyAuditSources: LegacyAuditSources | undefined;
+  if (auditRequested) {
+    if (!requireCheckpointReceipt) throw new OpenAIAdapterError("OPENAI_AUDIT_BINDING_INVALID", 500, false);
+    try {
+      legacyAuditBinding = validateLegacyDocumentAuditBinding(request.legacyAuditBinding, request.logicalStageKey);
+      legacyAuditSources = validateLegacyAuditSources(request.legacyAuditSources);
+    } catch (error) {
+      if (error instanceof Error && [
+        "DOCUMENT_AUDIT_BINDING_INVALID", "DOCUMENT_AUDIT_TEXT_INVALID", "DOCUMENT_AUDIT_SOURCE_INVALID",
+      ].includes(error.message)) throw new OpenAIAdapterError("OPENAI_AUDIT_BINDING_INVALID", 500, false);
+      throw error;
+    }
+  }
+  if (requireCheckpointReceipt) {
+    if (request.attemptLifecycle) {
+      throw new OpenAIAdapterError("OPENAI_CHECKPOINT_LIFECYCLE_CONFLICT", 500, false);
+    }
+    if (!request.outputSchema && !request.requireJson) {
+      throw new OpenAIAdapterError("OPENAI_CHECKPOINT_OUTPUT_CONTRACT_REQUIRED", 500, false);
+    }
+    // Own every nested provider input used after the first await. A caller
+    // cannot change the schema sent over the wire, the accepted route, or
+    // Ollama's messages after the checkpoint request hash has been captured.
+    // Keep the original signal so cancellation remains observable throughout.
+    request = {
+      ...request,
+      messages: structuredClone(request.messages),
+      ...(request.outputSchema ? { outputSchema: structuredClone(request.outputSchema) } : {}),
+      ...(request.routeSnapshot ? { routeSnapshot: structuredClone(request.routeSnapshot) } : {}),
+      ...(request.metadata ? { metadata: { ...request.metadata } } : {}),
+      ...(legacyAuditBinding && legacyAuditSources ? { legacyAuditBinding, legacyAuditSources } : {}),
+    };
+  }
+  if (legacyAuditBinding && (!request.outputSchema ||
+    request.outputSchema.name !== legacyAuditBinding.output_schema_name ||
+    request.outputSchema.version !== legacyAuditBinding.output_schema_version ||
+    request.logicalStageKey !== `generate-document.${legacyAuditBinding.review_kind}:round-${legacyAuditBinding.round}`)) {
+    throw new OpenAIAdapterError("OPENAI_AUDIT_BINDING_INVALID", 500, false);
+  }
+  const readRequiredContext = (
+    expected?: LegacyCheckpointContextIdentity,
+  ): LegacyCheckpointContextIdentity => {
+    try {
+      return requireLegacyCheckpointContext(request.signal, expected);
+    } catch (error) {
+      if (error instanceof ModelCallContextError) {
+        throw new OpenAIAdapterError(error.code, 500, false);
+      }
+      throw error;
+    }
+  };
+  const checkpointContext = requireCheckpointReceipt ? readRequiredContext() : undefined;
+  if (legacyAuditBinding && checkpointContext?.checkpointScope !== "generate-document") {
+    throw new OpenAIAdapterError("OPENAI_AUDIT_BINDING_INVALID", 500, false);
+  }
+  const assertCheckpointContext = () => {
+    if (checkpointContext) readRequiredContext(checkpointContext);
+  };
+  if (requireCheckpointReceipt && request.signal?.aborted) throw abortError();
+  if (legacyAuditBinding && legacyAuditSources &&
+    await legacyAuditSourceSha256(legacyAuditSources) !== legacyAuditBinding.source_sha256) {
+    throw new OpenAIAdapterError("OPENAI_AUDIT_BINDING_INVALID", 500, false);
+  }
+  assertCheckpointContext();
+  if (requireCheckpointReceipt && request.signal?.aborted) throw abortError();
   // Resolve and validate the complete hosted routing contract before checking
   // credentials or preparing a provider request. An immutable accepted route
   // cannot be used to bypass an incomplete hosted activation configuration.
   const routeSnapshot = effectiveRouteSnapshot(request);
   const body = buildOpenAIRequestBody(request);
-  const requestSha256 = await sha256Json(body);
+  const requestSha256 = await sha256Json(
+    routeSnapshot.creditFallback
+      ? { request: body, creditFallback: routeSnapshot.creditFallback }
+      : body,
+  );
+  assertCheckpointContext();
+  if (requireCheckpointReceipt && request.signal?.aborted) throw abortError();
+  let receiptIdentity: LegacyCheckpointReceiptIdentity | undefined;
+  if (checkpointContext) {
+    if (!request.logicalStageKey || !/^[a-z0-9][a-z0-9._:-]{0,159}$/.test(request.logicalStageKey)) {
+      throw new OpenAIAdapterError("MODEL_CALL_STAGE_INVALID", 500, false);
+    }
+    receiptIdentity = Object.freeze({
+      ...checkpointContext, logicalStageKey: request.logicalStageKey, requestSha256,
+    });
+  }
+  const checkedReceipt = (
+    receipt: TerminalModelAttemptReceipt | undefined,
+    response: ProviderResponse,
+  ): Extract<TerminalModelAttemptReceipt, { kind: "checkpoint" }> => {
+    const attempt = response.attempts.at(-1);
+    if (
+      !receiptIdentity || !receipt || receipt.kind !== "checkpoint" ||
+      receipt.userId !== receiptIdentity.userId ||
+      receipt.logicalRequestId !== receiptIdentity.logicalRequestId ||
+      receipt.checkpointScope !== receiptIdentity.checkpointScope ||
+      receipt.authorityReservationId !== receiptIdentity.authorityReservationId ||
+      receipt.logicalStageKey !== receiptIdentity.logicalStageKey ||
+      receipt.requestSha256 !== receiptIdentity.requestSha256 ||
+      receipt.attemptStatus !== "succeeded" || receipt.providerStatus !== "completed" ||
+      receipt.errorCode !== null || receipt.provider !== response._provider ||
+      receipt.providerResponseId !== response.responseId ||
+      receipt.attemptNumber !== attempt?.attemptNumber ||
+      (legacyAuditBinding !== undefined && (typeof receipt.legacyAuditBindingSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(receipt.legacyAuditBindingSha256))) ||
+      !response.structured
+    ) {
+      throw new OpenAIAdapterError("OPENAI_CHECKPOINT_RECEIPT_INVALID", 503, false);
+    }
+    return receipt;
+  };
+  const replayWithRequiredReceipt = async (
+    checkpoint: LegacyModelCheckpoint,
+  ): Promise<ProviderResponse> => {
+    assertCheckpointContext();
+    if (!receiptIdentity) {
+      throw new OpenAIAdapterError("OPENAI_CHECKPOINT_RECEIPT_INVALID", 503, false);
+    }
+    // The text and the receipt factory inspect the same captured DB response.
+    const snapshot = structuredClone(checkpoint);
+    const response = replayLegacyCheckpoint(snapshot, request, routeSnapshot);
+    let receipt: TerminalModelAttemptReceipt;
+    try {
+      receipt = await checkpointReceiptFromReplay(snapshot, receiptIdentity, legacyAuditBinding);
+    } catch (error) {
+      if (error instanceof ModelCallAccountingError) {
+        throw new OpenAIAdapterError(error.code.replace("MODEL_CALL_", "OPENAI_"), 409, false);
+      }
+      throw error;
+    }
+    assertCheckpointContext();
+    return { ...response, legacyCheckpointReceipt: checkedReceipt(receipt, response) };
+  };
+  let usingOllama = false;
   let lastError: OpenAIAdapterError | undefined;
   const attempts: ProviderAttempt[] = [];
   // timeoutMs is the accepted budget for the complete route, not a fresh
@@ -813,8 +1009,11 @@ export async function routeRequest(
           logicalStageKey: request.logicalStageKey,
           requestSha256,
           maxAttempts: routeSnapshot.maxAttempts,
+          allowCreditFallback: !!routeSnapshot.creditFallback,
+          ...(legacyAuditBinding && legacyAuditSources ? { legacyAuditBinding, legacyAuditSources } : {}),
         },
       );
+      assertCheckpointContext();
     } catch (error) {
       if (error instanceof ModelCallContextError) {
         throw new OpenAIAdapterError(error.code, 500, false);
@@ -828,7 +1027,17 @@ export async function routeRequest(
       }
       throw error;
     }
+    if (requireCheckpointReceipt && request.signal?.aborted) throw abortError();
+    usingOllama = checkpoint?.fallback_required === true;
+    if (usingOllama && !routeSnapshot.creditFallback) {
+      throw new OpenAIAdapterError("OLLAMA_CHECKPOINT_MALFORMED", 409, false);
+    }
     if (checkpoint?.state === "replay") {
+      if (requireCheckpointReceipt) {
+        const response = await replayWithRequiredReceipt(checkpoint);
+        if (request.signal?.aborted) throw abortError();
+        return response;
+      }
       return replayLegacyCheckpoint(checkpoint, request, routeSnapshot);
     }
     if (
@@ -948,7 +1157,11 @@ export async function routeRequest(
       }
     };
     try {
+      assertCheckpointContext();
+      if (requireCheckpointReceipt && request.signal?.aborted) throw abortError();
       let prepared: ProviderAttemptPreparation;
+      let auditAdmission: LegacyAuditAdmission | undefined;
+      let execution: OllamaCreditFallbackPolicy | undefined;
       try {
         if (request.attemptLifecycle) {
           prepared = await request.attemptLifecycle.prepare({
@@ -963,9 +1176,22 @@ export async function routeRequest(
             requestSha256,
             attemptNumber: localAttemptNumber,
             maxAttempts: routeSnapshot.maxAttempts,
+            allowCreditFallback: !!routeSnapshot.creditFallback,
+            ...(checkpointContext ? { expectedCheckpointContext: checkpointContext } : {}),
+            ...(legacyAuditBinding && legacyAuditSources ? { legacyAuditBinding, legacyAuditSources } : {}),
           });
+          assertCheckpointContext();
           if (legacy.checkpoint?.state === "replay") {
             capacityOutcome = "completed";
+            if (requireCheckpointReceipt) {
+              const response = await replayWithRequiredReceipt(legacy.checkpoint);
+              // The finally block must not run after the last cancellation
+              // fence: releasing capacity can itself be an async interruption.
+              await releaseCapacity();
+              assertCheckpointContext();
+              if (request.signal?.aborted) throw abortError();
+              return response;
+            }
             return replayLegacyCheckpoint(
               legacy.checkpoint,
               request,
@@ -975,10 +1201,22 @@ export async function routeRequest(
           if (legacy.checkpoint && legacy.checkpoint.state !== "prepared") {
             throw checkpointBlockError(legacy.checkpoint);
           }
+          if (legacyAuditBinding) {
+            if (!legacy.durableAdmissionId || typeof legacy.legacyAuditBindingSha256 !== "string" ||
+              !/^[a-f0-9]{64}$/.test(legacy.legacyAuditBindingSha256)) {
+              throw new OpenAIAdapterError("OPENAI_AUDIT_CHECKPOINT_MALFORMED", 500, false);
+            }
+            auditAdmission = Object.freeze({
+              admissionId: legacy.durableAdmissionId, bindingSha256: legacy.legacyAuditBindingSha256,
+            });
+          }
           prepared = {
             attemptNumber: legacy.attemptNumber,
             clientRequestId: legacy.clientRequestId,
             durableAdmissionId: legacy.durableAdmissionId,
+            ...(legacy.checkpoint?.fallback_required === true
+              ? { execution: routeSnapshot.creditFallback }
+              : {}),
           };
         }
       } catch (error) {
@@ -1017,6 +1255,29 @@ export async function routeRequest(
         throw new OpenAIAdapterError(
           "OPENAI_ATTEMPT_PREPARATION_INVALID",
           500,
+          false,
+        );
+      }
+      if (prepared.execution) {
+        if (
+          prepared.attemptNumber !== 2 ||
+          !routeSnapshot.creditFallback ||
+          JSON.stringify(canonicalJson(prepared.execution)) !==
+            JSON.stringify(canonicalJson(routeSnapshot.creditFallback))
+        ) {
+          throw new OpenAIAdapterError(
+            "OLLAMA_ATTEMPT_POLICY_MISMATCH",
+            409,
+            false,
+          );
+        }
+        usingOllama = true;
+        execution = prepared.execution;
+      }
+      if (usingOllama && !execution) {
+        throw new OpenAIAdapterError(
+          "OLLAMA_DURABLE_ADMISSION_REQUIRED",
+          503,
           false,
         );
       }
@@ -1073,7 +1334,7 @@ export async function routeRequest(
         // are temporarily unavailable. Resolve the key only after replay/block
         // decisions, immediately before the first network dispatch.
         const apiKey = env("OPENAI_API_KEY");
-        if (!apiKey) {
+        if (!usingOllama && !apiKey) {
           throw new OpenAIAdapterError("OPENAI_KEY_UNAVAILABLE", 503, false);
         }
         // Convert the conservative in-flight reservation into one durable
@@ -1096,27 +1357,61 @@ export async function routeRequest(
         // or billed nothing. Treat it as an ambiguous provider outcome unless an
         // explicit upstream cancellation acknowledgement is later available.
         providerDispatched = true;
-        const response = await fetch(OPENAI_RESPONSES_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            ...(prepared.clientRequestId
-              ? { "X-Client-Request-Id": prepared.clientRequestId }
-              : {}),
-          },
-          body: JSON.stringify(body),
-          signal: attemptController.signal,
-        });
+        let data: Record<string, unknown>;
+        if (execution) {
+          const local = await requestOllama(configurationForPolicy(execution), {
+            systemPrompt: request.systemPrompt,
+            messages: request.messages,
+            maxOutputTokens: maxOutputTokens(request.maxTokens),
+            reasoningEffort: routeSnapshot.reasoningEffort,
+            schema: request.outputSchema?.schema,
+            requireJson: request.requireJson,
+            allowedTools: routeSnapshot.allowedTools,
+            attemptId: prepared.durableAdmissionId ?? prepared.clientRequestId,
+            signal: attemptController.signal,
+            timeoutMs: Math.max(
+              1,
+              Math.ceil(routeDeadline - performance.now()),
+            ),
+          }, env("PROMPTED_DEPLOYMENT_ENV") ?? "");
+          data = {
+            id: local.responseId,
+            status: "completed",
+            output_text: local.text,
+            usage: {
+              input_tokens: local.inputTokens,
+              output_tokens: local.outputTokens,
+            },
+          };
+        } else {
+          const response = await fetch(OPENAI_RESPONSES_URL, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+              ...(prepared.clientRequestId
+                ? { "X-Client-Request-Id": prepared.clientRequestId }
+                : {}),
+            },
+            body: JSON.stringify(body),
+            signal: attemptController.signal,
+          });
 
-        if (!response.ok) {
-          providerStatus = `http_${response.status}`;
-          const retryAfter = response.headers.get("Retry-After");
-          await response.body?.cancel().catch(() => undefined);
-          throw responseError(response.status, retryAfter);
+          if (!response.ok) {
+            providerStatus = `http_${response.status}`;
+            const retryAfter = response.headers.get("Retry-After");
+            if (await isOpenAICreditExhaustion(response)) {
+              throw new OpenAIAdapterError(
+                "OPENAI_CREDIT_EXHAUSTED",
+                429,
+                false,
+              );
+            }
+            throw responseError(response.status, retryAfter);
+          }
+
+          data = (await response.json()) as Record<string, unknown>;
         }
-
-        const data = (await response.json()) as Record<string, unknown>;
         responseId = typeof data.id === "string" ? data.id : "";
         inputTokens = tokenCount(data, "input_tokens");
         outputTokens = tokenCount(data, "output_tokens");
@@ -1154,7 +1449,25 @@ export async function routeRequest(
           sources,
         };
       } catch (error) {
-        if (request.signal?.aborted && !providerDispatched) {
+        if (error instanceof OllamaError) {
+          providerDispatched = error.dispatched;
+          reconciliationRequired = error.reconciliationRequired;
+          if (error.usage) {
+            inputTokens = error.usage.inputTokens;
+            outputTokens = error.usage.outputTokens;
+            responseId = error.usage.responseId;
+            providerStatus = "completed_rejected";
+          }
+          if (reconciliationRequired) providerStatus = "ambiguous";
+        }
+        const dispatchAcknowledgementUnresolved =
+          error instanceof ModelCallContextError &&
+          (error.code.includes("RECONCILIATION_REQUIRED") ||
+            error.code.includes("ACK_UNRESOLVED"));
+        if (
+          request.signal?.aborted && !providerDispatched &&
+          !dispatchAcknowledgementUnresolved && !reconciliationRequired
+        ) {
           cancelled = true;
           providerStatus = "cancelled";
           failure = new OpenAIAdapterError("OPENAI_CANCELLED", 499, false);
@@ -1170,6 +1483,14 @@ export async function routeRequest(
               error.code === "MODEL_CALL_ACCOUNT_DELETION_FENCED" ? 409 : 503,
               false,
             )
+            : error instanceof OllamaError
+            ? new OpenAIAdapterError(
+              error.reconciliationRequired
+                ? "OLLAMA_PROVIDER_RECONCILIATION_REQUIRED"
+                : error.code,
+              503,
+              false,
+            )
             : timedOut
             ? new OpenAIAdapterError("OPENAI_TIMEOUT", 504, true)
             : error instanceof OpenAIAdapterError
@@ -1183,7 +1504,9 @@ export async function routeRequest(
             reconciliationRequired = true;
             providerStatus = "ambiguous";
             failure = new OpenAIAdapterError(
-              "OPENAI_PROVIDER_RECONCILIATION_REQUIRED",
+              execution
+                ? "OLLAMA_PROVIDER_RECONCILIATION_REQUIRED"
+                : "OPENAI_PROVIDER_RECONCILIATION_REQUIRED",
               502,
               false,
             );
@@ -1197,6 +1520,7 @@ export async function routeRequest(
       }
 
       const attemptResult: ProviderAttempt = {
+        ...(execution ? { execution } : {}),
         attemptNumber,
         startedAt,
         completedAt: new Date().toISOString(),
@@ -1209,6 +1533,7 @@ export async function routeRequest(
       };
       capacityAttemptResult = attemptResult;
       let terminalPersistenceError: unknown = null;
+      let terminalReceipt: TerminalModelAttemptReceipt | undefined;
       try {
         if (request.attemptLifecycle) {
           await request.attemptLifecycle.complete({
@@ -1218,7 +1543,8 @@ export async function routeRequest(
             structuredOutput: completed?.structured ?? null,
           });
         } else {
-          await recordLegacyModelAttempt(request.signal, {
+          assertCheckpointContext();
+          terminalReceipt = await recordLegacyModelAttempt(request.signal, {
             logicalStageKey: request.logicalStageKey!,
             requestSha256,
             providerAttemptId: prepared.durableAdmissionId ??
@@ -1236,11 +1562,16 @@ export async function routeRequest(
             outputTokens,
             startedAt,
             completedAt: attemptResult.completedAt,
-            model: routeSnapshot.model,
+            model: execution?.model ?? routeSnapshot.model,
+            provider: execution ? "ollama" : "openai",
+            allowCreditFallback: !!routeSnapshot.creditFallback,
             routingVersion: routeSnapshot.routingVersion,
             semanticRoute: routeSnapshot.semanticRoute,
             reasoningEffort: routeSnapshot.reasoningEffort,
             resultEnvelope,
+            ...(legacyAuditBinding && legacyAuditSources ? {
+              legacyAuditBinding, legacyAuditSources, legacyAuditAdmission: auditAdmission,
+            } : {}),
           });
         }
       } catch (error) {
@@ -1271,13 +1602,17 @@ export async function routeRequest(
         const accountingReconciliation =
           terminalPersistenceError instanceof ModelCallAccountingError &&
           terminalPersistenceError.code === "MODEL_CALL_ATTEMPT_ACK_UNRESOLVED";
+        const auditConflict = terminalPersistenceError instanceof ModelCallAccountingError &&
+          terminalPersistenceError.code === "MODEL_CALL_AUDIT_CHECKPOINT_CONFLICT";
         const terminalError = new OpenAIAdapterError(
           request.attemptLifecycle
             ? "OPENAI_ATTEMPT_LIFECYCLE_FAILED"
             : accountingReconciliation
             ? "OPENAI_MODEL_CALL_RECONCILIATION_REQUIRED"
+            : auditConflict
+            ? "OPENAI_AUDIT_CHECKPOINT_CONFLICT"
             : "OPENAI_MODEL_CALL_METERING_FAILED",
-          request.attemptLifecycle || accountingReconciliation ? 503 : 500,
+          request.attemptLifecycle || accountingReconciliation ? 503 : auditConflict ? 409 : 500,
           false,
         );
         terminalError.attempts = [...attempts, attemptResult];
@@ -1286,7 +1621,8 @@ export async function routeRequest(
       if (providerDispatchCompletionError) {
         const dispatchError = new OpenAIAdapterError(
           providerDispatchCompletionError instanceof ModelCallContextError &&
-            providerDispatchCompletionError.code.includes("RECONCILIATION")
+            (providerDispatchCompletionError.code.includes("RECONCILIATION") ||
+              providerDispatchCompletionError.code.includes("ACK_UNRESOLVED"))
             ? "OPENAI_PROVIDER_DISPATCH_RECONCILIATION_REQUIRED"
             : "OPENAI_PROVIDER_DISPATCH_COMPLETION_FAILED",
           503,
@@ -1298,18 +1634,28 @@ export async function routeRequest(
       attempts.push(attemptResult);
 
       if (completed) {
-        return {
+        const response: ProviderResponse = {
           text: completed.text,
           structured: completed.structured,
           inputTokens,
           outputTokens,
-          _provider: "openai",
+          _provider: execution ? "ollama" : "openai",
+          ...(execution ? { execution } : {}),
           responseId,
           status: completed.status,
           routeSnapshot,
           attempts,
           sources: completed.sources,
         };
+        if (requireCheckpointReceipt) {
+          // A settled provider result remains durable if observation ends,
+          // but no audit evidence may escape after cancellation or a trusted
+          // context change. Earlier ACK uncertainty takes precedence above.
+          assertCheckpointContext();
+          if (request.signal?.aborted) throw abortError();
+          return { ...response, legacyCheckpointReceipt: checkedReceipt(terminalReceipt, response) };
+        }
+        return response;
       }
 
       if (cancelled) {
@@ -1324,13 +1670,21 @@ export async function routeRequest(
         new OpenAIAdapterError("OPENAI_UNKNOWN_ERROR", 500, false);
       normalized.attempts = [...attempts];
       lastError = normalized;
-      console.error("OpenAI Responses attempt failed", {
+      console.error("Provider attempt failed", {
+        provider: execution ? "ollama" : "openai",
         task: request.task,
         route: routeSnapshot.semanticRoute,
         status: normalized.status,
         code: normalized.code,
         attempt: attemptNumber,
       });
+      if (
+        normalized.code === "OPENAI_CREDIT_EXHAUSTED" && !execution &&
+        routeSnapshot.creditFallback && attempt + 1 < routeSnapshot.maxAttempts
+      ) {
+        usingOllama = true;
+        continue;
+      }
       if (attempt + 1 < routeSnapshot.maxAttempts && normalized.retryable) {
         try {
           await waitForRetry(

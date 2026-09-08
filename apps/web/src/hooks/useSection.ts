@@ -11,8 +11,13 @@ import type { Section, SectionVersion } from "@prompted/shared/browser";
 
 type SetSections = (next: Section[] | ((prev: Section[]) => Section[])) => void;
 
+export interface ContentEditOptions {
+  /** Continue an already snapshotted local typing burst. Other edits record history. */
+  recordHistory?: boolean;
+}
+
 export interface UseSection {
-  editContent: (id: string, content: string) => void;
+  editContent: (id: string, content: string, options?: ContentEditOptions) => void;
   approve: (id: string) => void;
   unapprove: (id: string) => void;
   toggleLock: (id: string) => void;
@@ -20,8 +25,8 @@ export interface UseSection {
 
 /**
  * useSection — content + status mutations, applied optimistically through the
- * pure helpers in @prompted/shared. Every user edit snapshots the prior text
- * with a visible provenance label so history is understandable, not opaque.
+ * pure helpers in @prompted/shared. Edits snapshot the prior text with a visible
+ * provenance label; continued typing can reuse its burst's initial snapshot.
  */
 export function useSection(setSections: SetSections): UseSection {
   const mutate = useCallback(
@@ -34,18 +39,21 @@ export function useSection(setSections: SetSections): UseSection {
   );
 
   const editContent = useCallback(
-    (id: string, content: string) => {
+    (id: string, content: string, options?: ContentEditOptions) => {
+      const savedAt = new Date().toISOString();
       setSections((previous) =>
         previous.map((section) => {
-          if (section.id !== id || section.content === content) return section;
+          if (section.id !== id) return section;
+          const edited = applyContentEdit(section, content);
+          if (edited === section || options?.recordHistory === false) return edited;
           const snapshot: SectionVersion = {
             content: section.content,
-            saved_at: new Date().toISOString(),
+            saved_at: savedAt,
             label: "Before your edit",
             origin: "user_edit",
           };
           return {
-            ...applyContentEdit(section, content),
+            ...edited,
             version_history: [...section.version_history, snapshot],
           };
         }),

@@ -7,6 +7,8 @@
 
 import {
   type DocumentIntelligenceProfile,
+  DIPS,
+  DOCUMENT_PROFILE_SELECTOR_VERSION,
   renderProfile,
   selectProfile,
 } from "./document-intelligence-profiles.ts";
@@ -49,6 +51,14 @@ Never say "As an AI language model" or similar. You are TED.`.trim();
 
 const QUESTION_OPTIONS_RULE =
   `Selectable answers: when — and ONLY when — your question has a genuinely small, enumerable set of likely answers that would cover what almost anyone would say (e.g. "Is this a rental or a property you own?", "Full-time, part-time or casual?", a yes/no question), set "question_options" to those 3-4 answers as short plain-language phrases the user could tap instead of typing. Leave "question_options" null for any open-ended question — a name, a date, an amount, free-text detail, or anything where a real answer could reasonably fall outside a short fixed list. Never force-fit an open question into options, and never include "Other" as an option — the free-text box is always available alongside the choices.`;
+
+const PROFILE_CLARIFICATION_RULE = `PROFILE-DRIVEN CLARIFICATION AND KNOWLEDGE REVIEW
+Use the selected Enhanced Document Intelligence Profile and its section information contracts as the requirements for this document. Check requiredInformation, highValueInformation, section facts, evidence requirements, lengthAndDepth, intent relevance and risk checks against the situation, conversation and uploaded sources.
+When several material details are missing, ask two or three focused questions together, up to three questions per turn. Put a numbered question on each line of "question" and set "question_options" to null for a batch. Explain briefly which document section or decision the answers will improve. Ask one question when only one material detail is missing; do not manufacture questions or demand optional details already safely omitted.
+Continue across as many turns as the unresolved requirements need. A question count is never evidence of sufficient knowledge. Reuse previous answers; resolve contradictions and distinguish source facts from assumptions. Never infer personal facts to fill a gap. For an unavailable fact, explain the profile-approved omission, neutral fallback or placeholder and its consequence; an unresolved blocking requirement keeps intent_clear false.
+When the document requirements are sufficiently understood, return a proposed recommendation and a "knowledge_summary" for user review. This does not authorise generation: the application must obtain explicit user confirmation first.
+The knowledge summary must identify: the proposed document and intended outcome; audience and use; concrete supplied facts with their source (user answer or named upload); important dates, names, figures and constraints where relevant; the section-specific detail, evidence, depth and context required by the selected profile; and unresolved facts with their explicit proposed treatment. Use readable short paragraphs or bullets, not internal field identifiers. Never turn your assumptions or a prior TED summary into user-confirmed facts. Apply the user's latest corrections over earlier statements.
+Set "knowledge_summary" to null while asking factual questions. Set it to a complete nonempty brief when returning a recommendation. If no matching profile is resolved, clarify the document type instead of guessing its required facts.`;
 
 // The ground-truth list of catalogue names the model is allowed to choose
 // from. Without this, "canonical catalogue name" was an unverifiable
@@ -192,9 +202,40 @@ function isBusinessProposalHint(hint: string): boolean {
 
 function selectSupplementalProfile(
   hint: string,
+  proposal: DocumentIntelligenceProfile = BUSINESS_PROPOSAL_PROFILE,
 ): DocumentIntelligenceProfile | null {
-  if (isBusinessProposalHint(hint)) return BUSINESS_PROPOSAL_PROFILE;
+  if (isBusinessProposalHint(hint)) return proposal;
   return null;
+}
+
+/** Bump when prompt-profile precedence or supplemental selection changes. */
+export const PROMPT_PROFILE_SELECTOR_VERSION = "prompt-profile-selection.1";
+
+export interface PromptProfileSelectionContext {
+  readonly version: typeof PROMPT_PROFILE_SELECTOR_VERSION;
+  readonly profileSelectorVersion: typeof DOCUMENT_PROFILE_SELECTOR_VERSION;
+  readonly profiles: readonly DocumentIntelligenceProfile[];
+  readonly supplementalBusinessProposal: DocumentIntelligenceProfile;
+}
+
+/** Per-request server-owned copy of the existing selection inputs. Only its
+ * digest enters the existing allowance record; it is not another registry or
+ * persistence path. Never construct this context from a request body. */
+export function capturePromptProfileSelectionContext(): PromptProfileSelectionContext {
+  const context: PromptProfileSelectionContext = {
+    version: PROMPT_PROFILE_SELECTOR_VERSION,
+    profileSelectorVersion: DOCUMENT_PROFILE_SELECTOR_VERSION,
+    profiles: structuredClone(DIPS),
+    supplementalBusinessProposal: structuredClone(BUSINESS_PROPOSAL_PROFILE),
+  };
+  function freeze(value: unknown): void {
+    if (value && typeof value === "object") {
+      for (const nested of Object.values(value)) freeze(nested);
+      Object.freeze(value);
+    }
+  }
+  freeze(context);
+  return context;
 }
 
 function clariInstruction(clari?: ClariPrefs): string {
@@ -234,9 +275,9 @@ const TASK_INSTRUCTIONS: Record<string, string> = {
 
 ${CANONICAL_DOCUMENT_RULE}
 
-On this first turn, you MUST ask exactly ONE warm, natural clarification or factual-confirmation question. Do not return a recommendation on this first turn and set "intent_clear" to false.
+${PROFILE_CLARIFICATION_RULE}
 
-Use the resolved document intelligence profile when one is available. Ask for its highest-impact unresolved factual requirement that could materially affect a section's correctness, safety or usefulness. If the user's prompt, upload and memory already contain every material fact, briefly restate the relevant facts you understood and ask the user to confirm or correct your factual understanding before you continue. Never use this mandatory turn to ask about tone, layout or another choice TED can make competently.
+On this first turn, ask the unresolved profile questions and keep "intent_clear" false and "recommendation" null. If the supplied information already covers the requirements, return the proposed recommendation and knowledge summary for the application's explicit confirmation checkpoint. Never ask the user to repeat facts just to satisfy a minimum turn count.
 
 Use educated professional judgement. Infer the user's likely audience, suitable tone, document structure, level of formality, ordering and useful next steps from their goal and context. These are safe, reversible professional choices, not claims about the user. Do not ask the user to choose things TED can decide competently.
 
@@ -248,13 +289,13 @@ Use uploaded document text and persisted memory as active context.
 
 Job-search signal: set "job_search" to true ONLY when the user's LATEST message explicitly asks to find live job openings right now (e.g. "find me jobs near me", "show me current openings", "help me search for work"). It is false when the user merely mentions work, a role, an employer, a location, or a career topic; false when they are asking for a document, plan or advice about a job they already have or are applying for; and always false when they say they already have a job or are not looking. When unsure, set it to false and ask or recommend as normal.
 
-Respond in JSON: { "domain": "...", "situation": "...", "confidence": 0.0, "intent_clear": true/false, "question": "..." | null, "question_options": ["..."] | null, "recommendation": { ... } | null, "job_search": true/false, "missing_information": ["..."] }`,
+Respond in JSON: { "domain": "...", "situation": "...", "confidence": 0.0, "intent_clear": true/false, "question": "..." | null, "question_options": ["..."] | null, "recommendation": { ... } | null, "job_search": true/false, "missing_information": ["..."], "knowledge_summary": "..." | null }`,
 
   clarify: `Your task: continue TED's warm, adaptive clarification conversation.
 
 ${CANONICAL_DOCUMENT_RULE}
 
-Ask exactly ONE useful question only when a missing fact could materially change the output or make it unsafe or unusable. As soon as the goal and critical facts are clear, stop asking and recommend.
+${PROFILE_CLARIFICATION_RULE}
 
 Each question must respond naturally to the user's last answer. Acknowledge what they have told you, avoid sounding clinical or interrogative, and make it feel as though TED is working alongside them to complete the document. Never repeat yourself, ask for facts already contained in messages, uploads, profile or memory, or turn the conversation into a questionnaire.
 
@@ -264,13 +305,13 @@ Never invent identity, exact dates, figures, credentials, past events, legal sta
 
 ${QUESTION_OPTIONS_RULE}
 
-When enough critical information is available, stop asking questions and produce the recommendation.
+When the profile requirements are satisfied or an explicit permitted treatment for unavailable information is explained, prepare the knowledge summary and proposed recommendation for confirmation.
 
 Job-search signal: set "job_search" to true ONLY when the user's LATEST answer explicitly asks to find live job openings right now (e.g. "find me jobs near me", "show me current openings"). It is false when they merely mention work, a role, a location or a career topic; and always false when they say they already have a job or are not looking. When unsure, set it to false and continue as normal.
 
-If you are committing to a recommendation without having asked about every fact you would ideally want (for example because you were told to stop asking questions), list what is still missing in "missing_information" as plain-language items — never invent those facts, never leave the field silently empty by omission.
+List remaining gaps in "missing_information" as plain-language items. If any gap blocks safe document preparation under the selected profile, continue clarification instead of returning a recommendation.
 
-Respond in JSON: { "intent_clear": true/false, "question": "..." | null, "question_options": ["..."] | null, "recommendation": { ... } | null, "job_search": true/false, "missing_information": ["..."] }`,
+Respond in JSON: { "intent_clear": true/false, "question": "..." | null, "question_options": ["..."] | null, "recommendation": { ... } | null, "job_search": true/false, "missing_information": ["..."], "knowledge_summary": "..." | null }`,
 
   recommend: `Your task: produce a recommendation for the user's situation.
 
@@ -349,6 +390,10 @@ export interface PromptOptions {
   adviceBoundary?: AdviceBoundary;
   extra?: string;
   profileHint?: string;
+  /** Server-resolved generation snapshot; undefined preserves legacy selection. */
+  resolvedProfile?: DocumentIntelligenceProfile | null;
+  /** Internal pre-provider candidate snapshot for bespoke generation. */
+  profileSelection?: PromptProfileSelectionContext;
 }
 
 export function buildSystemPrompt(opts: PromptOptions): string {
@@ -371,8 +416,15 @@ export function buildSystemPrompt(opts: PromptOptions): string {
 
     const hint = [opts.profileHint, opts.extra, opts.domain].filter(Boolean)
       .join(" ");
-    const profile = selectSupplementalProfile(hint) ??
-      selectProfile(hint, opts.domain);
+    const explicitHint = opts.profileHint?.trim().toLowerCase();
+    const candidates = opts.profileSelection?.profiles ?? DIPS;
+    const proposal = opts.profileSelection?.supplementalBusinessProposal ?? BUSINESS_PROPOSAL_PROFILE;
+    const exactProfile = candidates.find((profile) => profile.key.toLowerCase() === explicitHint || profile.label.toLowerCase() === explicitHint);
+    const profile = opts.resolvedProfile !== undefined
+      ? opts.resolvedProfile
+      : exactProfile ?? selectSupplementalProfile(opts.profileHint ?? "", proposal) ??
+        selectProfile(opts.profileHint ?? "", undefined, candidates) ??
+        selectSupplementalProfile(hint, proposal) ?? selectProfile(hint, opts.domain, candidates);
     if (profile) parts.push(renderProfile(profile, opts.task));
   }
 

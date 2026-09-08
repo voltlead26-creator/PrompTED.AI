@@ -1,4 +1,5 @@
 // deno-lint-ignore-file no-import-prefix no-unversioned-import
+import { isOllamaCreditFallbackPolicy, type OllamaCreditFallbackPolicy } from "../../../packages/shared/src/document-operation.ts";
 import { decodeBase64 } from "jsr:@std/encoding/base64";
 import type { AuthContext } from "../_shared/auth-guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
@@ -11,14 +12,24 @@ import {
 import {
   MAX_EXTRACTED_TEXT_CHARS,
   MAX_UPLOAD_BYTES,
+  type ReadableUploadExtractionContractVersion,
+  UPLOAD_EXTRACTION_CONTRACT_V1,
+  UPLOAD_EXTRACTION_CONTRACT_V2,
+  UPLOAD_EXTRACTION_CONTRACT_V3,
   UPLOAD_RESOURCE_POLICY_VERSION,
 } from "../_shared/upload-extraction-contract.ts";
 import {
+  type IsolatedSourceUploadExtractionInput,
+  type IsolatedSourceUploadExtractionInputV3,
+  type IsolatedSourceUploadExtractionResult,
+  type IsolatedSourceUploadExtractionResultV3,
   IsolatedUploadExtractionError,
   type IsolatedUploadExtractionInput,
   type IsolatedUploadExtractionResult,
+  normalizeSourceExtractionResponseV3,
   requestIsolatedUploadExtraction,
 } from "../_shared/upload-extraction-client.ts";
+import { normalizeDocxSourceManifest } from "../_shared/document-source-contract.ts";
 import {
   type ProviderRequest,
   routeRequest,
@@ -60,6 +71,7 @@ export type IngestClaim =
     outcome: "accepted" | "resumed";
     stage: IngestActiveStage;
     claimToken: string;
+    extractionContractVersion?: ReadableUploadExtractionContractVersion;
   }
   | { outcome: "processing"; stage?: IngestActiveStage }
   | { outcome: "conflict" }
@@ -96,6 +108,38 @@ export interface IngestExtractionAdmission {
   retryAfterSeconds: number;
 }
 
+type IngestExtractionInput =
+  | IsolatedUploadExtractionInput
+  | IsolatedSourceUploadExtractionInput
+  | IsolatedSourceUploadExtractionInputV3;
+type LegacyIngestExtraction = IsolatedUploadExtractionResult & {
+  extractionContractVersion?: typeof UPLOAD_EXTRACTION_CONTRACT_V1;
+};
+type IngestExtractionResult =
+  | LegacyIngestExtraction
+  | IsolatedSourceUploadExtractionResult
+  | IsolatedSourceUploadExtractionResultV3;
+export type IngestSourceCheckpoint = IsolatedSourceUploadExtractionResult & {
+  sourceManifestSha256: string | null;
+  sourceDigestVersion: "upload-source-manifest-jsonb.1" | null;
+};
+export type IngestSourceCheckpointV3 = IsolatedSourceUploadExtractionResultV3 & {
+  sourceManifestSha256: string | null;
+  sourceDigestVersion: "upload-source-manifest-jsonb.1" | null;
+};
+export type IngestExtractionCheckpoint =
+  | LegacyIngestExtraction
+  | IngestSourceCheckpoint
+  | IngestSourceCheckpointV3;
+
+function isSourceExtraction(
+  value: IngestExtractionResult,
+): value is IsolatedSourceUploadExtractionResult | IsolatedSourceUploadExtractionResultV3 {
+  return "extractionContractVersion" in value &&
+    (value.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V2 ||
+      value.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V3);
+}
+
 export interface IngestStore {
   claim(input: IngestClaimInput): Promise<IngestClaim>;
   advance(input: {
@@ -125,11 +169,11 @@ export interface IngestStore {
     input: IngestExtractionIdentity,
   ): Promise<IngestExtractionAdmission>;
   loadExtraction(
-    input: IngestExtractionIdentity,
-  ): Promise<IsolatedUploadExtractionResult | null>;
+    input: IngestExtractionInput,
+  ): Promise<IngestExtractionCheckpoint | null>;
   recordExtraction(
     input: IngestExtractionIdentity & {
-      extraction: IsolatedUploadExtractionResult;
+      extraction: IngestExtractionResult;
     },
   ): Promise<void>;
   settle(input: IngestSettlement): Promise<void>;
@@ -141,9 +185,10 @@ export interface IngestDependencies {
   recordLegacyIdentityAdapter(): void;
   setRequestIdentity(signal: AbortSignal, requestId: string): void;
   extractText(
-    input: IsolatedUploadExtractionInput,
-  ): Promise<IsolatedUploadExtractionResult>;
+    input: IngestExtractionInput,
+  ): Promise<IngestExtractionResult>;
   classify(request: ProviderRequest): Promise<{
+    execution?: OllamaCreditFallbackPolicy;
     text: string;
     structured?: Record<string, unknown>;
   }>;
@@ -324,9 +369,74 @@ function exactPositiveInteger(value: unknown): number | null {
 
 async function normalizeExtractionCheckpoint(
   value: unknown,
-): Promise<IsolatedUploadExtractionResult | null> {
+  input: IngestExtractionInput,
+): Promise<IngestExtractionCheckpoint | null> {
   if (value === null) return null;
+  const accepted = { ...input };
+  const sourceVersion =
+    accepted.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V2;
+  const deadline = Date.now() + 20_000;
+  const assertActive = () => {
+    if (accepted.signal?.aborted || Date.now() >= deadline) {
+      throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INTERRUPTED");
+    }
+  };
+  assertActive();
   const record = asRecord(value);
+  if (accepted.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V3) {
+    if (
+      !record || !hasExactKeys(record, [
+        "content_sha256", "text_sha256", "text", "format", "truncated",
+        "resource_policy_version", "extraction_contract_version",
+        "content_byte_length", "source_manifest", "source_manifest_sha256",
+        "source_digest_version",
+      ])
+    ) throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+    // Own primitives and reuse the authoritative v3 source validator. The
+    // database digest is opaque: validate its domain, never recreate JSONB here.
+    const snapshot = { ...record };
+    const { text_sha256, source_manifest_sha256, source_digest_version, ...wire } =
+      snapshot;
+    const result = await normalizeSourceExtractionResponseV3(
+      accepted,
+      {
+        ...wire,
+        upload_id: accepted.uploadId,
+        user_id: accepted.userId,
+        request_sha256: accepted.requestSha256,
+        claim_token: accepted.claimToken,
+      },
+      accepted.signal ?? new AbortController().signal,
+      deadline,
+    );
+    let sourceManifestSha256: string | null = null;
+    if (result.sourceManifest !== null) {
+      if (
+        typeof source_manifest_sha256 !== "string" ||
+        !SHA256_PATTERN.test(source_manifest_sha256) ||
+        source_digest_version !== "upload-source-manifest-jsonb.1"
+      ) {
+        throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+      }
+      sourceManifestSha256 = source_manifest_sha256;
+    } else if (source_manifest_sha256 !== null || source_digest_version !== null) {
+      throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+    }
+    if (
+      !result.text.trim() ||
+      await sha256(new TextEncoder().encode(result.text)) !== text_sha256
+    ) {
+      throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+    }
+    assertActive();
+    return Object.freeze({
+      ...result,
+      sourceManifestSha256,
+      sourceDigestVersion: sourceManifestSha256 === null
+        ? null
+        : "upload-source-manifest-jsonb.1",
+    });
+  }
   if (
     !record ||
     !hasExactKeys(record, [
@@ -336,6 +446,15 @@ async function normalizeExtractionCheckpoint(
       "text",
       "text_sha256",
       "truncated",
+      ...(sourceVersion
+        ? [
+          "extraction_contract_version",
+          "content_byte_length",
+          "source_manifest",
+          "source_manifest_sha256",
+          "source_digest_version",
+        ]
+        : []),
     ]) ||
     typeof record.content_sha256 !== "string" ||
     !SHA256_PATTERN.test(record.content_sha256) ||
@@ -344,33 +463,102 @@ async function normalizeExtractionCheckpoint(
     typeof record.text !== "string" ||
     !record.text.trim() ||
     record.text.length > MAX_EXTRACTED_TEXT_CHARS ||
-    !["pdf", "docx", "xlsx", "text"].includes(String(record.format)) ||
+    typeof record.format !== "string" ||
+    !["pdf", "docx", "xlsx", "text"].includes(record.format) ||
     typeof record.truncated !== "boolean" ||
     record.resource_policy_version !== UPLOAD_RESOURCE_POLICY_VERSION
   ) throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
-  if (
-    await sha256(new TextEncoder().encode(record.text)) !== record.text_sha256
-  ) throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
-  return {
+  // Capture primitives before hashing. The manifest normalizer synchronously
+  // owns the untrusted graph before its first await.
+  const snapshot = { ...record };
+  const result: IsolatedUploadExtractionResult = {
     contentSha256: record.content_sha256,
     text: record.text,
     format: record.format as IsolatedUploadExtractionResult["format"],
     truncated: record.truncated,
     resourcePolicyVersion: UPLOAD_RESOURCE_POLICY_VERSION,
   };
+  let checkpoint: IngestExtractionCheckpoint = result;
+  if (accepted.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V2) {
+    if (
+      snapshot.extraction_contract_version !== UPLOAD_EXTRACTION_CONTRACT_V2 ||
+      result.contentSha256 !== accepted.expectedContentSha256 ||
+      snapshot.content_byte_length !== accepted.expectedByteLength
+    ) {
+      throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+    }
+    const sourceIdentity = {
+      contentByteLength: accepted.expectedByteLength,
+      extractionContractVersion: UPLOAD_EXTRACTION_CONTRACT_V2,
+    } as const;
+    if (result.format === "docx") {
+      if (
+        typeof snapshot.source_manifest_sha256 !== "string" ||
+        !SHA256_PATTERN.test(snapshot.source_manifest_sha256) ||
+        snapshot.source_digest_version !== "upload-source-manifest-jsonb.1"
+      ) {
+        throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+      }
+      const sourceManifest = await normalizeDocxSourceManifest(
+        snapshot.source_manifest,
+        {
+          contentSha256: accepted.expectedContentSha256,
+          byteLength: accepted.expectedByteLength,
+          signal: accepted.signal,
+          deadline,
+        },
+      );
+      checkpoint = {
+        ...result,
+        ...sourceIdentity,
+        format: "docx",
+        sourceManifest,
+        sourceManifestSha256: snapshot.source_manifest_sha256,
+        sourceDigestVersion: "upload-source-manifest-jsonb.1" as const,
+      };
+    } else {
+      if (
+        snapshot.source_manifest !== null ||
+        snapshot.source_manifest_sha256 !== null ||
+        snapshot.source_digest_version !== null
+      ) throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+      checkpoint = {
+        ...result,
+        ...sourceIdentity,
+        format: result.format,
+        sourceManifest: null,
+        sourceManifestSha256: null,
+        sourceDigestVersion: null,
+      };
+    }
+  }
+  if (
+    await sha256(new TextEncoder().encode(result.text)) !== snapshot.text_sha256
+  ) throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_INVALID");
+  assertActive();
+  return Object.freeze(checkpoint);
 }
 
 function sameExtraction(
-  left: IsolatedUploadExtractionResult,
-  right: IsolatedUploadExtractionResult,
+  left: IngestExtractionResult,
+  right: IngestExtractionResult,
 ): boolean {
-  return left.contentSha256 === right.contentSha256 &&
+  const sameSource = isSourceExtraction(left)
+    ? isSourceExtraction(right) &&
+      left.extractionContractVersion === right.extractionContractVersion &&
+      left.contentByteLength === right.contentByteLength &&
+      JSON.stringify(left.sourceManifest) ===
+        JSON.stringify(right.sourceManifest)
+    : !isSourceExtraction(right);
+  // Manifests have a canonical owned shape from the existing normalizer. This
+  // compares semantic source content, never recomputes the opaque JSONB digest.
+  return sameSource && left.contentSha256 === right.contentSha256 &&
     left.text === right.text && left.format === right.format &&
     left.truncated === right.truncated &&
     left.resourcePolicyVersion === right.resourcePolicyVersion;
 }
 
-function createStore(auth: AuthContext): IngestStore {
+export function createUploadIngestStore(auth: AuthContext): IngestStore {
   return {
     async claim(input) {
       const { data, error } = await auth.admin.rpc("claim_upload_ingest", {
@@ -382,6 +570,9 @@ function createStore(auth: AuthContext): IngestStore {
         p_file_size_bytes: input.byteLength,
         p_request_sha256: input.requestSha256,
         p_content_sha256: input.contentSha256,
+        // New admission is server-owned. A resumed request keeps the version
+        // returned by the existing immutable claim, including historical v1/v2.
+        p_extraction_contract_version: UPLOAD_EXTRACTION_CONTRACT_V3,
       });
       if (error) throw new Error("UPLOAD_CLAIM_FAILED");
       const receipt = asRecord(data);
@@ -389,7 +580,15 @@ function createStore(auth: AuthContext): IngestStore {
       if (["accepted", "resumed"].includes(outcome)) {
         const stage = String(receipt?.stage ?? "") as IngestActiveStage;
         const claimToken = String(receipt?.claim_token ?? "");
+        const extractionContractVersion =
+          receipt && Object.hasOwn(receipt, "extraction_contract_version")
+            ? receipt.extraction_contract_version
+            : UPLOAD_EXTRACTION_CONTRACT_V1;
         if (
+          (outcome === "accepted" && extractionContractVersion !== UPLOAD_EXTRACTION_CONTRACT_V3) ||
+          (extractionContractVersion !== UPLOAD_EXTRACTION_CONTRACT_V1 &&
+            extractionContractVersion !== UPLOAD_EXTRACTION_CONTRACT_V2 &&
+            extractionContractVersion !== UPLOAD_EXTRACTION_CONTRACT_V3) ||
           !UUID_PATTERN.test(claimToken) || ![
             "prepared",
             "storage_dispatched",
@@ -397,7 +596,14 @@ function createStore(auth: AuthContext): IngestStore {
             "provider_dispatched",
           ].includes(stage)
         ) throw new Error("UPLOAD_CLAIM_INVALID");
-        return { outcome, stage, claimToken } as IngestClaim;
+        return {
+          outcome,
+          stage,
+          claimToken,
+          ...(extractionContractVersion !== UPLOAD_EXTRACTION_CONTRACT_V1
+            ? { extractionContractVersion }
+            : {}),
+        } as IngestClaim;
       }
       if (outcome === "processing") {
         return {
@@ -518,7 +724,7 @@ function createStore(auth: AuthContext): IngestStore {
         },
       );
       if (error) throw new Error("UPLOAD_EXTRACTION_CHECKPOINT_READ_FAILED");
-      return await normalizeExtractionCheckpoint(data);
+      return await normalizeExtractionCheckpoint(data, input);
     },
     async recordExtraction(input) {
       const extractedTextSha256 = await sha256(
@@ -535,6 +741,12 @@ function createStore(auth: AuthContext): IngestStore {
         p_format: input.extraction.format,
         p_truncated: input.extraction.truncated,
         p_policy_version: input.extraction.resourcePolicyVersion,
+        ...(isSourceExtraction(input.extraction)
+          ? {
+            p_extraction_contract_version: input.extraction.extractionContractVersion,
+            p_source_manifest: input.extraction.sourceManifest,
+          }
+          : {}),
       };
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const { data, error } = await auth.admin.rpc(
@@ -582,7 +794,7 @@ function createStore(auth: AuthContext): IngestStore {
 
 function defaultDependencies(auth: AuthContext): IngestDependencies {
   return {
-    store: createStore(auth),
+    store: createUploadIngestStore(auth),
     allowLegacyMissingIdentity:
       Deno.env.get("PROMPTED_LEGACY_UPLOAD_ID_ADAPTER")?.trim()
         .toLowerCase() !== "disabled",
@@ -1106,6 +1318,17 @@ export async function handleIngestUpload(
     requestSha256,
     claimToken,
   };
+  const extractionInput: IngestExtractionInput =
+    claim.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V2 ||
+      claim.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V3
+      ? {
+        ...extractionIdentity,
+        signal: req.signal,
+        extractionContractVersion: claim.extractionContractVersion,
+        expectedContentSha256: contentSha256,
+        expectedByteLength: bytes.byteLength,
+      }
+      : { ...extractionIdentity, signal: req.signal };
   const checkpointUnavailable = (
     code: string,
     message: string,
@@ -1158,9 +1381,9 @@ export async function handleIngestUpload(
     );
   };
 
-  let extraction: IsolatedUploadExtractionResult | null;
+  let extraction: IngestExtractionResult | null;
   try {
-    extraction = await dependencies.store.loadExtraction(extractionIdentity);
+    extraction = await dependencies.store.loadExtraction(extractionInput);
   } catch {
     return checkpointUnavailable(
       "UPLOAD_EXTRACTION_CHECKPOINT_UNAVAILABLE",
@@ -1188,7 +1411,7 @@ export async function handleIngestUpload(
     if (admission.outcome === "checkpoint_exists") {
       try {
         extraction = await dependencies.store.loadExtraction(
-          extractionIdentity,
+          extractionInput,
         );
       } catch {
         return checkpointUnavailable(
@@ -1204,10 +1427,68 @@ export async function handleIngestUpload(
       }
     } else {
       try {
-        extraction = await dependencies.extractText({
-          ...extractionIdentity,
-          signal: req.signal,
-        });
+        extraction = await dependencies.extractText(extractionInput);
+        if (
+          extractionInput.extractionContractVersion ===
+            UPLOAD_EXTRACTION_CONTRACT_V3
+        ) {
+          if (
+            !isSourceExtraction(extraction) ||
+            extraction.extractionContractVersion !== UPLOAD_EXTRACTION_CONTRACT_V3
+          ) {
+            throw new Error("UPLOAD_EXTRACTION_RESPONSE_INVALID");
+          }
+          // Capture fields before the validator's first await. A v3 source hash
+          // binds this exact preview; later cleanup must never rewrite it.
+          extraction = await normalizeSourceExtractionResponseV3(
+            extractionInput,
+            {
+              upload_id: extractionInput.uploadId,
+              user_id: extractionInput.userId,
+              request_sha256: extractionInput.requestSha256,
+              claim_token: extractionInput.claimToken,
+              content_sha256: extraction.contentSha256,
+              content_byte_length: extraction.contentByteLength,
+              extraction_contract_version: extraction.extractionContractVersion,
+              resource_policy_version: extraction.resourcePolicyVersion,
+              text: extraction.text,
+              format: extraction.format,
+              truncated: extraction.truncated,
+              source_manifest: extraction.sourceManifest,
+            },
+            req.signal,
+            Date.now() + 20_000,
+          );
+        } else if (
+          extractionInput.extractionContractVersion ===
+            UPLOAD_EXTRACTION_CONTRACT_V2
+        ) {
+          if (
+            !isSourceExtraction(extraction) ||
+            extraction.extractionContractVersion !== UPLOAD_EXTRACTION_CONTRACT_V2 ||
+            extraction.contentByteLength !==
+              extractionInput.expectedByteLength ||
+            extraction.contentSha256 !== extractionInput.expectedContentSha256
+          ) {
+            throw new Error("UPLOAD_EXTRACTION_RESPONSE_INVALID");
+          }
+          if (extraction.format === "docx") {
+            extraction = Object.freeze({
+              ...extraction,
+              sourceManifest: await normalizeDocxSourceManifest(
+                extraction.sourceManifest,
+                {
+                  contentSha256,
+                  byteLength: bytes.byteLength,
+                  signal: req.signal,
+                  deadline: Date.now() + 20_000,
+                },
+              ),
+            });
+          } else if (extraction.sourceManifest !== null) {
+            throw new Error("UPLOAD_EXTRACTION_RESPONSE_INVALID");
+          }
+        }
         extractedNow = true;
       } catch (error) {
         if (
@@ -1261,18 +1542,29 @@ export async function handleIngestUpload(
     }
   }
 
-  if (!extraction || extraction.contentSha256 !== contentSha256) {
+  if (
+    !extraction || extraction.contentSha256 !== contentSha256 ||
+    isSourceExtraction(extraction) !==
+      (extractionInput.extractionContractVersion ===
+        UPLOAD_EXTRACTION_CONTRACT_V2 ||
+        extractionInput.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V3) ||
+    (isSourceExtraction(extraction) &&
+      (extraction.contentByteLength !== bytes.byteLength ||
+        extraction.extractionContractVersion !==
+          extractionInput.extractionContractVersion))
+  ) {
     return await reconcileExtraction(
       "UPLOAD_EXTRACTION_SOURCE_CONFLICT",
       "The retained original no longer matches the accepted upload.",
     );
   }
-  const clean = extraction.text
-    .split("\u0000")
-    .join("")
-    .replace(/[ \t]+\n/g, "\n")
-    .trim();
-  if (!clean) {
+  const isV3 = isSourceExtraction(extraction) &&
+    extraction.extractionContractVersion === UPLOAD_EXTRACTION_CONTRACT_V3;
+  const clean = isV3
+    ? extraction.text
+    : extraction.text.split("\u0000").join("")
+      .replace(/[ \t]+\n/g, "\n").trim();
+  if (!clean.trim()) {
     const response = {
       ...errorBody(
         "UPLOAD_TEXT_EMPTY",
@@ -1304,7 +1596,7 @@ export async function handleIngestUpload(
     );
   }
 
-  const normalizedExtraction: IsolatedUploadExtractionResult = {
+  const normalizedExtraction: IngestExtractionResult = isV3 ? extraction : {
     ...extraction,
     text: clean.slice(0, MAX_CHARS),
     truncated: extraction.truncated || clean.length > MAX_CHARS,
@@ -1323,36 +1615,58 @@ export async function handleIngestUpload(
         extraction,
       });
     } catch {
-      let authoritative: IsolatedUploadExtractionResult | null = null;
-      try {
-        authoritative = await dependencies.store.loadExtraction(
-          extractionIdentity,
-        );
-      } catch {
-        return checkpointUnavailable(
-          "UPLOAD_EXTRACTION_CHECKPOINT_UNAVAILABLE",
-          "TED could not confirm whether the retained extraction was recorded. It will not dispatch provider work.",
-        );
-      }
-      if (!authoritative || !sameExtraction(authoritative, extraction)) {
-        return await reconcileExtraction(
-          "UPLOAD_EXTRACTION_CHECKPOINT_CONFLICT",
-          "TED found a different retained extraction for this exact upload. It will not dispatch provider work until reconciled.",
-        );
-      }
-      extraction = authoritative;
+      // A lost acknowledgement may follow a committed write. The same required
+      // read below resolves both acknowledged and uncertain writes; neither
+      // result permits classification from the in-memory candidate alone.
     }
+    let authoritative: IngestExtractionCheckpoint | null;
+    try {
+      authoritative = await dependencies.store.loadExtraction(
+        extractionInput,
+      );
+    } catch {
+      return checkpointUnavailable(
+        "UPLOAD_EXTRACTION_CHECKPOINT_UNAVAILABLE",
+        "TED could not confirm whether the retained extraction was recorded. It will not dispatch provider work.",
+      );
+    }
+    // Null also covers an expired or superseded claim. It does not establish a
+    // content conflict, so keep the accepted upload available for safe retry.
+    if (!authoritative) {
+      return checkpointUnavailable(
+        "UPLOAD_EXTRACTION_CHECKPOINT_UNAVAILABLE",
+        "TED could not confirm the retained extraction for this upload. Please retry this exact upload.",
+      );
+    }
+    if (!sameExtraction(authoritative, extraction)) {
+      return await reconcileExtraction(
+        "UPLOAD_EXTRACTION_CHECKPOINT_CONFLICT",
+        "TED found a different retained extraction for this exact upload. It will not dispatch provider work until reconciled.",
+      );
+    }
+    extraction = authoritative;
   }
 
   const truncated = extraction.truncated;
   const sliced = extraction.text;
-  if (stage === "storage_completed") {
+  const cancelled = () =>
+    checkpointUnavailable(
+      "UPLOAD_EXTRACTION_CANCELLED",
+      "Reading this upload was cancelled. You can retry this exact upload.",
+    );
+  if (req.signal.aborted) return cancelled();
+  // A v2/v3 provider-stage resume also replays the original transition. Its DB
+  // command checks the current claim/lease and checkpoint before returning an
+  // idempotent receipt, fencing changes during asynchronous manifest readback.
+  if (stage === "storage_completed" || isSourceExtraction(extraction)) {
     const providerDispatchFailure = await advance(
       "storage_completed",
       "provider_dispatched",
     );
     if (providerDispatchFailure) return providerDispatchFailure;
   }
+  if (req.signal.aborted) return cancelled();
+  let creditFallback: OllamaCreditFallbackPolicy | undefined;
   let summary = "";
   let structure: { title: string; items: string[] }[] | null = null;
   let documentType = "";
@@ -1377,6 +1691,10 @@ export async function handleIngestUpload(
       outputSchema: INGEST_CLASSIFICATION_SCHEMA,
       signal: req.signal,
     });
+    if (result.execution !== undefined) {
+      if (!isOllamaCreditFallbackPolicy(result.execution)) throw new Error("UPLOAD_PROVIDER_PROVENANCE_INVALID");
+      creditFallback = result.execution;
+    }
     const classifiedRecord = result.structured;
     if (
       !classifiedRecord ||
@@ -1529,6 +1847,7 @@ export async function handleIngestUpload(
   }
 
   const response = {
+    ...(creditFallback ? { credit_fallback: creditFallback } : {}),
     upload_id: uploadId,
     extracted_text: sliced,
     original_retained: true,
@@ -1555,6 +1874,7 @@ export async function handleIngestUpload(
       ingestStatus: "completed",
       extractedText: sliced,
       extractedPayload: {
+        ...(creditFallback ? { credit_fallback: creditFallback } : {}),
         truncated,
         original_retained: true,
         classification_status: classificationStatus,

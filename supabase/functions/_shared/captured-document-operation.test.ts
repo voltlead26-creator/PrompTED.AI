@@ -60,7 +60,9 @@ Deno.test("captured Structured Output schema is closed and exact for one ledger 
   );
 });
 
-Deno.test("captured validation accepts grounded exact sections and a permitted neutral fallback", () => {
+Deno.test("v1 structural validation accepts exact sections without a material-claim assessment", () => {
+  // Historical structural fixture only. Repeated tokens are not evidence of
+  // usable final wording or factual support; v2 assessment tests cover that gate.
   const plan = planCapturedInputs("complaint-letter", {
     recipient_name: "Synthetic Energy Co",
     issue_facts: "A synthetic invoice was charged twice on 1 August.",

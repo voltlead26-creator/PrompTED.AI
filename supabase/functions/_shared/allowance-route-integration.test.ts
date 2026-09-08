@@ -1,9 +1,22 @@
+// deno-lint-ignore-file no-import-prefix -- Edge test dependencies use direct JSR specifiers pinned by the repository lockfile.
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 
 const functionRoot = new URL("..", import.meta.url);
 
 async function source(name: string): Promise<string> {
-  return await Deno.readTextFile(new URL(`${name}/index.ts`, functionRoot));
+  const entry = await Deno.readTextFile(
+    new URL(`${name}/index.ts`, functionRoot),
+  );
+  if (name !== "generate-document") return entry;
+  assertStringIncludes(
+    entry,
+    'import { handleGenerateDocument } from "./handler.ts"',
+  );
+  assertStringIncludes(
+    entry,
+    "Deno.serve((req) => handleGenerateDocument(req))",
+  );
+  return await Deno.readTextFile(new URL(`${name}/handler.ts`, functionRoot));
 }
 
 function assertOrdered(
@@ -189,9 +202,15 @@ Deno.test("artifact proves outcome ownership before rollout and downstream work"
     const [marker, label] of [
       ["if (!rolloutEnabled(kind, outcomeId))", "rollout selection"],
       ["const memory = await loadUserMemoryContext(", "memory loading"],
-      ["reservation = await reserveDocumentAllowance(", "allowance reservation"],
+      [
+        "reservation = await reserveDocumentAllowance(",
+        "allowance reservation",
+      ],
       ["if (reservation.replayResult)", "durable replay exposure"],
-      ["const artifact = await runTedArtifactPipeline(", "provider-backed generation"],
+      [
+        "const artifact = await runTedArtifactPipeline(",
+        "provider-backed generation",
+      ],
     ] as const
   ) {
     assertOrdered(

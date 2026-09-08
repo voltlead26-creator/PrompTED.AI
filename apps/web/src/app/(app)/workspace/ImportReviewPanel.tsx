@@ -13,6 +13,8 @@ export interface ImportReviewPanelProps {
   onBack: () => void;
   onConfirm: (sections: Section[]) => void | Promise<void>;
   busy?: boolean;
+  readOnly?: boolean;
+  confirmLabel?: string;
 }
 
 function reindex(sections: Section[]): Section[] {
@@ -33,7 +35,10 @@ export function ImportReviewPanel({
   onBack,
   onConfirm,
   busy = false,
+  readOnly = false,
+  confirmLabel = "Create workspace",
 }: ImportReviewPanelProps) {
+  const editingDisabled = busy || readOnly;
   const [sections, setSections] = useState(() => reindex(initialSections));
   const [activeSectionId, setActiveSectionId] = useState(initialSections[0]?.id ?? "");
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
@@ -138,7 +143,7 @@ export function ImportReviewPanel({
                   <input
                     value={activeSection.name}
                     onChange={(event) => updateSection(activeIndex, { name: event.target.value })}
-                    disabled={busy}
+                    disabled={editingDisabled}
                   />
                 </label>
                 <span className={`${styles.confidence} ${styles[activeConfidence]}`}>
@@ -159,19 +164,19 @@ export function ImportReviewPanel({
                   ref={contentRef}
                   value={activeSection.content}
                   onChange={(event) => updateSection(activeIndex, { content: event.target.value })}
-                  disabled={busy}
+                  disabled={editingDisabled}
                   className={styles.contentTextarea}
                 />
               </label>
 
               <div className={styles.actions}>
-                <button type="button" onClick={() => mergeWithPrevious(activeIndex)} disabled={busy || activeIndex === 0}>
+                <button type="button" onClick={() => mergeWithPrevious(activeIndex)} disabled={editingDisabled || activeIndex === 0}>
                   Merge with previous
                 </button>
                 <button
                   type="button"
                   onClick={() => splitSection(activeIndex)}
-                  disabled={busy || !/\n\s*\n/.test(activeSection.content)}
+                  disabled={editingDisabled || !/\n\s*\n/.test(activeSection.content)}
                 >
                   Split in half
                 </button>
@@ -182,11 +187,11 @@ export function ImportReviewPanel({
                       type="button"
                       className={styles.destructive}
                       onClick={() => removeSection(activeIndex)}
-                      disabled={busy}
+                      disabled={editingDisabled}
                     >
                       Confirm remove
                     </button>
-                    <button type="button" onClick={() => setPendingRemoveId(null)} disabled={busy}>
+                    <button type="button" onClick={() => setPendingRemoveId(null)} disabled={editingDisabled}>
                       Cancel
                     </button>
                   </span>
@@ -194,7 +199,7 @@ export function ImportReviewPanel({
                   <button
                     type="button"
                     onClick={() => setPendingRemoveId(activeSection.id)}
-                    disabled={busy || sections.length === 1}
+                    disabled={editingDisabled || sections.length === 1}
                   >
                     Remove section
                   </button>
@@ -242,7 +247,7 @@ export function ImportReviewPanel({
       </div>
 
       <footer className={styles.footer}>
-        <button type="button" className={styles.secondary} onClick={onBack} disabled={busy}>
+        <button type="button" className={styles.secondary} onClick={onBack} disabled={editingDisabled}>
           Choose another file
         </button>
         <button
@@ -251,7 +256,7 @@ export function ImportReviewPanel({
           onClick={() => void onConfirm(reindex(sections))}
           disabled={busy || !valid}
         >
-          {busy ? "Creating workspace…" : "Create workspace"}
+          {busy ? "Creating workspace…" : confirmLabel}
         </button>
       </footer>
     </section>

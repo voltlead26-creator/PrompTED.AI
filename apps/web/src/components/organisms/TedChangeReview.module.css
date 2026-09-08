@@ -1,24 +1,33 @@
 .review {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
+  overflow: auto;
+  padding: 20px;
   border: 1px solid var(--line, #E2D7C2);
   border-radius: 14px;
   background: var(--card, #FFFDF8);
+  box-shadow: var(--shadow-lg, 0 16px 48px rgba(43, 37, 33, 0.24));
 }
+.review:not([open]) { display: none; }
+.review::backdrop { background: rgba(38, 33, 28, 0.45); }
+.review header, .actions { flex-shrink: 0; }
 .review h3 { margin: 2px 0 2px; font-size: 0.95rem; color: var(--ink, #2B2521); }
 .review p { margin: 0; font-size: 0.84rem; color: var(--ink-soft, #5E544A); line-height: 1.4; }
 .eyebrow { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
-.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height: 100px; overflow: auto; }
 .column { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .column strong { color: var(--ink, #2B2521); font-size: 0.76rem; }
 .changesList {
   margin: 0;
   padding: 9px 9px 9px 24px;
   min-height: 0;
-  max-height: 130px;
-  overflow-y: auto;
   border: 1px solid var(--line, #E2D7C2);
   border-radius: 10px;
   background: var(--paper, #F7F1E7);
@@ -40,8 +49,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   min-height: 0;
-  max-height: 130px;
-  overflow-y: auto;
   padding: 9px;
   border: 1px solid var(--line, #E2D7C2);
   border-radius: 10px;
@@ -51,12 +58,14 @@
   line-height: 1.4;
 }
 .actions { display: flex; justify-content: flex-end; gap: 8px; }
-.actions button { min-height: 38px; padding: 7px 13px; border-radius: 999px; font-size: 0.86rem; font-weight: 800; cursor: pointer; }
+.actions button { min-height: 44px; padding: 7px 13px; border-radius: 999px; font-size: 0.86rem; font-weight: 800; cursor: pointer; }
+.actions button:disabled { opacity: 0.55; cursor: default; }
+.actions button:focus-visible, .review h3:focus-visible, .columns:focus-visible { outline: 2px solid var(--scarlet, #C8442B); outline-offset: 3px; }
 .reject { border: 1px solid var(--line, #D8CCB7); background: transparent; color: var(--ink, #2B2521); }
 .accept { border: 1px solid var(--scarlet, #C8442B); background: var(--scarlet, #C8442B); color: white; }
 @media (max-width: 760px) {
+  .review { padding: 16px; }
   .columns { grid-template-columns: 1fr; }
-  .text, .changesList { max-height: 100px; }
   .actions { flex-direction: column-reverse; }
   .actions button { width: 100%; }
 }

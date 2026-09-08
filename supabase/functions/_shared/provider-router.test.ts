@@ -1,4 +1,6 @@
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+// Edge tests retain the repository's existing lockfile-pinned JSR imports.
+// deno-lint-ignore no-import-prefix
+import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import {
   buildOpenAIRequestBody,
   isRetryableProviderStatus,
@@ -10,7 +12,690 @@ import {
   bindModelCallContext as bindModelCallContextImpl,
   setModelCallCheckpointContext,
 } from "./model-call-context.ts";
+// deno-lint-ignore no-import-prefix
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import type { ProviderRequest } from "./provider-router.ts";
+import { isProviderReconciliationRequired } from "./allowance-reservations.ts";
+import {
+  legacyAuditSourceSha256,
+  legacyAuditTargetSha256,
+  legacyAuditTextSha256,
+} from "./document-audit-binding.ts";
+import { qualityAuditOutputSchema } from "./document-output-contracts.ts";
+
+// These fixtures model the existing SQL write/read contracts. The receipt
+// field is read reflectively until the tests-first production type is added.
+const AUDIT_OWNER = "22222222-2222-4222-8222-222222222222";
+const AUDIT_ORIGIN = "33333333-3333-4333-8333-333333333333";
+const AUDIT_USAGE = "44444444-4444-4444-8444-444444444444";
+const AUDIT_ADMISSION = "55555555-5555-4555-8555-555555555555";
+const AUDIT_CLAIM = "66666666-6666-4666-8666-666666666666";
+const AUDIT_RESULT_SHA = "c".repeat(64);
+const AUDIT_BINDING_SHA = "d".repeat(64);
+
+async function documentAuditFixtureInput() {
+  const sources: [string, string, string, string, string] = ["I was charged $10 twice.", "", "", "", ""];
+  const sections = [{ key: "opening", label: "Opening", content: sources[0] }];
+  const contentSha256 = await legacyAuditTextSha256(sections[0].content);
+  const binding = {
+    version: "legacy-document-audit-binding.1" as const,
+    digest_version: "legacy-document-audit-digests.1" as const,
+    validator_version: "legacy-wording-assessment.1" as const,
+    unit_policy_version: "legacy-factual-units.2" as const,
+    review_kind: "quality" as const, round: 0,
+    output_schema_name: "prompted_document_quality_audit" as const,
+    output_schema_version: "document-quality-audit.1" as const,
+    evidence_mode: "verbatim" as const,
+    source_sha256: await legacyAuditSourceSha256(sources),
+    execution_policy_version: "legacy-template-policy.1" as const,
+    execution_policy_sha256: "b".repeat(64),
+    target_sha256: await legacyAuditTargetSha256(sections),
+    sections: [{ key: "opening", label: "Opening", content_sha256: contentSha256 }],
+    units: [{ id: "opening#1", section_key: "opening", content_sha256: contentSha256 }],
+  };
+  return { binding, sources };
+}
+
+async function auditFixtureSha(text: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(bytes)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function validAccountingReceipt(
+  args: Record<string, unknown>,
+  error: unknown = null,
+): Promise<{ data: Record<string, unknown>; error: unknown }> {
+  const modelCallKey = await auditFixtureSha(
+    String(args.p_logical_stage_key) + "|" + String(args.p_request_sha256) + "|" +
+      String(args.p_provider_attempt_id),
+  );
+  return { data: {
+    usage_ledger_id: "11111111-1111-4111-8111-111111111111",
+    model_call_key: modelCallKey, idempotent_replay: false,
+    result_id: args.p_result_envelope ? "33333333-3333-4333-8333-333333333333" : null,
+    result_response_sha256: args.p_result_envelope ? "c".repeat(64) : null,
+    result_idempotent_replay: args.p_result_envelope ? false : null,
+  }, error };
+}
+
+function auditReceiptFixture(options: {
+  checkpoint?: boolean;
+  text?: string;
+  documentAudit?: Awaited<ReturnType<typeof documentAuditFixtureInput>>;
+  historicalProbe?: boolean;
+} = {}) {
+  const controller = new AbortController();
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const providerBodies: Record<string, unknown>[] = [];
+  const providerBodyTexts: string[] = [];
+  let checkpoint: Record<string, unknown> | undefined;
+  let readMode: "normal" | "after-capacity" = "normal";
+  let loseWriteAcks = false;
+  let loseEgressAcks = false;
+  let beforeRead: ((args: Record<string, unknown>) => void) | undefined;
+  let beforeWrite: (() => void) | undefined;
+  let beforeRelease: (() => void) | undefined;
+  let retainedWrite: Record<string, unknown> | undefined;
+  const storedBinding = options.documentAudit ? structuredClone(options.documentAudit.binding) : undefined;
+  let mapAuditWrapper: ((value: Record<string, unknown>) => void) | undefined;
+  const admin = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args: structuredClone(args) });
+      if (name === "claim_openai_capacity_lease") {
+        return { data: {
+          capacity_admitted: true, outcome: "admitted",
+          capacity_lease_id: "77777777-7777-4777-8777-777777777777",
+          lease_token: args.p_lease_token, environment: "test",
+          semantic_route: args.p_semantic_route, estimated_tokens: args.p_estimated_tokens,
+          config_revision: 1, expires_at: "2099-01-01T00:00:00.000Z",
+        }, error: null };
+      }
+      if (name === "mark_openai_capacity_lease_dispatched") {
+        return { data: { outcome: "dispatched", capacity_lease_id: args.p_capacity_lease_id,
+          dispatched_at: "2026-09-01T00:00:00.000Z" }, error: null };
+      }
+      if (name === "release_openai_capacity_lease") {
+        beforeRelease?.();
+        return { data: { outcome: "released", capacity_lease_id: args.p_capacity_lease_id,
+          terminal_outcome: args.p_terminal_outcome }, error: null };
+      }
+      if (name === "claim_user_external_egress") {
+        return { data: { outcome: "accepted", egress_permitted: true,
+          dispatch_token: args.p_dispatch_token }, error: null };
+      }
+      if (name === "complete_user_external_egress") {
+        return loseEgressAcks
+          ? { data: null, error: new TypeError("synthetic lost egress ACK") }
+          : { data: { outcome: "completed", terminal_state: args.p_terminal_state }, error: null };
+      }
+      if (name === "read_legacy_model_call_checkpoint" || name === "read_legacy_document_audit_checkpoint_v1") {
+        beforeRead?.(args);
+        const state = checkpoint && (readMode === "normal" || args.p_allocate_attempt === true)
+          ? structuredClone(checkpoint)
+          : args.p_allocate_attempt === false && !options.historicalProbe
+            ? { state: "not_found", provider_permitted: false }
+            : { state: "prepared", provider_permitted: true, attempt_number: 1,
+              attempt_admission_id: AUDIT_ADMISSION, execution_claim_token: AUDIT_CLAIM };
+        if (name === "read_legacy_model_call_checkpoint") return { data: state, error: null };
+        assert(storedBinding, "Only explicitly bound fixtures may call the audit wrapper.");
+        const wrapper: Record<string, unknown> = {
+          contract_version: "legacy-document-audit-checkpoint.1",
+          checkpoint: state,
+          audit_binding: state.state === "not_found" || (options.historicalProbe && args.p_allocate_attempt === false)
+            ? null : structuredClone(storedBinding),
+          audit_binding_sha256: state.state === "not_found" || (options.historicalProbe && args.p_allocate_attempt === false)
+            ? null : AUDIT_BINDING_SHA,
+        };
+        mapAuditWrapper?.(wrapper);
+        return { data: wrapper, error: null };
+      }
+      if (name === "mark_legacy_model_attempt_dispatched") {
+        return { data: { state: "dispatched", attempt_admission_id: AUDIT_ADMISSION,
+          provider_attempt_id: AUDIT_ADMISSION }, error: null };
+      }
+      if (name !== "record_legacy_model_call_attempt") {
+        throw new Error("Unexpected receipt fixture RPC: " + name);
+      }
+      beforeWrite?.();
+      retainedWrite = structuredClone(args);
+      const modelCallKey = await auditFixtureSha(
+        String(args.p_logical_stage_key) + "|" + String(args.p_request_sha256) + "|" +
+          String(args.p_provider_attempt_id),
+      );
+      if (args.p_result_envelope) {
+        checkpoint = {
+          state: "replay", provider_permitted: false, attempt_number: args.p_attempt_number,
+          result_version: "legacy-provider-result.1", response_sha256: AUDIT_RESULT_SHA,
+          response_envelope: args.p_result_envelope,
+          usage: {
+            usage_ledger_id: AUDIT_USAGE,
+            provider_attempt_id: args.p_provider_attempt_id,
+            provider_response_id: args.p_provider_response_id,
+            provider_status: args.p_provider_status, attempt_status: args.p_attempt_status,
+            error_code: args.p_error_code, input_tokens: args.p_input_tokens,
+            output_tokens: args.p_output_tokens, started_at: args.p_started_at,
+            completed_at: args.p_completed_at, model: args.p_model,
+            routing_version: args.p_routing_version, semantic_route: args.p_semantic_route,
+            reasoning_effort: args.p_reasoning_effort,
+          },
+        };
+      }
+      return loseWriteAcks
+        ? { data: null, error: new TypeError("synthetic lost terminal ACK") }
+        : { data: {
+          usage_ledger_id: AUDIT_USAGE, model_call_key: modelCallKey,
+          idempotent_replay: calls.filter((call) => call.name === name).length > 1,
+          result_id: args.p_result_envelope ? "88888888-8888-4888-8888-888888888888" : null,
+          result_response_sha256: args.p_result_envelope ? AUDIT_RESULT_SHA : null,
+          result_idempotent_replay: args.p_result_envelope
+            ? calls.filter((call) => call.name === name).length > 1 : null,
+        }, error: null };
+    },
+  } as unknown as SupabaseClient;
+  const bind = (logicalRequestId = "audit-receipt-request") => bindModelCallContextImpl(
+    controller.signal,
+    { userId: AUDIT_OWNER, admin, generationRequestId: logicalRequestId,
+      ...(options.checkpoint === false ? {} : { checkpoint: {
+        scope: "generate-document", originReservationId: AUDIT_ORIGIN,
+        executionClaimToken: AUDIT_CLAIM,
+      } }) },
+  );
+  bind();
+  const request = {
+    task: "review", logicalStageKey: "generate-document.audit:wording",
+    systemPrompt: "Review only these synthetic supported facts.",
+    messages: [{ role: "user" as const, content: "Synthetic wording for receipt tests." }],
+    requireJson: true, requireLegacyCheckpointReceipt: true, signal: controller.signal,
+    ...(options.documentAudit ? {
+      task: "edit", logicalStageKey: "generate-document.quality:round-0",
+      outputSchema: qualityAuditOutputSchema(["opening"]),
+      legacyAuditBinding: options.documentAudit.binding,
+      legacyAuditSources: options.documentAudit.sources,
+    } : {}),
+  };
+  const transport: typeof fetch = (_input, init) => {
+    const bodyText = String(init?.body);
+    providerBodyTexts.push(bodyText);
+    providerBodies.push(JSON.parse(bodyText));
+    return Promise.resolve(Response.json({
+      id: "resp_audit_receipt", status: "completed",
+      output_text: options.text ?? (options.documentAudit ? '{"decision":"approve","issues":[]}' : '{"decision":"approve"}'),
+      usage: { input_tokens: 7, output_tokens: 4 },
+    }));
+  };
+  return {
+    controller, calls, providerBodies, providerBodyTexts, request, transport, bind,
+    invoke: (input: ProviderRequest = request) => routeRequestImpl(input),
+    get retainedWrite() { return retainedWrite; },
+    get checkpoint() { return checkpoint; },
+    set readMode(value: "normal" | "after-capacity") { readMode = value; },
+    set loseWriteAcks(value: boolean) { loseWriteAcks = value; },
+    set loseEgressAcks(value: boolean) { loseEgressAcks = value; },
+    set beforeRead(value: ((args: Record<string, unknown>) => void) | undefined) { beforeRead = value; },
+    set beforeWrite(value: (() => void) | undefined) { beforeWrite = value; },
+    set beforeRelease(value: (() => void) | undefined) { beforeRelease = value; },
+    set mapAuditWrapper(value: ((wrapper: Record<string, unknown>) => void) | undefined) { mapAuditWrapper = value; },
+  };
+}
+
+async function withAuditReceiptFixture(
+  fixture: ReturnType<typeof auditReceiptFixture>,
+  run: () => Promise<void>,
+): Promise<void> {
+  await withEnvironment({ OPENAI_API_KEY: "synthetic-receipt-key" }, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fixture.transport;
+    try { await run(); } finally { globalThis.fetch = originalFetch; }
+  });
+}
+
+function auditReceipt(response: Awaited<ReturnType<typeof routeRequestImpl>>): Record<string, unknown> {
+  const receipt: unknown = Reflect.get(response, "legacyCheckpointReceipt");
+  assert(receipt && typeof receipt === "object" && !Array.isArray(receipt),
+    "Opted-in success must carry a validated durable legacy checkpoint receipt.");
+  return receipt as Record<string, unknown>;
+}
+
+for (const lostAcknowledgements of [false, true]) {
+  Deno.test("document audit binding is retained by fresh/readback and replay with lost ACK=" + lostAcknowledgements, async () => {
+    const accepted = await documentAuditFixtureInput();
+    const fixture = auditReceiptFixture({ documentAudit: accepted, text: '{"decision":"approve","issues":[]}' });
+    fixture.loseWriteAcks = lostAcknowledgements;
+    await withAuditReceiptFixture(fixture, async () => {
+      const first = await fixture.invoke();
+      const second = await fixture.invoke();
+      assertEquals(first.structured, { decision: "approve", issues: [] });
+      assertEquals(second.structured, first.structured);
+      assertEquals(auditReceipt(first).legacyAuditBindingSha256, AUDIT_BINDING_SHA);
+      assertEquals(auditReceipt(second), auditReceipt(first));
+      assertEquals(auditReceipt(first).providerAttemptId, AUDIT_ADMISSION);
+      assertEquals(fixture.providerBodies.length, 1);
+      const reads = fixture.calls.filter((call) => call.name.startsWith("read_legacy_"));
+      assertEquals(reads.map((call) => call.name),
+        Array.from({ length: lostAcknowledgements ? 4 : 3 }, () => "read_legacy_document_audit_checkpoint_v1"));
+      for (const call of reads) {
+        assertEquals(Object.keys(call.args).sort(), [
+          "p_allocate_attempt", "p_audit_binding", "p_checkpoint_scope", "p_execution_claim_token",
+          "p_logical_request_id", "p_logical_stage_key", "p_max_attempts", "p_origin_reservation_id",
+          "p_request_sha256", "p_source_snapshot", "p_user_id", "p_with_fallback",
+        ].sort());
+        assertEquals(call.args.p_audit_binding, accepted.binding);
+        assertEquals(call.args.p_source_snapshot, accepted.sources);
+        assertEquals(call.args.p_with_fallback, false);
+      }
+      assertEquals(fixture.calls.filter((call) => call.name === "record_legacy_model_call_attempt").length,
+        lostAcknowledgements ? 2 : 1);
+      assertEquals(fixture.retainedWrite?.p_request_sha256,
+        await auditFixtureSha(fixture.providerBodyTexts[0]),
+        "Audit metadata must not change the existing provider request hash.");
+      assertEquals(Object.hasOwn(fixture.providerBodies[0], "legacyAuditBinding"), false);
+      assertEquals(Object.hasOwn(fixture.providerBodies[0], "legacyAuditSources"), false);
+      assertEquals(Object.hasOwn(fixture.retainedWrite ?? {}, "p_audit_binding"), false);
+    });
+  });
+}
+
+for (const invalid of ["missing-binding", "missing-sources", "missing-receipt-opt-in", "wrong-schema", "wrong-stage", "changed-source"] as const) {
+  Deno.test("document audit rejects " + invalid + " before checkpoint, capacity or provider work", async () => {
+    const fixture = auditReceiptFixture({ documentAudit: await documentAuditFixtureInput() });
+    const request = { ...fixture.request };
+    if (invalid === "missing-binding") Reflect.deleteProperty(request, "legacyAuditBinding");
+    if (invalid === "missing-sources") Reflect.deleteProperty(request, "legacyAuditSources");
+    if (invalid === "missing-receipt-opt-in") request.requireLegacyCheckpointReceipt = false;
+    if (invalid === "wrong-schema") Reflect.set(request, "outputSchema", strictSchema);
+    if (invalid === "wrong-stage") request.logicalStageKey = "generate-document.quality:round-1";
+    if (invalid === "changed-source") Reflect.set(request, "legacyAuditSources", ["Different facts.", "", "", "", ""]);
+    await withAuditReceiptFixture(fixture, async () => {
+      await assertRejects(() => fixture.invoke(request), OpenAIAdapterError, "OPENAI_AUDIT_BINDING_INVALID");
+      assertEquals(fixture.calls, []);
+      assertEquals(fixture.providerBodies, []);
+    });
+  });
+}
+
+Deno.test("document audit owns metadata and all five sources before a held checkpoint read", async () => {
+  const mutable = await documentAuditFixtureInput();
+  const accepted = structuredClone(mutable);
+  const fixture = auditReceiptFixture({ documentAudit: mutable });
+  fixture.beforeRead = () => {
+    mutable.sources[0] = "Later caller facts.";
+    mutable.binding.source_sha256 = "e".repeat(64);
+    mutable.binding.sections[0].content_sha256 = "f".repeat(64);
+    mutable.binding.units[0].content_sha256 = "a".repeat(64);
+  };
+  await withAuditReceiptFixture(fixture, async () => {
+    const result = await fixture.invoke();
+    const reads = fixture.calls.filter((call) => call.name.startsWith("read_legacy_"));
+    assertEquals(reads.length, 2);
+    for (const call of reads) {
+      assertEquals(call.args.p_audit_binding, accepted.binding);
+      assertEquals(call.args.p_source_snapshot, accepted.sources);
+    }
+    assertEquals(auditReceipt(result).legacyAuditBindingSha256, AUDIT_BINDING_SHA);
+    assertEquals(fixture.providerBodies.length, 1);
+  });
+});
+
+for (const malformed of ["missing-prepared-binding", "invalid-digest", "extra-wrapper-key"] as const) {
+  Deno.test("document audit rejects " + malformed + " without provider dispatch", async () => {
+    const fixture = auditReceiptFixture({ documentAudit: await documentAuditFixtureInput() });
+    fixture.mapAuditWrapper = (wrapper) => {
+      const checkpoint = wrapper.checkpoint as Record<string, unknown>;
+      if (checkpoint.state !== "prepared") return;
+      if (malformed === "missing-prepared-binding") {
+        wrapper.audit_binding = null;
+        wrapper.audit_binding_sha256 = null;
+      } else if (malformed === "invalid-digest") wrapper.audit_binding_sha256 = "invalid";
+      else wrapper.unreviewed = true;
+    };
+    await withAuditReceiptFixture(fixture, async () => {
+      await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "OPENAI_AUDIT_CHECKPOINT_MALFORMED");
+      assertEquals(fixture.providerBodies, []);
+      assertEquals(fixture.calls.filter((call) => call.name === "mark_legacy_model_attempt_dispatched").length, 0);
+      assertEquals(fixture.calls.filter((call) => call.name === "record_legacy_model_call_attempt").length, 0);
+    });
+  });
+}
+
+for (const afterCapacity of [false, true]) {
+  Deno.test("document audit rejects stored binding mismatch on replay after capacity=" + afterCapacity, async () => {
+    const fixture = auditReceiptFixture({ documentAudit: await documentAuditFixtureInput() });
+    await withAuditReceiptFixture(fixture, async () => {
+      assertEquals((await fixture.invoke()).structured, { decision: "approve", issues: [] });
+      fixture.calls.length = 0;
+      fixture.readMode = afterCapacity ? "after-capacity" : "normal";
+      fixture.mapAuditWrapper = (wrapper) => {
+        if ((wrapper.checkpoint as Record<string, unknown>).state !== "replay") return;
+        const binding = structuredClone(wrapper.audit_binding) as Record<string, unknown>;
+        binding.execution_policy_sha256 = "e".repeat(64);
+        wrapper.audit_binding = binding;
+      };
+      await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "OPENAI_AUDIT_CHECKPOINT_CONFLICT");
+      assertEquals(fixture.providerBodies.length, 1);
+      assertEquals(fixture.calls.filter((call) => call.name === "record_legacy_model_call_attempt").length, 0);
+      assertEquals(fixture.calls.filter((call) => call.name === "release_openai_capacity_lease").length,
+        afterCapacity ? 1 : 0);
+    });
+  });
+}
+
+Deno.test("document audit missing replay binding cannot qualify an old literal checkpoint", async () => {
+  const fixture = auditReceiptFixture({ documentAudit: await documentAuditFixtureInput() });
+  await withAuditReceiptFixture(fixture, async () => {
+    assertEquals((await fixture.invoke()).structured, { decision: "approve", issues: [] });
+    fixture.mapAuditWrapper = (wrapper) => {
+      if ((wrapper.checkpoint as Record<string, unknown>).state === "replay") {
+        wrapper.audit_binding = null;
+        wrapper.audit_binding_sha256 = null;
+      }
+    };
+    await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "OPENAI_AUDIT_CHECKPOINT_MALFORMED");
+    assertEquals(fixture.providerBodies.length, 1);
+  });
+});
+
+Deno.test("document audit binding does not turn malformed completed output into successful evidence", async () => {
+  const fixture = auditReceiptFixture({ documentAudit: await documentAuditFixtureInput(), text: "{incomplete" });
+  await withAuditReceiptFixture(fixture, async () => {
+    await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "OPENAI_INVALID_STRUCTURED_OUTPUT");
+    assertEquals(fixture.retainedWrite?.p_provider_status, "completed");
+    assertEquals(fixture.retainedWrite?.p_attempt_status, "failed");
+    assertEquals(fixture.retainedWrite?.p_error_code, "OPENAI_INVALID_STRUCTURED_OUTPUT");
+    assertEquals(fixture.calls.filter((call) => call.name === "record_legacy_model_call_attempt").length, 1);
+    assertEquals(fixture.providerBodies.length, 1);
+  });
+});
+
+for (const mismatch of [false, true]) {
+  Deno.test("undispatched historical audit probe requires bound allocation before dispatch with mismatch=" + mismatch, async () => {
+    const fixture = auditReceiptFixture({ documentAudit: await documentAuditFixtureInput(), historicalProbe: true });
+    if (mismatch) fixture.mapAuditWrapper = (wrapper) => {
+      if (wrapper.audit_binding) {
+        const binding = structuredClone(wrapper.audit_binding) as Record<string, unknown>;
+        binding.target_sha256 = "e".repeat(64);
+        wrapper.audit_binding = binding;
+      }
+    };
+    await withAuditReceiptFixture(fixture, async () => {
+      if (mismatch) {
+        await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "OPENAI_AUDIT_CHECKPOINT_CONFLICT");
+        assertEquals(fixture.providerBodies, []);
+        assertEquals(fixture.calls.filter((call) => call.name === "mark_legacy_model_attempt_dispatched").length, 0);
+      } else {
+        const result = await fixture.invoke();
+        assertEquals(result.structured, { decision: "approve", issues: [] });
+        assertEquals(auditReceipt(result).legacyAuditBindingSha256, AUDIT_BINDING_SHA);
+        assertEquals(fixture.providerBodies.length, 1);
+      }
+      const reads = fixture.calls.filter((call) => call.name === "read_legacy_document_audit_checkpoint_v1");
+      assertEquals(reads.map((call) => call.args.p_allocate_attempt), [false, true]);
+    });
+  });
+}
+
+Deno.test("audit receipt opt-in rejects usage-only context before capacity or provider work", async () => {
+  const fixture = auditReceiptFixture({ checkpoint: false });
+  await withAuditReceiptFixture(fixture, async () => {
+    await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "MODEL_CALL_CHECKPOINT_CONTEXT_MISSING");
+    assertEquals(fixture.calls, []);
+    assertEquals(fixture.providerBodies, []);
+  });
+});
+
+Deno.test("audit receipt opt-in requires a structured output contract before dispatch", async () => {
+  const fixture = auditReceiptFixture();
+  await withAuditReceiptFixture(fixture, async () => {
+    const request = { ...fixture.request, requireJson: false };
+    await assertRejects(() => fixture.invoke(request), OpenAIAdapterError, "OPENAI_CHECKPOINT_OUTPUT_CONTRACT_REQUIRED");
+    assertEquals(fixture.calls, []);
+    assertEquals(fixture.providerBodies, []);
+  });
+});
+
+Deno.test("audit receipt opt-in cannot use a captured lifecycle as legacy evidence", async () => {
+  const fixture = auditReceiptFixture();
+  const lifecycle: string[] = [];
+  await withAuditReceiptFixture(fixture, async () => {
+    const request = { ...fixture.request, attemptLifecycle: {
+      prepare() { lifecycle.push("prepare"); return Promise.resolve({ attemptNumber: 1, clientRequestId: "captured-positive-control" }); },
+      complete() { lifecycle.push("complete"); return Promise.resolve(); },
+    } };
+    await assertRejects(() => fixture.invoke(request), OpenAIAdapterError, "OPENAI_CHECKPOINT_LIFECYCLE_CONFLICT");
+    assertEquals(lifecycle, []);
+    assertEquals(fixture.calls, []);
+    assertEquals(fixture.providerBodies, []);
+  });
+});
+
+for (const lostAcknowledgements of [false, true]) {
+  Deno.test("audit receipt fresh/readback and replay identity agrees with lost ACK=" + lostAcknowledgements, async () => {
+    const fixture = auditReceiptFixture();
+    fixture.loseWriteAcks = lostAcknowledgements;
+    await withAuditReceiptFixture(fixture, async () => {
+      const first = await fixture.invoke();
+      const replay = await fixture.invoke();
+      assertEquals(first.structured, { decision: "approve" });
+      assertEquals(replay.structured, first.structured);
+      assertEquals(fixture.providerBodies.length, 1);
+      const receipt = auditReceipt(first);
+      assertEquals(auditReceipt(replay), receipt);
+      assertEquals(receipt.version, "terminal-model-attempt-receipt.1");
+      assertEquals(receipt.kind, "checkpoint");
+      assertEquals(receipt.userId, AUDIT_OWNER);
+      assertEquals(receipt.logicalRequestId, "audit-receipt-request");
+      assertEquals(receipt.checkpointScope, "generate-document");
+      assertEquals(receipt.authorityReservationId, AUDIT_ORIGIN);
+      assertEquals(receipt.logicalStageKey, fixture.request.logicalStageKey);
+      assertEquals(receipt.requestSha256, fixture.retainedWrite?.p_request_sha256);
+      assertEquals(receipt.providerAttemptId, AUDIT_ADMISSION);
+      assertEquals(receipt.usageLedgerId, AUDIT_USAGE);
+      assertEquals(receipt.resultResponseSha256, AUDIT_RESULT_SHA);
+      assertEquals(receipt.attemptStatus, "succeeded");
+      assertEquals(receipt.providerStatus, "completed");
+      assertEquals(receipt.errorCode, null);
+      assertEquals(receipt.modelCallKey, await auditFixtureSha(
+        fixture.request.logicalStageKey + "|" + String(fixture.retainedWrite?.p_request_sha256) + "|" + AUDIT_ADMISSION,
+      ));
+      assertEquals(fixture.calls.filter((call) => call.name === "record_legacy_model_call_attempt").length,
+        lostAcknowledgements ? 2 : 1);
+      assertEquals(fixture.calls.filter((call) => call.name === "claim_openai_capacity_lease").length, 1);
+      for (const body of fixture.providerBodies) {
+        assertEquals(Object.hasOwn(body, "requireLegacyCheckpointReceipt"), false);
+        assertEquals(Object.hasOwn(body, "legacyCheckpointReceipt"), false);
+      }
+    });
+  });
+}
+
+for (const afterCapacity of [false, true]) {
+  Deno.test("audit receipt replay cancellation fences publication after capacity=" + afterCapacity, async () => {
+    const fixture = auditReceiptFixture();
+    await withAuditReceiptFixture(fixture, async () => {
+      const first = await fixture.invoke();
+      assertEquals(first.structured, { decision: "approve" });
+      fixture.calls.length = 0;
+      if (afterCapacity) {
+        fixture.readMode = "after-capacity";
+        fixture.beforeRelease = () => fixture.controller.abort();
+      } else fixture.controller.abort();
+      await assertRejects(() => fixture.invoke(), DOMException, "abort");
+      assertEquals(fixture.providerBodies.length, 1);
+      assertEquals(fixture.calls.filter((call) => call.name === "record_legacy_model_call_attempt").length, 0);
+      assertEquals(fixture.calls.filter((call) => call.name === "release_openai_capacity_lease").length,
+        afterCapacity ? 1 : 0);
+    });
+  });
+}
+
+Deno.test("audit receipt fresh success is not published after cancellation during capacity release", async () => {
+  const fixture = auditReceiptFixture();
+  fixture.beforeRelease = () => fixture.controller.abort();
+  await withAuditReceiptFixture(fixture, async () => {
+    await assertRejects(() => fixture.invoke(), DOMException, "abort");
+    assertEquals(fixture.providerBodies.length, 1);
+    assertEquals(fixture.retainedWrite?.p_attempt_status, "succeeded");
+    assertEquals(fixture.calls.filter((call) => call.name === "record_legacy_model_call_attempt").length, 1);
+  });
+});
+
+Deno.test("audit receipt replay does not publish after cancellation during its checkpoint read", async () => {
+  const fixture = auditReceiptFixture();
+  await withAuditReceiptFixture(fixture, async () => {
+    assertEquals((await fixture.invoke()).structured, { decision: "approve" });
+    fixture.calls.length = 0;
+    fixture.beforeRead = () => fixture.controller.abort();
+    await assertRejects(() => fixture.invoke(), DOMException, "abort");
+    assertEquals(fixture.providerBodies.length, 1);
+    assertEquals(fixture.calls.map((call) => call.name), ["read_legacy_model_call_checkpoint"]);
+  });
+});
+
+Deno.test("audit receipt requirement is captured before a checkpoint read can mutate its request", async () => {
+  const fixture = auditReceiptFixture();
+  await withAuditReceiptFixture(fixture, async () => {
+    assertEquals((await fixture.invoke()).structured, { decision: "approve" });
+    fixture.beforeRead = () => { fixture.request.requireLegacyCheckpointReceipt = false; };
+    const replay = await fixture.invoke();
+    assertEquals(fixture.request.requireLegacyCheckpointReceipt, false);
+    assertEquals(auditReceipt(replay).kind, "checkpoint");
+    assertEquals(fixture.providerBodies.length, 1);
+  });
+});
+
+Deno.test("audit receipt request hash identifies the exact strict schema sent after a held checkpoint read", async () => {
+  const fixture = auditReceiptFixture();
+  await withAuditReceiptFixture(fixture, async () => {
+    const schema = structuredClone(strictSchema);
+    const request = { ...fixture.request, outputSchema: schema };
+    const expectedBody = structuredClone(buildOpenAIRequestBody(request));
+    const acceptedRoute = resolveOpenAIRoute(request.task);
+    fixture.beforeRead = () => {
+      schema.schema.properties.decision.enum.splice(0, 2, "changed-after-hash");
+      request.messages[0].content = "Changed caller text after the accepted hash.";
+    };
+    const response = await fixture.invoke(request);
+    assertEquals(response.structured, { decision: "approve" });
+    assertEquals(fixture.providerBodies.length, 1);
+    const sentBody = fixture.providerBodies[0];
+    assertEquals(sentBody, expectedBody);
+    const wireBody = fixture.providerBodyTexts[0];
+    assert(typeof wireBody === "string");
+    // Existing checkpoint identity hashes the actual JSON.stringify wire
+    // representation; sorting keys here would invent a different contract.
+    const sentIdentityText = acceptedRoute.creditFallback
+      ? JSON.stringify({ request: sentBody, creditFallback: acceptedRoute.creditFallback })
+      : wireBody;
+    assertEquals(fixture.retainedWrite?.p_request_sha256,
+      await auditFixtureSha(sentIdentityText),
+      "Checkpoint request identity must hash the actual provider schema and wording.");
+    assertEquals(auditReceipt(response).requestSha256, fixture.retainedWrite?.p_request_sha256);
+  });
+});
+
+Deno.test("audit receipt owns its accepted route before a held checkpoint read can mutate caller policy", async () => {
+  const fixture = auditReceiptFixture();
+  await withAuditReceiptFixture(fixture, async () => {
+    const schema = structuredClone(strictSchema);
+    const acceptedRoute = {
+      ...resolveOpenAIRoute(fixture.request.task),
+      structuredOutputSchemaVersion: schema.name,
+    };
+    const originalRoute = structuredClone(acceptedRoute);
+    const request = { ...fixture.request, outputSchema: schema, routeSnapshot: acceptedRoute };
+    const originalBody = structuredClone(buildOpenAIRequestBody(request));
+    fixture.beforeRead = () => {
+      acceptedRoute.model = "changed-after-checkpoint-admission";
+      acceptedRoute.reasoningEffort = originalRoute.reasoningEffort === "low" ? "high" : "low";
+    };
+    const response = await fixture.invoke(request);
+    assertEquals(response.structured, { decision: "approve" });
+    assertEquals(fixture.providerBodies, [originalBody]);
+    assertEquals(fixture.retainedWrite?.p_model, originalRoute.model,
+      "Durable usage must retain the model actually sent to the provider.");
+    assertEquals(fixture.retainedWrite?.p_reasoning_effort, originalRoute.reasoningEffort);
+    assertEquals(response.routeSnapshot, originalRoute);
+    const envelope: unknown = fixture.checkpoint?.response_envelope;
+    assert(envelope && typeof envelope === "object" && !Array.isArray(envelope));
+    assertEquals(Reflect.get(envelope, "route_snapshot"), originalRoute);
+    assertEquals(auditReceipt(response).kind, "checkpoint");
+  });
+});
+
+Deno.test("audit receipt missing egress ACK retains reconciliation priority over cancellation", async () => {
+  const fixture = auditReceiptFixture();
+  fixture.loseEgressAcks = true;
+  fixture.beforeWrite = () => fixture.controller.abort();
+  await withAuditReceiptFixture(fixture, async () => {
+    const error = await assertRejects(() => fixture.invoke(), OpenAIAdapterError,
+      "OPENAI_PROVIDER_DISPATCH_RECONCILIATION_REQUIRED");
+    assertEquals(isProviderReconciliationRequired(error), true);
+    assertEquals(fixture.providerBodies.length, 1);
+    assertEquals(fixture.calls.filter((call) => call.name === "complete_user_external_egress").length, 2);
+  });
+});
+
+for (const cancelled of [false, true]) {
+  Deno.test("ordinary legacy completion ACK uncertainty requires reconciliation with cancellation=" + cancelled, async () => {
+    const fixture = auditReceiptFixture();
+    fixture.loseEgressAcks = true;
+    if (cancelled) fixture.beforeWrite = () => fixture.controller.abort();
+    await withAuditReceiptFixture(fixture, async () => {
+      const request = { ...fixture.request, requireLegacyCheckpointReceipt: false };
+      const error = await assertRejects(() => fixture.invoke(request), OpenAIAdapterError,
+        "OPENAI_PROVIDER_DISPATCH_RECONCILIATION_REQUIRED");
+      assertEquals(isProviderReconciliationRequired(error), true);
+      assertEquals(fixture.providerBodies.length, 1);
+      assertEquals(fixture.retainedWrite?.p_attempt_status, "succeeded");
+      assertEquals(fixture.calls.filter((call) => call.name === "complete_user_external_egress").length, 2);
+      const release = fixture.calls.find((call) => call.name === "release_openai_capacity_lease");
+      assertEquals(release?.args.p_terminal_outcome, "reconciliation_required");
+    });
+  });
+}
+
+for (const boundary of ["read", "prepare", "write"] as const) {
+  Deno.test("audit receipt rejects trusted request-context replacement during " + boundary, async () => {
+    const fixture = auditReceiptFixture();
+    if (boundary === "read") fixture.beforeRead = () => fixture.bind("another-request");
+    else if (boundary === "prepare") fixture.beforeRead = (args) => {
+      if (args.p_allocate_attempt === true) fixture.bind("another-request");
+    };
+    else fixture.beforeWrite = () => fixture.bind("another-request");
+    await withAuditReceiptFixture(fixture, async () => {
+      await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "MODEL_CALL_CHECKPOINT_IDENTITY_CHANGED");
+      if (boundary !== "write") assertEquals(fixture.providerBodies.length, 0);
+      else assertEquals(fixture.providerBodies.length, 1);
+    });
+  });
+}
+
+Deno.test("malformed completed structured output cannot publish audit evidence or redispatch on replay", async () => {
+  const fixture = auditReceiptFixture({ text: "not valid JSON" });
+  await withAuditReceiptFixture(fixture, async () => {
+    await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "OPENAI_INVALID_STRUCTURED_OUTPUT");
+    await assertRejects(() => fixture.invoke(), OpenAIAdapterError, "OPENAI_INVALID_STRUCTURED_OUTPUT");
+    assertEquals(fixture.providerBodies.length, 1);
+    assertEquals(fixture.retainedWrite?.p_attempt_status, "failed");
+  });
+});
+
+Deno.test("ordinary legacy and captured success omit internal checkpoint receipt by default", async () => {
+  const fixture = auditReceiptFixture();
+  await withAuditReceiptFixture(fixture, async () => {
+    const request = { ...fixture.request, requireLegacyCheckpointReceipt: false };
+    const legacy = await fixture.invoke(request);
+    assertEquals(legacy.structured, { decision: "approve" });
+    assertEquals(Object.hasOwn(legacy, "legacyCheckpointReceipt"), false);
+    const lifecycle: string[] = [];
+    const captured = await fixture.invoke({ ...request, attemptLifecycle: {
+      prepare() { lifecycle.push("prepare"); return Promise.resolve({ attemptNumber: 1, clientRequestId: "captured-positive-control" }); },
+      complete() { lifecycle.push("complete"); return Promise.resolve(); },
+    } });
+    assertEquals(captured.structured, legacy.structured);
+    assertEquals(Object.hasOwn(captured, "legacyCheckpointReceipt"), false);
+    assertEquals(lifecycle, ["prepare", "complete"]);
+  });
+});
 
 // Candidate model defaults are deliberately available only when the caller
 // explicitly identifies this process as a test environment.
@@ -169,13 +854,7 @@ function meteredSignal(
       if (name === "complete_user_external_egress") {
         return Promise.resolve({ data: { outcome: "completed" }, error: null });
       }
-      return Promise.resolve({
-        data: {
-          usage_ledger_id: "11111111-1111-4111-8111-111111111111",
-          model_call_key: "a".repeat(64),
-        },
-        error: rpcError,
-      });
+      return validAccountingReceipt(params, rpcError);
     },
   } as unknown as SupabaseClient;
   bindModelCallContext(controller.signal, {
@@ -206,7 +885,42 @@ function legacyRequest(
   });
 }
 
-Deno.test("semantic tasks resolve to the four approved OpenAI routes", async () => {
+Deno.test("OpenAI exhausted credit is distinct from transient rate limiting", async () => {
+  await withEnvironment({
+    OPENAI_API_KEY: "synthetic-key",
+    OPENAI_RETRY_BASE_MS: "0",
+  }, async () => {
+    const originalFetch = globalThis.fetch;
+    let dispatches = 0;
+    globalThis.fetch = (() => {
+      dispatches += 1;
+      return Promise.resolve(
+        Response.json({ error: { code: "credit_balance_exhausted" } }, {
+          status: 429,
+          headers: { "Retry-After": "0" },
+        }),
+      );
+    }) as typeof fetch;
+    try {
+      const error = await assertRejects(
+        () =>
+          legacyRequest({
+            task: "recommend",
+            systemPrompt: "Classify a synthetic document.",
+            messages: [{ role: "user", content: "Meeting agenda" }],
+          }),
+        OpenAIAdapterError,
+        "OPENAI_CREDIT_EXHAUSTED",
+      );
+      assertEquals(error.retryable, false);
+      assertEquals(dispatches, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+Deno.test("semantic tasks resolve to the four approved OpenAI routes", () => {
   assertEquals(resolveOpenAIRoute("intent").semanticRoute, "fast");
   assertEquals(resolveOpenAIRoute("clarify").model, "gpt-5.6-luna");
   assertEquals(resolveOpenAIRoute("document").semanticRoute, "deep");
@@ -216,8 +930,8 @@ Deno.test("semantic tasks resolve to the four approved OpenAI routes", async () 
   assertEquals(resolveOpenAIRoute("job_match").semanticRoute, "research");
   assertEquals(resolveOpenAIRoute("review").semanticRoute, "review");
   assertEquals(resolveOpenAIRoute("review").reasoningEffort, "high");
-  await assertRejects(
-    async () => resolveOpenAIRoute("client-selected-model"),
+  assertThrows(
+    () => resolveOpenAIRoute("client-selected-model"),
     OpenAIAdapterError,
     "OPENAI_UNKNOWN_TASK",
   );
@@ -225,9 +939,9 @@ Deno.test("semantic tasks resolve to the four approved OpenAI routes", async () 
 
 Deno.test(
   "background processing stays disabled until its durable contract is activated",
-  async () => {
-    await assertRejects(
-      async () =>
+  () => {
+    assertThrows(
+      () =>
         buildOpenAIRequestBody({
           task: "document",
           systemPrompt: "Draft",
@@ -289,9 +1003,9 @@ Deno.test("missing and unknown deployment environments fail before routing", asy
   for (const environment of [undefined, "", "development", "prod", "typo"]) {
     await withEnvironment(
       { PROMPTED_DEPLOYMENT_ENV: environment },
-      async () => {
-        const error = await assertRejects(
-          async () => resolveOpenAIRoute("intent"),
+      () => {
+        const error = assertThrows(
+          () => resolveOpenAIRoute("intent"),
           OpenAIAdapterError,
           "OPENAI_DEPLOYMENT_ENV_INVALID",
         );
@@ -312,9 +1026,9 @@ Deno.test("every hosted environment requires the complete frozen routing contrac
           ...hostedRouteEnvironment,
           [missingName]: undefined,
         },
-        async () => {
-          const error = await assertRejects(
-            async () => resolveOpenAIRoute("intent"),
+        () => {
+          const error = assertThrows(
+            () => resolveOpenAIRoute("intent"),
             OpenAIAdapterError,
             "OPENAI_HOSTED_ROUTING_CONFIG_MISSING",
           );
@@ -343,9 +1057,9 @@ Deno.test("hosted routing rejects malformed model and version values before a pr
         ...hostedRouteEnvironment,
         [name]: value,
       },
-      async () => {
-        const error = await assertRejects(
-          async () => resolveOpenAIRoute("intent"),
+      () => {
+        const error = assertThrows(
+          () => resolveOpenAIRoute("intent"),
           OpenAIAdapterError,
           "OPENAI_HOSTED_ROUTING_CONFIG_INVALID",
         );
@@ -393,8 +1107,8 @@ Deno.test("web search is available only on the approved research route", () => {
   assertEquals(research.tools, [{ type: "web_search" }]);
   assertEquals(research.include, ["web_search_call.action.sources"]);
 
-  assertRejects(
-    async () =>
+  assertThrows(
+    () =>
       buildOpenAIRequestBody({
         task: "document",
         systemPrompt: "Draft",
@@ -944,18 +1658,19 @@ Deno.test(
         outputSchema: strictSchema,
         routeSnapshot: acceptedRoute,
         attemptLifecycle: {
-          async prepare(input) {
+          prepare(input) {
             events.push(`prepare:${input.localAttemptNumber}`);
             assertEquals(input.routeSnapshot, acceptedRoute);
             assertEquals(input.requestSha256.length, 64);
-            return {
+            return Promise.resolve({
               attemptNumber: 1,
               clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-            };
+            });
           },
-          async complete(input) {
+          complete(input) {
             events.push(`complete:${input.attempt.attemptNumber}`);
             assertEquals(input.structuredOutput, { decision: "approve" });
+            return Promise.resolve();
           },
         },
       });
@@ -1333,15 +2048,7 @@ Deno.test(
             reasoning_effort: args.p_reasoning_effort,
           },
         };
-        return Promise.resolve({
-          data: {
-            usage_ledger_id: "11111111-1111-4111-8111-111111111111",
-            model_call_key: "a".repeat(64),
-            result_id: "33333333-3333-4333-8333-333333333333",
-            result_response_sha256: "c".repeat(64),
-          },
-          error: null,
-        });
+        return validAccountingReceipt(args);
       },
     } as unknown as SupabaseClient;
     const controller = new AbortController();
@@ -1408,15 +2115,7 @@ Deno.test(
       rpc(name: string, args: Record<string, unknown>) {
         if (name === "record_legacy_model_call_attempt") {
           savedEnvelope = args.p_result_envelope as Record<string, unknown>;
-          return Promise.resolve({
-            data: {
-              usage_ledger_id: "11111111-1111-4111-8111-111111111111",
-              model_call_key: "a".repeat(64),
-              result_id: "33333333-3333-4333-8333-333333333333",
-              result_response_sha256: "c".repeat(64),
-            },
-            error: null,
-          });
+          return validAccountingReceipt(args);
         }
         if (name === "mark_legacy_model_attempt_dispatched") {
           return Promise.resolve({
@@ -1581,13 +2280,7 @@ Deno.test("durable checkpoint attempt limit survives a new invocation", async ()
           error: null,
         });
       }
-      return Promise.resolve({
-        data: {
-          usage_ledger_id: crypto.randomUUID(),
-          model_call_key: "a".repeat(64),
-        },
-        error: null,
-      });
+      return validAccountingReceipt(args);
     },
   } as unknown as SupabaseClient;
   const controller = new AbortController();
@@ -1748,15 +2441,7 @@ Deno.test("concurrent exact workers cannot dispatch one admission twice", async 
           error: null,
         });
       }
-      return Promise.resolve({
-        data: {
-          usage_ledger_id: "11111111-1111-4111-8111-111111111111",
-          model_call_key: "a".repeat(64),
-          result_id: "33333333-3333-4333-8333-333333333333",
-          result_response_sha256: "c".repeat(64),
-        },
-        error: null,
-      });
+      return validAccountingReceipt(args);
     },
   } as unknown as SupabaseClient;
   const invoke = () => {
@@ -1922,15 +2607,7 @@ Deno.test("generic guarded checkpoint replays one immutable provider result", as
           reasoning_effort: args.p_reasoning_effort,
         },
       };
-      return Promise.resolve({
-        data: {
-          usage_ledger_id: "11111111-1111-4111-8111-111111111111",
-          model_call_key: "a".repeat(64),
-          result_id: "33333333-3333-4333-8333-333333333333",
-          result_response_sha256: "c".repeat(64),
-        },
-        error: null,
-      });
+      return validAccountingReceipt(args);
     },
   } as unknown as SupabaseClient;
   const invoke = () => {
@@ -2492,3 +3169,200 @@ Deno.test(
     );
   },
 );
+
+const ollamaTestEnvironment = {
+  PROMPTED_DEPLOYMENT_ENV: "test",
+  OPENAI_API_KEY: "synthetic-openai-key",
+  OPENAI_RETRY_BASE_MS: "0",
+  OLLAMA_CREDIT_FALLBACK_ENABLED: "true",
+  OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+  OLLAMA_MODEL: "gpt-oss:20b",
+  OLLAMA_MODEL_DIGEST: "a".repeat(64),
+  OLLAMA_CONFIGURATION_VERSION: "ollama-test.1",
+};
+
+Deno.test("credit fallback persists the primary rejection before one admitted Ollama attempt", async () => {
+  await withEnvironment(ollamaTestEnvironment, async () => {
+    const originalFetch = globalThis.fetch;
+    const events: string[] = [];
+    const retained: Array<
+      Parameters<
+        NonNullable<
+          Parameters<typeof routeRequest>[0]["attemptLifecycle"]
+        >["complete"]
+      >[0]
+    > = [];
+    globalThis.fetch = ((url, init) => {
+      const path = new URL(String(url)).pathname;
+      events.push(path);
+      if (path === "/v1/responses") {
+        return Promise.resolve(
+          Response.json({ error: { code: "insufficient_quota" } }, {
+            status: 429,
+          }),
+        );
+      }
+      assertEquals(new Headers(init?.headers).has("Authorization"), false);
+      if (path === "/api/tags") {
+        return Promise.resolve(
+          Response.json({
+            models: [{ name: "gpt-oss:20b", digest: "a".repeat(64) }],
+          }),
+        );
+      }
+      assertEquals(path, "/api/chat");
+      return Promise.resolve(
+        Response.json({
+          model: "gpt-oss:20b",
+          done: true,
+          done_reason: "stop",
+          message: { role: "assistant", content: '{"decision":"approve"}' },
+          prompt_eval_count: 17,
+          eval_count: 9,
+        }),
+      );
+    }) as typeof fetch;
+    try {
+      const result = await routeRequest({
+        task: "recommend",
+        systemPrompt: "Synthetic classification",
+        messages: [{ role: "user", content: "Meeting agenda" }],
+        outputSchema: strictSchema,
+        attemptLifecycle: {
+          prepare(input) {
+            events.push(`prepare:${input.localAttemptNumber}`);
+            const primary = retained[0]?.attempt;
+            return Promise.resolve({
+              attemptNumber: input.localAttemptNumber,
+              clientRequestId: `synthetic-${input.localAttemptNumber}`,
+              ...(primary?.errorCode === "OPENAI_CREDIT_EXHAUSTED"
+                ? { execution: input.routeSnapshot.creditFallback }
+                : {}),
+            });
+          },
+          complete(input) {
+            retained.push(input);
+            events.push(`persist:${input.attempt.attemptNumber}`);
+            return Promise.resolve();
+          },
+        },
+      });
+      assertEquals(events, [
+        "prepare:1",
+        "/v1/responses",
+        "persist:1",
+        "prepare:2",
+        "/api/tags",
+        "/api/chat",
+        "/api/tags",
+        "persist:2",
+      ]);
+      assertEquals(result._provider, "ollama");
+      assertEquals(result.execution?.model, "gpt-oss:20b");
+      assertEquals(result.routeSnapshot.provider, "openai");
+      assertEquals(result.inputTokens, 17);
+      assertEquals(result.outputTokens, 9);
+      assertEquals(retained[0].attempt.errorCode, "OPENAI_CREDIT_EXHAUSTED");
+      assertEquals(retained[0].attempt.inputTokens, 0);
+      assertEquals(retained[1].attempt.execution, result.execution);
+      assertEquals(retained[1].structuredOutput, { decision: "approve" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+Deno.test("fallback cannot dispatch when the primary rejection was not persisted or admission is missing", async () => {
+  for (const persistenceFails of [true, false]) {
+    await withEnvironment(ollamaTestEnvironment, async () => {
+      const originalFetch = globalThis.fetch;
+      let dispatches = 0;
+      globalThis.fetch = (() => {
+        dispatches++;
+        return Promise.resolve(
+          Response.json({ error: { code: "insufficient_quota" } }, {
+            status: 429,
+          }),
+        );
+      }) as typeof fetch;
+      try {
+        await assertRejects(() =>
+          routeRequest({
+            task: "recommend",
+            systemPrompt: "Synthetic",
+            messages: [{ role: "user", content: "Synthetic" }],
+            attemptLifecycle: {
+              prepare(input) {
+                return Promise.resolve({
+                  attemptNumber: input.localAttemptNumber,
+                  clientRequestId: `synthetic-${input.localAttemptNumber}`,
+                });
+              },
+              complete() {
+                return persistenceFails
+                  ? Promise.reject(new Error("synthetic persistence failure"))
+                  : Promise.resolve();
+              },
+            },
+          })
+        );
+        assertEquals(dispatches, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+});
+
+Deno.test("a resumed admitted fallback uses Ollama without an OpenAI key or redispatch", async () => {
+  await withEnvironment(
+    { ...ollamaTestEnvironment, OPENAI_API_KEY: undefined },
+    async () => {
+      const originalFetch = globalThis.fetch;
+      let calls = 0;
+      globalThis.fetch = ((url) => {
+        calls++;
+        assertEquals(new URL(String(url)).hostname, "127.0.0.1");
+        return Promise.resolve(
+          String(url).endsWith("/api/tags")
+            ? Response.json({
+              models: [{ name: "gpt-oss:20b", digest: "a".repeat(64) }],
+            })
+            : Response.json({
+              model: "gpt-oss:20b",
+              done: true,
+              done_reason: "stop",
+              message: { role: "assistant", content: '{"decision":"approve"}' },
+              prompt_eval_count: 10,
+              eval_count: 5,
+            }),
+        );
+      }) as typeof fetch;
+      try {
+        const result = await routeRequest({
+          task: "recommend",
+          systemPrompt: "Synthetic",
+          messages: [{ role: "user", content: "Synthetic" }],
+          outputSchema: strictSchema,
+          attemptLifecycle: {
+            prepare(input) {
+              return Promise.resolve({
+                attemptNumber: 2,
+                clientRequestId: "resumed-attempt",
+                execution: input.routeSnapshot.creditFallback,
+              });
+            },
+            complete() {
+              return Promise.resolve();
+            },
+          },
+        });
+        assertEquals(result._provider, "ollama");
+        assertEquals(result.attempts[0].attemptNumber, 2);
+        assertEquals(calls, 3);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+});

@@ -8,6 +8,7 @@ import type {
   Section,
 } from "@prompted/shared/browser";
 import { isVisiblyEmpty } from "@prompted/shared/browser";
+import { ApiError } from "@prompted/shared/api-client";
 import {
   currentWorkspaceCacheScope,
   loadPendingOutcome,
@@ -18,14 +19,18 @@ import {
   resolveCapturedExportIntentSequence,
   savePendingOutcome,
   saveWorkspace,
+  type WorkspaceDeviceSaveStatus,
   type StoredWorkspace,
   type WorkspaceCacheScope,
   type WorkspaceDocumentState,
 } from "@/lib/workspace-store";
 import {
-  applyGeneratedSection,
+  applyGeneratedResult,
   applyRequiredSectionFallbacks,
+  mergeGenerationMissingInfo,
+  type DocumentGenerationResult,
   pendingDefaults,
+  sectionsNeedingInitialGeneration,
   shouldGenerateInitialDraft,
   stateFromStored,
   storedFromState,
@@ -78,6 +83,7 @@ export interface GenerationIssue {
   sectionName: string;
   reason: string;
   attempts: number;
+  retryable?: boolean;
 }
 
 export interface UseDocument {
@@ -85,6 +91,7 @@ export interface UseDocument {
   loading: boolean;
   drafting: boolean;
   syncStatus: WorkspaceSyncStatus;
+  deviceSaveStatus?: WorkspaceDeviceSaveStatus;
   lastSyncedAt: string | null;
   retrySync: () => void;
   generationIssues: GenerationIssue[];
@@ -164,6 +171,9 @@ interface LegacySavedSection {
 }
 
 interface LegacySavedDocument {
+  ownerUserId: string;
+  outcomeId: string;
+  documentId: string;
   title: string;
   status: DocumentStatus;
   templateId: string | null;
@@ -497,6 +507,55 @@ function missingRequiredSections(sections: Section[]): GenerationIssue[] {
     }));
 }
 
+function generationFailure(section: Section, error: unknown, attempts = 0): GenerationIssue {
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  if (code === "DOCUMENT_GENERATION_SAVE_REQUIRED") {
+    return {
+      sectionId: section.id,
+      sectionName: section.name,
+      attempts,
+      retryable: true,
+      reason:
+        "Your document could not be saved, so TED has not started. Retry saving or reload the workspace before continuing.",
+    };
+  }
+  if (code === "DOCUMENT_GENERATION_SCOPE_INVALID" || code === "DOCUMENT_DESIGN_MAPPING_REQUIRED") {
+    return {
+      sectionId: section.id,
+      sectionName: section.name,
+      attempts,
+      retryable: false,
+      reason:
+        "TED could not safely attach the returned wording to this document's sections. Regeneration is paused. You can edit the existing wording directly.",
+    };
+  }
+  if (code === "DOCUMENT_GENERATION_STALE_RESULT") {
+    return {
+      sectionId: section.id,
+      sectionName: section.name,
+      attempts,
+      retryable: false,
+      reason:
+        "Your document changed while TED was drafting. Your newer wording is preserved, and the earlier result has not been applied.",
+    };
+  }
+  const reconciliationRequired =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "GENERATION_RECONCILIATION_REQUIRED";
+  return {
+    sectionId: section.id,
+    sectionName: section.name,
+    attempts,
+    retryable: !reconciliationRequired,
+    reason: reconciliationRequired
+      ? "TED could not confirm whether the previous generation finished. New generation is paused for this section. You can still edit its wording."
+      : "Generation did not complete. Try this section again, or edit its wording.",
+  };
+}
+
 export const PAYWALL_SECTION_ID = "__paywall__";
 export const AUTH_SECTION_ID = "__auth__";
 
@@ -575,13 +634,70 @@ export function useDocument(
       ? `user:${cacheScope.userId}`
       : `guest:${cacheScope.guestId}`
     : "owner-unavailable";
-  const requiresInitialLegacyHydration = Boolean(
-    initialState?.workspace &&
-    initialState.truth.persistence === "persisted" &&
+  // Only an untouched initial draft can resume from this compatibility path.
+  // A required blank in a later owner-edited revision is not generation intent.
+  const resumesInitialLegacyGeneration = Boolean(
+    initialState?.truth.persistence === "persisted" &&
     initialState.truth.ledgerBindingStatus === "legacy_unversioned" &&
-    initialState.truth.snapshotVersion !== WORKSPACE_SNAPSHOT_VERSION,
+    initialState.truth.snapshotVersion === WORKSPACE_SNAPSHOT_VERSION &&
+    initialState.truth.currentRevision === 1 &&
+    initialState.truth.approvedRevision === null &&
+    initialState.workspace?.status === "draft" &&
+    initialState.workspace.sections.every(
+      (section) => section.status === "draft" && workspaceSectionMetadata(section)?.revision === 1,
+    ) &&
+    initialState.workspace?.sections.some(
+      (section) =>
+        section.is_required !== false && workspaceSectionMetadata(section)?.contentLength === 0,
+    ),
   );
+  const requiresInitialLegacyHydration =
+    resumesInitialLegacyGeneration ||
+    Boolean(
+      initialState?.workspace &&
+      initialState.truth.persistence === "persisted" &&
+      initialState.truth.ledgerBindingStatus === "legacy_unversioned" &&
+      initialState.truth.snapshotVersion !== WORKSPACE_SNAPSHOT_VERSION,
+    );
   const [state, setState] = useState<DocumentState | null>(() => initialState?.workspace ?? null);
+  // A workspace observation has one owner/outcome lifetime. Accepted saves
+  // may finish after unmount, but cannot adopt receipts into a reused hook.
+  const resource = useMemo(
+    () => ({ outcomeId, ownerEpoch, observing: true, scopedGenerationPending: false }),
+    [outcomeId, ownerEpoch],
+  );
+  const activeResourceRef = useRef(resource);
+  activeResourceRef.current = resource;
+  const activeDocumentIdRef = useRef(state?.documentId ?? null);
+  activeDocumentIdRef.current = state?.documentId ?? null;
+  const activeStateRef = useRef(state);
+  activeStateRef.current = state;
+  const [deviceReceipt, setDeviceReceipt] = useState<{
+    resource: typeof resource;
+    snapshot: DocumentState;
+    status: WorkspaceDeviceSaveStatus;
+  } | null>(null);
+  const deviceSaveStatus: WorkspaceDeviceSaveStatus =
+    !ownerMismatch &&
+    deviceReceipt?.resource === resource &&
+    deviceReceipt.snapshot.documentId === state?.documentId &&
+    (deviceReceipt.status !== "saved" || deviceReceipt.snapshot === state)
+      ? deviceReceipt.status
+      : "unknown";
+  useEffect(() => {
+    resource.observing = true;
+    setDrafting(false);
+    setRegeneratingSectionId(null);
+    setGenerationIssues([]);
+    setMissingInfo([]);
+    const pending = pendingLegacyWorkspaceCommandRef.current;
+    if (pending && (pending.request.outcomeId !== outcomeId || pending.ownerUserId !== userId)) {
+      pendingLegacyWorkspaceCommandRef.current = null;
+    }
+    return () => {
+      resource.observing = false;
+    };
+  }, [outcomeId, resource, userId]);
   const [loading, setLoading] = useState(
     () => !initialState?.workspace || requiresInitialLegacyHydration,
   );
@@ -618,6 +734,16 @@ export function useDocument(
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const saveRevisionRef = useRef(0);
   const localMutationEpochRef = useRef(0);
+  const renderedMutationEpoch = localMutationEpochRef.current;
+  // Explicit persistence consumes the pending debounce without pretending a
+  // new user edit occurred. Later edits still advance the local epoch and save.
+  const explicitSaveEpochRef = useRef({ sequence: 0, mutationEpoch: -1 });
+  const markExplicitSave = useCallback(() => {
+    explicitSaveEpochRef.current = {
+      sequence: explicitSaveEpochRef.current.sequence + 1,
+      mutationEpoch: localMutationEpochRef.current,
+    };
+  }, []);
   const failedSnapshotRef = useRef<DocumentState | null>(null);
   const pendingRef = useRef<PendingOutcome | null>(
     ownerMismatch ? null : pendingFromInitialState(initialState),
@@ -675,6 +801,9 @@ export function useDocument(
       typeof initialState.truth.currentRevision === "number" &&
       initialState.truth.currentRevision > 0
       ? {
+          ownerUserId: userId ?? "",
+          outcomeId,
+          documentId: initialState.workspace.documentId,
           title: initialState.workspace.title,
           status: requiredDocumentStatus(initialState.workspace.status),
           templateId: legacyTemplateId(initialState.workspace.templateId),
@@ -703,10 +832,17 @@ export function useDocument(
 
   const cacheWorkspaceSnapshot = useCallback(
     (snapshot: DocumentState) => {
-      if (!cacheScope || ownerMismatch) return;
-      saveWorkspace(cacheScope, storedFromState(outcomeId, snapshot));
+      if (!cacheScope || ownerMismatch || activeResourceRef.current !== resource) return;
+      const result = saveWorkspace(cacheScope, storedFromState(outcomeId, snapshot));
+      const status =
+        result?.status === "saved"
+          ? "saved"
+          : result?.reason === "quota_exceeded"
+            ? "quota_exceeded"
+            : "unavailable";
+      setDeviceReceipt({ resource, snapshot, status });
     },
-    [cacheScope, outcomeId, ownerMismatch],
+    [cacheScope, outcomeId, ownerMismatch, resource],
   );
 
   const cachePendingOutcome = useCallback(
@@ -804,7 +940,9 @@ export function useDocument(
       mergeLegacyMutationTruth(result, true);
       failedSnapshotRef.current = null;
       setLastSyncedAt((current) => laterIsoTimestamp(current, result.document_updated_at));
-      setSyncStatus("saved");
+      // The receipt proves this section. The rescheduled aggregate must still
+      // compare siblings and metadata before the whole workspace is Saved.
+      setSyncStatus("idle");
     },
     [mergeLegacyMutationTruth],
   );
@@ -878,6 +1016,9 @@ export function useDocument(
       const adoptDocument = !documentIsNewer && !documentAlreadyMatches;
       if (adoptDocument) {
         legacySavedDocumentRef.current = {
+          ownerUserId: command.ownerUserId,
+          outcomeId: command.request.outcomeId,
+          documentId: command.request.documentId,
           title: command.request.document.title,
           status: receipt.documentStatus,
           templateId: command.request.document.template_id,
@@ -1075,7 +1216,12 @@ export function useDocument(
         return Promise.resolve(false);
       }
       const mutationEpoch = localMutationEpochRef.current;
-      const mutationIsCurrent = () => mutationEpoch === localMutationEpochRef.current;
+      const resourceIsCurrent = () =>
+        activeResourceRef.current === resource &&
+        (activeDocumentIdRef.current === null ||
+          activeDocumentIdRef.current === snapshot.documentId);
+      const mutationIsCurrent = () =>
+        resourceIsCurrent() && mutationEpoch === localMutationEpochRef.current;
       setSyncStatus("saving");
 
       const run = async () => {
@@ -1101,16 +1247,25 @@ export function useDocument(
             const dispatch = async (
               command: PendingLegacyWorkspaceCommand,
             ): Promise<LegacyWorkspaceSaveReceiptV1> => {
+              if (
+                !resourceIsCurrent() ||
+                command.request.documentId !== snapshot.documentId ||
+                command.request.outcomeId !== outcomeId
+              )
+                throw new Error("LEGACY_WORKSPACE_RESOURCE_CHANGED");
               if (command.ownerUserId !== requestContext.expectedUserId) {
-                pendingLegacyWorkspaceCommandRef.current = null;
+                if (pendingLegacyWorkspaceCommandRef.current === command)
+                  pendingLegacyWorkspaceCommandRef.current = null;
                 throw new Error("LEGACY_WORKSPACE_OWNER_CONTEXT_MISMATCH");
               }
               pendingLegacyWorkspaceCommandRef.current = command;
               try {
                 const receipt = await saveLegacyWorkspaceV1(command.request, requestContext);
                 requestContext.assertCurrent();
+                if (!resourceIsCurrent()) throw new Error("LEGACY_WORKSPACE_RESOURCE_CHANGED");
                 mergeLegacyWorkspaceReceipt(command, receipt);
-                pendingLegacyWorkspaceCommandRef.current = null;
+                if (pendingLegacyWorkspaceCommandRef.current === command)
+                  pendingLegacyWorkspaceCommandRef.current = null;
                 return receipt;
               } catch (error) {
                 if (
@@ -1118,13 +1273,24 @@ export function useDocument(
                   !error.ambiguous ||
                   !ownerDispatchIsCurrent(requestContext)
                 ) {
-                  pendingLegacyWorkspaceCommandRef.current = null;
+                  if (pendingLegacyWorkspaceCommandRef.current === command)
+                    pendingLegacyWorkspaceCommandRef.current = null;
                 }
                 throw error;
               }
             };
 
-            const pendingCommand = pendingLegacyWorkspaceCommandRef.current;
+            let pendingCommand = pendingLegacyWorkspaceCommandRef.current;
+            if (
+              pendingCommand &&
+              (pendingCommand.request.documentId !== snapshot.documentId ||
+                pendingCommand.request.outcomeId !== outcomeId ||
+                pendingCommand.ownerUserId !== userId)
+            ) {
+              if (pendingLegacyWorkspaceCommandRef.current === pendingCommand)
+                pendingLegacyWorkspaceCommandRef.current = null;
+              pendingCommand = null;
+            }
             if (pendingCommand) {
               const receipt = await dispatch(pendingCommand);
               durableTimestamp = receipt.documentUpdatedAt;
@@ -1196,24 +1362,56 @@ export function useDocument(
       outcomeId,
       ownerMismatch,
       persistCapturedSnapshot,
+      resource,
       userId,
     ],
   );
 
   const retrySync = useCallback(() => {
-    const snapshot = failedSnapshotRef.current ?? state;
-    if (!snapshot || !userId) return;
+    const snapshot = state;
+    if (
+      !snapshot ||
+      ownerMismatch ||
+      !resource.observing ||
+      activeResourceRef.current !== resource ||
+      renderedMutationEpoch !== localMutationEpochRef.current
+    )
+      return;
+    markExplicitSave();
+    cacheWorkspaceSnapshot(snapshot);
+    if (!userId) return;
     const revision = ++saveRevisionRef.current;
-    persistRemote(snapshot, revision);
-  }, [persistRemote, state, userId]);
+    void persistRemote(snapshot, revision);
+  }, [
+    cacheWorkspaceSnapshot,
+    markExplicitSave,
+    ownerMismatch,
+    persistRemote,
+    renderedMutationEpoch,
+    resource,
+    state,
+    userId,
+  ]);
 
   const approveDocument = useCallback(async (): Promise<boolean> => {
     const identity = capturedIdentityRef.current;
-    if (!captured || !state || !identity || !userId || approving || ownerMismatch) return false;
+    if (
+      !captured ||
+      !state ||
+      !identity ||
+      !userId ||
+      approving ||
+      ownerMismatch ||
+      !resource.observing ||
+      activeResourceRef.current !== resource ||
+      renderedMutationEpoch !== localMutationEpochRef.current
+    )
+      return false;
     const requestContext = captureOwnerDispatch(userId);
     const snapshot = state;
     const mutationEpoch = localMutationEpochRef.current;
     setApproving(true);
+    markExplicitSave();
     const revision = ++saveRevisionRef.current;
     try {
       const persisted = await persistRemote(snapshot, revision, requestContext);
@@ -1263,7 +1461,17 @@ export function useDocument(
     } finally {
       if (ownerDispatchIsCurrent(requestContext)) setApproving(false);
     }
-  }, [approving, captured, ownerMismatch, persistRemote, state, userId]);
+  }, [
+    approving,
+    captured,
+    markExplicitSave,
+    ownerMismatch,
+    persistRemote,
+    renderedMutationEpoch,
+    resource,
+    state,
+    userId,
+  ]);
 
   const requestCapturedExport = useCallback(
     async (
@@ -1384,6 +1592,91 @@ export function useDocument(
     [cacheScope, outcomeId, ownerMismatch, rememberCapturedExportDelivery, state, userId],
   );
 
+  const adoptGenerationResult = useCallback(
+    async (
+      baseline: DocumentState,
+      result: DocumentGenerationResult,
+      expectedMutationEpoch: number,
+      generationContext: OwnerDispatchLease,
+    ): Promise<void> => {
+      generationContext.assertCurrent();
+      if (
+        captured ||
+        !resource.observing ||
+        activeResourceRef.current !== resource ||
+        (activeDocumentIdRef.current !== null &&
+          activeDocumentIdRef.current !== baseline.documentId) ||
+        expectedMutationEpoch !== localMutationEpochRef.current
+      ) {
+        throw new ApiError(409, "DOCUMENT_GENERATION_STALE_RESULT", {});
+      }
+      const candidate = applyGeneratedResult(baseline, result);
+      // Validate metadata before any React update; the updater below only merges
+      // the still-current transient questions within this exact result scope.
+      mergeGenerationMissingInfo([], result);
+      generationContext.assertCurrent();
+      if (expectedMutationEpoch !== localMutationEpochRef.current) {
+        throw new ApiError(409, "DOCUMENT_GENERATION_STALE_RESULT", {});
+      }
+      localMutationEpochRef.current += 1;
+      markExplicitSave();
+      setState(candidate);
+      setUnresolvedPlaceholders(candidate.unresolvedPlaceholders ?? []);
+      setMissingInfo((current) => mergeGenerationMissingInfo(current, result));
+      const completedIds = new Set(result.scope.map((binding) => binding.sectionId));
+      setGenerationIssues((current) =>
+        current.filter((issue) => !completedIds.has(issue.sectionId)),
+      );
+      cacheWorkspaceSnapshot(candidate);
+      // Accepted wording uses the existing owner-scoped save lifetime. Ending
+      // stream observation or navigating away must not cancel an accepted save.
+      await persistRemote(candidate, ++saveRevisionRef.current);
+    },
+    [cacheWorkspaceSnapshot, captured, markExplicitSave, persistRemote, resource],
+  );
+
+  const ensureLegacyGenerationIdentity = useCallback(
+    async (
+      snapshot: DocumentState,
+      expectedMutationEpoch: number,
+      requestContext: OwnerDispatchLease,
+    ): Promise<void> => {
+      const assertObservation = () => {
+        requestContext.assertCurrent();
+        if (
+          !resource.observing ||
+          activeResourceRef.current !== resource ||
+          expectedMutationEpoch !== localMutationEpochRef.current
+        ) {
+          throw new ApiError(409, "DOCUMENT_GENERATION_STALE_RESULT", {});
+        }
+      };
+      assertObservation();
+      const saved = legacySavedDocumentRef.current;
+      if (
+        saved &&
+        (saved.ownerUserId !== requestContext.expectedUserId ||
+          saved.outcomeId !== outcomeId ||
+          saved.documentId !== snapshot.documentId)
+      ) {
+        throw new ApiError(409, "DOCUMENT_GENERATION_STALE_RESULT", {});
+      }
+      if (
+        saved &&
+        snapshot.sections.every((section) => legacySavedSectionsRef.current.has(section.id))
+      )
+        return;
+      // The random seed IDs must be durable before they enter the immutable
+      // generation request key. Use the existing queue and exact replay receipt.
+      markExplicitSave();
+      const persisted = await persistRemote(snapshot, ++saveRevisionRef.current);
+      // An accepted save may finish after navigation; provider work may not.
+      assertObservation();
+      if (!persisted) throw new ApiError(409, "DOCUMENT_GENERATION_SAVE_REQUIRED", {});
+    },
+    [markExplicitSave, outcomeId, persistRemote, resource],
+  );
+
   const retryGenerationSection = useCallback(
     async (sectionId: string) => {
       if (captured) {
@@ -1393,25 +1686,45 @@ export function useDocument(
               ? {
                   ...issue,
                   reason:
-                    "This captured revision cannot use the legacy regenerate path. Edit the wording directly while the scoped repair route is unavailable.",
+                    "Regeneration is unavailable for this document. You can edit its wording directly.",
+                  retryable: false,
                 }
               : issue,
           ),
         );
         return;
       }
-      if (!state || regeneratingSectionId || !cacheScope || ownerMismatch || !userId) return;
+      if (
+        !state ||
+        loading ||
+        !resource.observing ||
+        activeResourceRef.current !== resource ||
+        renderedMutationEpoch !== localMutationEpochRef.current ||
+        resource.scopedGenerationPending ||
+        regeneratingSectionId ||
+        !cacheScope ||
+        ownerMismatch ||
+        !userId
+      )
+        return;
+      if (
+        generationIssues.some((issue) => issue.sectionId === sectionId && issue.retryable === false)
+      )
+        return;
       const target = state.sections.find((section) => section.id === sectionId);
       if (!target) return;
       const requestContext = captureOwnerDispatch(userId);
+      const mutationEpoch = localMutationEpochRef.current;
 
+      resource.scopedGenerationPending = true;
       setRegeneratingSectionId(sectionId);
       setDrafting(true);
-      let accepted = false;
       try {
+        await ensureLegacyGenerationIdentity(state, mutationEpoch, requestContext);
         await streamInitialDraft({
           outcomeId,
-          state: { ...state, sections: [target], generated: false },
+          state,
+          sectionIds: [target.id],
           pending: pendingRef.current,
           requestContext,
           // A section repair has different immutable input from the initial
@@ -1425,72 +1738,63 @@ export function useDocument(
               `section-repair:${target.id}`,
               input,
             ),
-          onSection: (event) => {
-            localMutationEpochRef.current += 1;
-            if (captured) setDurableExportEligible(false);
-            setState((previous) => {
-              if (!previous) return previous;
-              const next = applyGeneratedSection(previous, event);
-              if (next !== previous) accepted = true;
-              return next;
-            });
-          },
-          onMissingInfo: (event) => setMissingInfo(event.sections),
-          onUnresolvedPlaceholders: (event) => {
-            localMutationEpochRef.current += 1;
-            if (captured) setDurableExportEligible(false);
-            setUnresolvedPlaceholders(event.placeholders);
-            setState((previous) =>
-              previous ? { ...previous, unresolvedPlaceholders: event.placeholders } : previous,
-            );
-          },
+          onComplete: (result) =>
+            adoptGenerationResult(state, result, mutationEpoch, requestContext),
         });
         requestContext.assertCurrent();
-
-        setGenerationIssues((current) => {
-          if (accepted) {
-            return current.filter((issue) => issue.sectionId !== sectionId);
-          }
-          return current.map((issue) =>
-            issue.sectionId === sectionId
-              ? {
-                  ...issue,
-                  attempts: issue.attempts + 1,
-                  reason:
-                    issue.attempts >= 1
-                      ? "TED still could not produce safe final wording. Add more detail or write this section manually."
-                      : "TED could not safely regenerate this section. Try once more or edit it manually.",
-                }
-              : issue,
-          );
-        });
       } catch (err) {
-        if (!ownerDispatchIsCurrent(requestContext)) return;
+        if (
+          !resource.observing ||
+          activeResourceRef.current !== resource ||
+          !ownerDispatchIsCurrent(requestContext)
+        )
+          return;
         if (isPaywallError(err)) {
-          setGenerationIssues(paywallIssues());
+          setGenerationIssues((current) => [
+            ...current.filter((issue) => issue.retryable === false),
+            ...paywallIssues(),
+          ]);
         } else if (isAuthError(err)) {
-          setGenerationIssues(authIssues());
+          setGenerationIssues((current) => [
+            ...current.filter((issue) => issue.retryable === false),
+            ...authIssues(),
+          ]);
         } else {
-          setGenerationIssues((current) =>
-            current.map((issue) =>
-              issue.sectionId === sectionId
-                ? {
-                    ...issue,
-                    attempts: issue.attempts + 1,
-                    reason: "Regeneration failed. Your existing document was not changed.",
-                  }
-                : issue,
-            ),
-          );
+          setGenerationIssues((current) => {
+            const previous = current.find((issue) => issue.sectionId === sectionId);
+            return [
+              ...current.filter((issue) => issue.sectionId !== sectionId),
+              generationFailure(target, err, (previous?.attempts ?? 0) + 1),
+            ];
+          });
         }
       } finally {
-        if (ownerDispatchIsCurrent(requestContext)) {
+        resource.scopedGenerationPending = false;
+        if (
+          resource.observing &&
+          activeResourceRef.current === resource &&
+          ownerDispatchIsCurrent(requestContext)
+        ) {
           setDrafting(false);
           setRegeneratingSectionId(null);
         }
       }
     },
-    [cacheScope, captured, outcomeId, ownerMismatch, regeneratingSectionId, state, userId],
+    [
+      adoptGenerationResult,
+      cacheScope,
+      captured,
+      ensureLegacyGenerationIdentity,
+      generationIssues,
+      loading,
+      outcomeId,
+      ownerMismatch,
+      regeneratingSectionId,
+      renderedMutationEpoch,
+      resource,
+      state,
+      userId,
+    ],
   );
 
   useEffect(() => {
@@ -1519,7 +1823,11 @@ export function useDocument(
       setLoading(false);
       return;
     }
-    if (initialState?.truth.persistence === "persisted" && initialState.workspace) {
+    if (
+      initialState?.truth.persistence === "persisted" &&
+      initialState.workspace &&
+      !resumesInitialLegacyGeneration
+    ) {
       pendingRef.current = pendingFromInitialState(initialState);
       if (initialState.truth.snapshotVersion === WORKSPACE_SNAPSHOT_VERSION) {
         // Snapshot v1 intentionally contains one body. The other summaries are
@@ -1549,12 +1857,14 @@ export function useDocument(
             ),
           );
           hydrationContext.assertCurrent();
-          if (hydrationCancelled) return;
+          if (
+            hydrationCancelled ||
+            activeResourceRef.current !== resource ||
+            activeStateRef.current?.documentId !== initialDocumentId
+          )
+            return;
           if (hydrationMutationEpoch !== localMutationEpochRef.current) {
-            setState((current) => {
-              failedSnapshotRef.current = current;
-              return current;
-            });
+            failedSnapshotRef.current = activeStateRef.current;
             setSyncStatus("failed");
             setLoading(false);
             return;
@@ -1562,15 +1872,13 @@ export function useDocument(
           legacySavedSectionsRef.current = new Map(
             savedEntries.flatMap(([id, saved]) => (saved ? [[id, saved] as const] : [])),
           );
-          setState((current) => {
-            if (!current || current.documentId !== initialDocumentId) {
-              return current;
-            }
+          const current = activeStateRef.current;
+          if (current && current.documentId === initialDocumentId) {
             const sections = mergeHydratedSections(current.sections, authoritative);
             const next = { ...current, sections };
             cacheWorkspaceSnapshot(next);
-            return next;
-          });
+            setState(next);
+          }
           setLoading(false);
         })
         .catch(() => {
@@ -1587,6 +1895,8 @@ export function useDocument(
       };
     }
     let cancelled = false;
+    setLoading(true);
+    const loadMutationEpoch = localMutationEpochRef.current;
     const generationController = new AbortController();
     const generationRequestContext = userId
       ? captureOwnerDispatch(userId, generationController.signal)
@@ -1595,6 +1905,7 @@ export function useDocument(
     async function generateDraft(
       target: DocumentState,
       pending: PendingOutcome | null,
+      adoptionBaseline: DocumentState = target,
     ): Promise<void> {
       if (!shouldGenerateInitialDraft(target, pending)) {
         if (!cancelled) {
@@ -1609,8 +1920,11 @@ export function useDocument(
         return;
       }
       if (!cancelled) setDrafting(true);
+      const mutationEpoch = localMutationEpochRef.current;
       try {
-        if (!generationRequestContext) throw new Error("AUTH_REQUIRED");
+        const requestContext = generationRequestContext;
+        if (!requestContext) throw new Error("AUTH_REQUIRED");
+        await ensureLegacyGenerationIdentity(target, mutationEpoch, requestContext);
         await streamInitialDraft({
           outcomeId,
           state: target,
@@ -1623,78 +1937,33 @@ export function useDocument(
               input,
             ),
           signal: generationController.signal,
-          requestContext: generationRequestContext,
-          onMissingInfo: (event) => {
-            if (!cancelled) setMissingInfo(event.sections);
-          },
-          onUnresolvedPlaceholders: (event) => {
-            if (cancelled) return;
-            localMutationEpochRef.current += 1;
-            setUnresolvedPlaceholders(event.placeholders);
-            setState((previous) => {
-              if (!previous) return previous;
-              const next = {
-                ...previous,
-                unresolvedPlaceholders: event.placeholders,
-              };
-              cacheWorkspaceSnapshot(next);
-              return next;
-            });
-          },
-          onSection: (event) => {
-            if (cancelled) return;
-            localMutationEpochRef.current += 1;
-            setState((previous) => {
-              if (!previous) return previous;
-              const next = applyGeneratedSection(previous, event);
-              cacheWorkspaceSnapshot(next);
-              return next;
-            });
-          },
-          onDraftSection: (event) => {
-            if (cancelled) return;
-            localMutationEpochRef.current += 1;
-            setState((previous) => {
-              if (!previous) return previous;
-              const next = applyGeneratedSection(previous, event);
-              cacheWorkspaceSnapshot(next);
-              return next;
-            });
-          },
+          requestContext,
+          onComplete: (result) =>
+            adoptGenerationResult(adoptionBaseline, result, mutationEpoch, requestContext),
         });
-        generationRequestContext.assertCurrent();
-        if (!cancelled) {
-          setState((previous) => {
-            if (!previous) return previous;
-            const next = applyRequiredSectionFallbacks(previous);
-            setUnresolvedPlaceholders(next.unresolvedPlaceholders ?? []);
-            const issues = missingRequiredSections(next.sections);
-            setGenerationIssues(issues);
-            cacheWorkspaceSnapshot(next);
-            return next;
-          });
-        }
+        requestContext.assertCurrent();
       } catch (err) {
         if (generationRequestContext && !ownerDispatchIsCurrent(generationRequestContext)) {
           return;
         }
         if (!cancelled) {
           if (isPaywallError(err)) {
-            setGenerationIssues(paywallIssues());
+            setGenerationIssues((current) => [
+              ...current.filter((issue) => issue.retryable === false),
+              ...paywallIssues(),
+            ]);
           } else if (isAuthError(err)) {
-            setGenerationIssues(authIssues());
+            setGenerationIssues((current) => [
+              ...current.filter((issue) => issue.retryable === false),
+              ...authIssues(),
+            ]);
           } else {
-            setState((previous) => {
-              if (!previous) {
-                setGenerationIssues(missingRequiredSections(target.sections));
-                return previous;
-              }
-              const next = applyRequiredSectionFallbacks(previous);
-              setUnresolvedPlaceholders(next.unresolvedPlaceholders ?? []);
-              setGenerationIssues(missingRequiredSections(next.sections));
-              cacheWorkspaceSnapshot(next);
-              return next;
-            });
+            const affected = sectionsNeedingInitialGeneration(target);
+            setGenerationIssues(
+              (affected.length ? affected : target.sections).map((section) =>
+                generationFailure(section, err),
+              ),
+            );
           }
         }
       } finally {
@@ -1741,6 +2010,7 @@ export function useDocument(
               ),
             );
             generationRequestContext.assertCurrent();
+            if (cancelled || activeResourceRef.current !== resource) return;
             legacySavedSectionsRef.current = new Map(
               savedEntries.flatMap(([id, saved]) => (saved ? [[id, saved] as const] : [])),
             );
@@ -1753,6 +2023,9 @@ export function useDocument(
               throw new Error("LEGACY_DOCUMENT_REVISION_UNAVAILABLE");
             }
             legacySavedDocumentRef.current = {
+              ownerUserId: userId,
+              outcomeId,
+              documentId: dbDoc.id,
               title: dbDoc.title,
               status: dbDoc.status,
               templateId: legacyTemplateId(dbDoc.template_id),
@@ -1776,13 +2049,29 @@ export function useDocument(
               unresolvedPlaceholders: dbDoc.unresolved_placeholders ?? [],
             };
             const nextState = stateFromStored(workspace, defaults);
-            const guardedState = applyRequiredSectionFallbacks(nextState);
+            // A server snapshot may predate another tab's edit. Recheck the
+            // freshly read rows before resuming its initial generation intent.
+            const canResumeInitial =
+              !resumesInitialLegacyGeneration ||
+              (currentRevision === 1 &&
+                dbDoc.status === "draft" &&
+                persistedDocument.approved_revision == null &&
+                savedEntries.length > 0 &&
+                savedEntries.every(
+                  ([, saved]) =>
+                    saved?.revision === 1 &&
+                    saved.status === "draft" &&
+                    saved.approvedRevision === null,
+                ));
+            const guardedState = canResumeInitial
+              ? applyRequiredSectionFallbacks(nextState)
+              : nextState;
             setUnresolvedPlaceholders(guardedState.unresolvedPlaceholders ?? []);
             cacheWorkspaceSnapshot(guardedState);
             setState(guardedState);
             setSyncStatus("saved");
             setLastSyncedAt(dbDoc.updated_at);
-            await generateDraft(nextState, pending);
+            if (canResumeInitial) await generateDraft(nextState, pending, guardedState);
             if (!cancelled) setLoading(false);
             return;
           }
@@ -1800,13 +2089,19 @@ export function useDocument(
         cacheWorkspaceSnapshot(guardedState);
         setState(guardedState);
         if (!userId) setSyncStatus("local_only");
-        await generateDraft(nextState, pending);
+        await generateDraft(nextState, pending, guardedState);
         if (!cancelled) setLoading(false);
         return;
       }
 
       if (!cancelled && (!userId || pending)) {
         const { buildSeedDocument } = await import("@prompted/shared/workspace");
+        generationRequestContext?.assertCurrent();
+        if (cancelled || activeResourceRef.current !== resource) return;
+        if (loadMutationEpoch !== localMutationEpochRef.current) {
+          setLoading(false);
+          return;
+        }
         const seed = buildSeedDocument({
           outcomeId,
           templateName: defaults.templateName,
@@ -1832,8 +2127,16 @@ export function useDocument(
           },
           defaults,
         );
+        // The owner-scoped read found no document. Prior outcome baselines
+        // cannot turn this new identity into an update of another document.
+        legacySavedDocumentRef.current = null;
+        legacySavedSectionsRef.current = new Map();
+        setLegacyDocumentRevision(null);
+        setLegacyApprovedRevision(null);
         cacheWorkspaceSnapshot(fresh);
         setState(fresh);
+        activeDocumentIdRef.current = fresh.documentId;
+        activeStateRef.current = fresh;
         if (!userId) setSyncStatus("local_only");
         await generateDraft(fresh, pending);
       }
@@ -1852,14 +2155,18 @@ export function useDocument(
       generationController.abort();
     };
   }, [
+    adoptGenerationResult,
     authLoading,
     cachePendingOutcome,
     cacheScope,
     cacheWorkspaceSnapshot,
     captured,
+    ensureLegacyGenerationIdentity,
     initialState,
     outcomeId,
     ownerMismatch,
+    resource,
+    resumesInitialLegacyGeneration,
     userId,
   ]);
 
@@ -1878,7 +2185,10 @@ export function useDocument(
     },
     500,
     ownerEpoch,
-    () => localMutationEpochRef.current,
+    () => `${localMutationEpochRef.current}:${explicitSaveEpochRef.current.sequence}`,
+    explicitSaveEpochRef.current.mutationEpoch === localMutationEpochRef.current
+      ? "discard"
+      : "schedule-current",
   );
 
   const setCanonicalUnresolvedPlaceholders = useCallback(
@@ -1888,6 +2198,7 @@ export function useDocument(
         | ((prev: DocumentPlaceholderMetadata[]) => DocumentPlaceholderMetadata[]),
     ) => {
       localMutationEpochRef.current += 1;
+      setSyncStatus(userId ? "idle" : "local_only");
       if (captured) setDurableExportEligible(false);
       setUnresolvedPlaceholders((previous) => {
         const resolved = typeof next === "function" ? next(previous) : next;
@@ -1897,18 +2208,22 @@ export function useDocument(
         return resolved;
       });
     },
-    [captured],
+    [captured, userId],
   );
 
   const setSections = useCallback(
     (next: Section[] | ((previous: Section[]) => Section[])) => {
       localMutationEpochRef.current += 1;
+      setSyncStatus(userId ? "idle" : "local_only");
       if (captured) setDurableExportEligible(false);
       setState((previous) => {
         if (!previous) return previous;
         const sections = typeof next === "function" ? next(previous.sections) : next;
         setGenerationIssues((issues) =>
           issues.filter((issue) => {
+            // Editing wording cannot establish the result of an uncertain
+            // provider attempt or make an unavailable generation route safe.
+            if (issue.retryable === false) return true;
             const section = sections.find((item) => item.id === issue.sectionId);
             return !section?.content.trim();
           }),
@@ -1916,7 +2231,7 @@ export function useDocument(
         return { ...previous, sections };
       });
     },
-    [captured],
+    [captured, userId],
   );
 
   const registerWorkspaceSectionBody = useCallback(
@@ -1990,10 +2305,11 @@ export function useDocument(
   const setStatus = useCallback(
     (status: string) => {
       localMutationEpochRef.current += 1;
+      setSyncStatus(userId ? "idle" : "local_only");
       if (captured) setDurableExportEligible(false);
       setState((previous) => (previous ? { ...previous, status } : previous));
     },
-    [captured],
+    [captured, userId],
   );
 
   const dismissMissingInfo = useCallback((sectionKey: string, item?: string) => {
@@ -2016,6 +2332,7 @@ export function useDocument(
     loading: authLoading || ownerMismatch || loading,
     drafting,
     syncStatus,
+    deviceSaveStatus,
     lastSyncedAt,
     retrySync,
     generationIssues,

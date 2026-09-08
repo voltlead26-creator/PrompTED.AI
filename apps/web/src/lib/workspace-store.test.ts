@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Section } from "@prompted/shared/browser";
 import {
   advanceCapturedExportIntentSequenceForNewExport,
@@ -235,4 +235,139 @@ describe("generation request identity persistence", () => {
     expect(loadPendingOutcome(userA, workspace.outcomeId)).toBeNull();
     expect(loadWorkspace(userB, workspace.outcomeId)?.title).toBe("User B document");
   });
+});
+
+describe("observable workspace cache writes", () => {
+  const original = {
+    documentId: "document-owned",
+    outcomeId: "outcome-owned",
+    title: "Original title",
+    situation: "Confirmed facts",
+    status: "draft",
+    sections: [] as Section[],
+  };
+  beforeEach(() => sessionStorage.clear());
+  afterEach(() => vi.restoreAllMocks());
+
+  it("reports a successful write only when the same owner can reload it", () => {
+    expect(saveWorkspace(userA, original)).toEqual({ status: "saved" });
+    expect(loadWorkspace(userA, original.outcomeId)).toEqual(original);
+    expect(loadWorkspace(userB, original.outcomeId)).toBeNull();
+  });
+
+  it.each(["QuotaExceededError", "SecurityError"])(
+    "reports %s without claiming or overwriting the newer copy",
+    (name) => {
+      saveWorkspace(userA, original);
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new DOMException("Synthetic storage denial", name);
+      });
+      expect(saveWorkspace(userA, { ...original, title: "New unsaved title" })).toEqual({
+        status: "unavailable",
+        reason: name === "QuotaExceededError" ? "quota_exceeded" : "storage_unavailable",
+      });
+      expect(loadWorkspace(userA, original.outcomeId)?.title).toBe("Original title");
+    },
+  );
+
+  it("distinguishes a deliberately incomplete snapshot from storage quota", () => {
+    const partial = {
+      ...original,
+      sections: [
+        {
+          id: "section-1",
+          document_id: original.documentId,
+          user_id: "user-a",
+          content: "",
+          content_loaded: false,
+        },
+      ] as unknown as Section[],
+    };
+    const write = vi.spyOn(Storage.prototype, "setItem");
+    expect(saveWorkspace(userA, partial)).toEqual({
+      status: "unavailable",
+      reason: "incomplete_workspace",
+    });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incorrect section owner before writing", () => {
+    const foreign = {
+      ...original,
+      sections: [
+        {
+          id: "foreign",
+          document_id: original.documentId,
+          user_id: "user-b",
+          content: "Foreign wording",
+        },
+      ] as Section[],
+    };
+    const write = vi.spyOn(Storage.prototype, "setItem");
+    expect(saveWorkspace(userA, foreign)).toEqual({
+      status: "unavailable",
+      reason: "invalid_workspace",
+    });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("does not claim reload recovery while the guest namespace cannot be written, then retries it", () => {
+    const guest = currentWorkspaceCacheScope();
+    sessionStorage.clear();
+    const setItem = Storage.prototype.setItem;
+    const deny = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key,
+      value,
+    ) {
+      if (key.endsWith(":guest-scope"))
+        throw new DOMException("Synthetic scope denial", "SecurityError");
+      return setItem.call(this, key, value);
+    });
+    expect(saveWorkspace(guest, original)).toEqual({
+      status: "unavailable",
+      reason: "guest_scope_unavailable",
+    });
+    deny.mockRestore();
+    expect(saveWorkspace(guest, original)).toEqual({ status: "saved" });
+    expect(currentWorkspaceCacheScope()).toEqual(guest);
+    expect(loadWorkspace(currentWorkspaceCacheScope(), original.outcomeId)).toEqual(original);
+  });
+});
+
+it("does not replace a different active guest namespace or write a claimed guest cache", () => {
+  sessionStorage.clear();
+  const scope = currentWorkspaceCacheScope();
+  expect(scope.kind).toBe("guest");
+  if (scope.kind !== "guest") throw new Error("Expected guest fixture");
+  const scopeKey = Array.from({ length: sessionStorage.length }, (_, i) =>
+    sessionStorage.key(i),
+  ).find((key) => key?.endsWith(":guest-scope"));
+  if (!scopeKey) throw new Error("Guest namespace fixture was not created");
+  const workspace = {
+    documentId: "guest-document",
+    outcomeId: "guest-outcome",
+    title: "Guest wording",
+    situation: "Confirmed facts",
+    status: "draft",
+    sections: [] as Section[],
+  };
+  expect(saveWorkspace(scope, workspace)).toEqual({ status: "saved" });
+  sessionStorage.setItem(scopeKey, "different-active-guest");
+  expect(saveWorkspace(scope, { ...workspace, title: "Must not replace" })).toEqual({
+    status: "unavailable",
+    reason: "guest_scope_unavailable",
+  });
+  expect(sessionStorage.getItem(scopeKey)).toBe("different-active-guest");
+  sessionStorage.setItem(scopeKey, scope.guestId);
+  const claimKey =
+    scopeKey.replace(":guest-scope", ":guest-migration-claim") +
+    `:${encodeURIComponent(scope.guestId)}:${encodeURIComponent(workspace.outcomeId)}`;
+  sessionStorage.setItem(claimKey, JSON.stringify({ syntheticClaim: true }));
+  expect(saveWorkspace(scope, { ...workspace, title: "Must not replace" })).toEqual({
+    status: "unavailable",
+    reason: "guest_scope_unavailable",
+  });
+  expect(loadWorkspace(scope, workspace.outcomeId)).toBeNull();
+  sessionStorage.clear();
 });

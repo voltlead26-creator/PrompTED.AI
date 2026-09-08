@@ -30,6 +30,7 @@ import {
   type WorkspaceInitialState,
   type WorkspaceSectionBodyV1,
 } from "@/lib/workspace-initial-state";
+import type { WorkspaceDeviceSaveStatus } from "@/lib/workspace-store";
 import type { CapturedExportRequestResult } from "@/lib/api/captured-document-operations";
 import { fetchWorkspaceSectionBody, type LegacySectionApplyResult } from "@/lib/api/sections";
 import {
@@ -55,6 +56,7 @@ export interface UseWorkspace {
   loading: boolean;
   drafting: boolean;
   syncStatus: WorkspaceSyncStatus;
+  deviceSaveStatus?: WorkspaceDeviceSaveStatus;
   lastSyncedAt: string | null;
   retrySync: () => void;
   generationIssues: GenerationIssue[];
@@ -123,6 +125,7 @@ export function useWorkspace(
     loading,
     drafting,
     syncStatus,
+    deviceSaveStatus,
     lastSyncedAt,
     retrySync,
     generationIssues,
@@ -554,6 +557,7 @@ export function useWorkspace(
     loading,
     drafting,
     syncStatus,
+    deviceSaveStatus,
     lastSyncedAt,
     retrySync,
     generationIssues: effectiveGenerationIssues,

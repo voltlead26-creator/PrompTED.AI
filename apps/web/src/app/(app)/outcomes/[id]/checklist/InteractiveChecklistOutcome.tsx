@@ -151,7 +151,10 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
           // Only the explicit cohort-disabled response may fall back. A
           // provider, settlement or post-generation save failure must not
           // start and charge a second logical generation.
-          if (!(artifactError instanceof ApiError) || artifactError.status !== 404) {
+          if (
+            !(artifactError instanceof ApiError) || artifactError.status !== 404 ||
+            artifactError.code !== "TED_V2_DISABLED"
+          ) {
             throw artifactError;
           }
         }

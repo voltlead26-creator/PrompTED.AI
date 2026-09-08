@@ -739,8 +739,9 @@ describe("upload request identity", () => {
         expect(Object.isFrozen(prepared)).toBe(true);
         expect(prepared).toMatchObject({
           fileName: "evidence.PDF",
-          mimeType: "",
-          persistedFileType: "pdf",
+          // Match the actual multipart file Content-Type used by the server.
+          mimeType: "application/octet-stream",
+          persistedFileType: "application/octet-stream",
           fileSizeBytes: file.size,
           situationText: "A durable intake",
           contentSha256: expect.stringMatching(/^[0-9a-f]{64}$/),

@@ -1,0 +1,12 @@
+.panel { margin: 12px 14px; padding: 18px 20px; background: var(--card, #fffdf8); color: var(--ink, #2b2521); border: 1px solid var(--line, #e2d7c2); border-radius: 14px; }
+.heading { margin: 0 0 8px; }
+.layout { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); grid-template-areas: "files detail"; gap: 24px; }
+.files { grid-area: files; min-width: 0; }
+.list { margin: 12px 0; padding-left: 20px; }
+.list li { margin: 10px 0; overflow-wrap: anywhere; }
+.detail { grid-area: detail; min-width: 0; overflow-wrap: anywhere; }
+.preview { width: 100%; box-sizing: border-box; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 12rem; max-height: 28rem; overflow: auto; resize: vertical; padding: 12px; background: var(--paper, #f7f1e7); border-radius: 8px; font: inherit; }
+.button { padding: 8px 12px; border: 1px solid var(--line, #e2d7c2); border-radius: 8px; background: var(--paper, #f7f1e7); color: inherit; cursor: pointer; }
+.button:disabled { opacity: .6; cursor: default; }
+.button:focus-visible, .list a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+@media (max-width: 700px) { .layout { grid-template-columns: 1fr; grid-template-areas: "detail" "files"; } .panel { margin: 10px; padding: 14px; } }

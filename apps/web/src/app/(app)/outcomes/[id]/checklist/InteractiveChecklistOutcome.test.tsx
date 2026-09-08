@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recordBrowserPrincipal } from "@/lib/browser-principal-state";
+import { ApiError } from "@prompted/shared/api-client";
 
 const USER_ID = "e1000000-0000-4000-8000-000000000001";
 const OUTCOME_ID = "e2000000-0000-4000-8000-000000000001";
@@ -57,7 +58,7 @@ vi.mock("@/lib/owner-bound-device-store", () => ({
 }));
 vi.mock("@/lib/workspace-store", () => ({
   currentWorkspaceCacheScope: () => ({ kind: "user", userId: USER_ID }),
-  deterministicGenerationEntityId: vi.fn(),
+  deterministicGenerationEntityId: vi.fn().mockResolvedValue("e4000000-0000-4000-8000-000000000001"),
   loadPendingOutcome: vi.fn(),
   resolveGenerationRequestIdentity: vi.fn().mockResolvedValue("request-id"),
 }));
@@ -125,5 +126,45 @@ describe("InteractiveChecklistOutcome authoritative preparation", () => {
     expect(mocks.generateChecklist).not.toHaveBeenCalled();
     expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
     expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing function", new ApiError(404, "NOT_FOUND", { message: "Function not found" })],
+    ["unknown 404", new ApiError(404, "UNKNOWN", {})],
+    ["mismatched status", new ApiError(503, "TED_V2_DISABLED", {})],
+  ])("does not start a second generation after %s", async (_label, error) => {
+    mocks.withOwnerSupabase.mockResolvedValue({ count: 0, error: null });
+    mocks.generateArtifactStream.mockRejectedValue(error);
+    mocks.generateChecklist.mockResolvedValue([]);
+    render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn.t load this plan/i);
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).not.toHaveBeenCalled();
+    expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
+    expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it("retains the explicit disabled-cohort legacy path and awaits its persistence", async () => {
+    mocks.withOwnerSupabase.mockResolvedValue({ count: 0, error: null });
+    mocks.generateArtifactStream.mockRejectedValue(new ApiError(404, "TED_V2_DISABLED", {}));
+    mocks.generateChecklist.mockResolvedValue([{ text: "Confirm the moving date", section: "Plan" }]);
+    let acknowledge: () => void = () => {};
+    mocks.replaceOwnChecklist.mockReturnValue(new Promise<void>((resolve) => { acknowledge = resolve; }));
+    render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+    await waitFor(() => expect(mocks.replaceOwnChecklist).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Loaded plan")).toBeNull();
+    acknowledge();
+    expect(await screen.findByText("Loaded plan")).toBeDefined();
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).toHaveBeenCalledTimes(1);
+    expect(mocks.replaceOwnChecklist).toHaveBeenCalledWith(expect.objectContaining({
+      outcomeId: OUTCOME_ID,
+      requestId: "request-id",
+      expectedOutcomeUpdatedAt: savedOutcome().updated_at,
+      items: [expect.objectContaining({
+        id: "e4000000-0000-4000-8000-000000000001",
+        text: "Plan␟Confirm the moving date",
+      })],
+    }), expect.objectContaining({ expectedUserId: USER_ID }));
   });
 });

@@ -531,7 +531,8 @@ function WorkspaceLoaded({
     }
 
     let capturedExport:
-      { exportId: string; operationId: string; expectedOperationRevision: number } | undefined;
+      | { exportId: string; operationId: string; expectedOperationRevision: number }
+      | undefined;
     const requestContext = captureOwnerDispatch(user.id);
     if (workspace.captured) {
       if (format !== "pdf") {
@@ -711,6 +712,7 @@ function WorkspaceLoaded({
           <WorkflowTruth
             initialTruth={initialState?.truth}
             syncStatus={workspace.syncStatus}
+            deviceSaveStatus={workspace.deviceSaveStatus}
             currentRevision={workspace.currentRevision}
             approvedRevision={workspace.approvedRevision}
             operationRevision={workspace.operationRevision}
@@ -733,11 +735,25 @@ function WorkspaceLoaded({
               href="/settings/account"
             />
           )}
-          {workspace.syncStatus === "failed" && (
+          {(workspace.syncStatus === "failed" ||
+            workspace.deviceSaveStatus === "quota_exceeded" ||
+            workspace.deviceSaveStatus === "unavailable") && (
             <ContextIssue
               label="Save problem"
-              title="This version is saved on this device"
-              message="PrompTED could not sync it to your account yet. Try saving again."
+              title={
+                workspace.syncStatus === "saved"
+                  ? "Browser recovery copy unavailable"
+                  : workspace.deviceSaveStatus === "saved"
+                    ? "Saved in this tab; account save needs attention"
+                    : "Keep this page open"
+              }
+              message={
+                workspace.deviceSaveStatus === "quota_exceeded"
+                  ? `Browser storage is full. ${workspace.syncStatus === "saved" ? "This version is saved to your account." : "Keep this page open and try saving again."}`
+                  : workspace.deviceSaveStatus === "unavailable"
+                    ? `PrompTED could not create a browser recovery copy. ${workspace.syncStatus === "saved" ? "This version is saved to your account." : "Keep this page open and try saving again."}`
+                    : "PrompTED could not save the latest changes to your account. Try saving again."
+              }
               actionLabel="Try saving again"
               onAction={workspace.retrySync}
             />
@@ -745,9 +761,13 @@ function WorkspaceLoaded({
           {activeIssue && (
             <ContextIssue
               title={`${activeIssue.sectionName} needs attention`}
-              message="TED could not finish this section. Your existing wording has not been replaced."
-              actionLabel="Try this section again"
-              onAction={() => void workspace.retryGenerationSection(activeIssue.sectionId)}
+              message={activeIssue.reason}
+              actionLabel={activeIssue.retryable === false ? undefined : "Try this section again"}
+              onAction={
+                activeIssue.retryable === false
+                  ? undefined
+                  : () => void workspace.retryGenerationSection(activeIssue.sectionId)
+              }
               busy={workspace.regeneratingSectionId === activeIssue.sectionId}
             />
           )}
@@ -779,10 +799,7 @@ function WorkspaceLoaded({
             type="button"
             className={styles.globalAction}
             disabled={workspace.syncStatus === "saving"}
-            onClick={() => {
-              if (workspace.syncStatus === "failed") workspace.retrySync();
-              else showToast({ tone: "success", message: "Your latest changes are saved." });
-            }}
+            onClick={workspace.retrySync}
           >
             {saveLabel}
           </button>

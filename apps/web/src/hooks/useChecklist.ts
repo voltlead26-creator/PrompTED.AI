@@ -253,11 +253,11 @@ export function useChecklist(outcomeId: string) {
     }
   }
 
-  async function updateText(id: string, text: string) {
+  async function updateText(id: string, text: string): Promise<boolean> {
     const current = items.find((item) => item.id === id);
     const trimmed = text.trim();
     const key = savingKey(id);
-    if (!current || !trimmed) return;
+    if (!current || !trimmed) return false;
     if (savingKeysRef.current.has(key)) {
       throw new Error("CHECKLIST_ITEM_BUSY");
     }
@@ -268,7 +268,7 @@ export function useChecklist(outcomeId: string) {
         requestContext = captureOwnerDispatch(user.id);
       } catch {
         setSaveError("Your signed-in account changed. Try that checklist action again.");
-        return;
+        return false;
       }
     }
     const updatedAt = new Date().toISOString();
@@ -286,12 +286,12 @@ export function useChecklist(outcomeId: string) {
         if (!saveLocalChecklist(deviceScope, outcomeId, nextItems)) {
           throw new Error("LOCAL_CHECKLIST_SAVE_FAILED");
         }
-        return;
+        return true;
       }
       if (!isPersistedChecklistItem(current, { itemId: id, outcomeId, userId: user.id })) {
         setItems(items);
         setLoadError("PrompTED could not confirm this checklist's saved revision. Try again.");
-        return;
+        return false;
       }
       setItemSaving(key, true);
       const result = await updateOwnChecklistItem(
@@ -311,8 +311,15 @@ export function useChecklist(outcomeId: string) {
         setItems((latest) => latest.map((item) => item.id === id ? result.item : item));
         if (result.status === "revision_conflict") {
           setSaveError("This item changed elsewhere. The latest saved version is shown.");
+          return false;
         }
+        if (result.item.text !== trimmed) {
+          setSaveError("PrompTED could not confirm the requested wording. The latest saved item is shown.");
+          return false;
+        }
+        return true;
       }
+      return false;
     } catch (caught) {
       if (
         (!requestContext || ownerDispatchIsCurrent(requestContext)) &&
@@ -328,7 +335,7 @@ export function useChecklist(outcomeId: string) {
             if (
               !ownerDispatchIsCurrent(requestContext!) ||
               identityRef.current !== requestIdentity
-            ) return;
+            ) return false;
             setItems(reconciled);
             const saved = reconciled.find((item) => item.id === id)?.text === trimmed;
             setSaveError(
@@ -336,17 +343,20 @@ export function useChecklist(outcomeId: string) {
                 ? null
                 : "The save response was interrupted. The latest saved wording is shown.",
             );
-            return;
+            return saved;
           } catch {
-            setSaveError(
-              "PrompTED could not confirm whether that wording saved. Reload before changing this item again.",
-            );
+            if (ownerDispatchIsCurrent(requestContext!) && identityRef.current === requestIdentity) {
+              setSaveError(
+                "PrompTED could not confirm whether that wording saved. Reload before changing this item again.",
+              );
+            }
           }
         } else {
           setItems((latest) => latest.map((item) => item.id === current.id ? current : item));
           setSaveError("PrompTED could not save that wording on this device.");
         }
       }
+      if ((requestContext && !ownerDispatchIsCurrent(requestContext)) || identityRef.current !== requestIdentity) return false;
       throw caught;
     } finally {
       if (!requestContext || ownerDispatchIsCurrent(requestContext)) {

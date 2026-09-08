@@ -8,6 +8,25 @@ import {
 } from "./orchestration";
 
 describe("requireInitialClarification", () => {
+  it("keeps a complete proposed summary behind confirmation without dispatching first-turn job search", () => {
+    const result = coerceIntentResult({
+      intent_clear: true,
+      job_search: true,
+      knowledge_summary: "Prepare a cover letter using the supplied warehouse experience.",
+      recommendation: { primary: { name: "Cover Letter" }, alternatives: [] },
+    });
+    const guarded = requireInitialClarification(result, "Help me apply for this job");
+    expect(guarded.jobSearch).toBe(false);
+    expect(guarded.intentClear).toBe(true);
+    expect(guarded.knowledgeSummary).toBe(result.knowledgeSummary);
+    expect(guarded.recommendation).toBe(result.recommendation);
+    expect(result.jobSearch).toBe(true);
+  });
+  it("retains a complete proposed knowledge brief for the explicit client confirmation gate", () => {
+    const result = coerceIntentResult({ intent_clear: true, knowledge_summary: "Audience: the supplier. Goal: refund the duplicate charge.", recommendation: { primary: { name: "Complaint Letter" }, alternatives: [] } });
+    expect(result.knowledgeSummary).toContain("duplicate charge");
+    expect(requireInitialClarification(result, "Request a refund")).toBe(result);
+  });
   it("preserves a useful first question chosen from the document context", () => {
     const result = coerceIntentResult({
       domain: "personal",
@@ -112,6 +131,10 @@ describe("validateRecommendation", () => {
 });
 
 describe("coerceIntentResult", () => {
+  it("rejects non-text knowledge summaries and preserves older response compatibility", () => {
+    expect(coerceIntentResult({ knowledge_summary: { approved: true } }).knowledgeSummary).toBeNull();
+    expect(coerceIntentResult({}).knowledgeSummary).toBeNull();
+  });
   it("marks intent clear when a recommendation is present", () => {
     const r = coerceIntentResult({
       domain: "employment",

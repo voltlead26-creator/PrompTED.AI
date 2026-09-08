@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   preflightUploadMetadata,
@@ -16,6 +16,7 @@ import { ensureApiConfigured } from "@/lib/api";
 import {
   captureOwnerDispatch,
   ownerDispatchIsCurrent,
+  withOwnerDispatchSignal,
   type OwnerDispatchLease,
 } from "@/lib/browser-principal-state";
 import {
@@ -74,6 +75,22 @@ function sourceLabel(resource: ProfileResumeResource): string {
   }
 }
 
+type ResumeFileAction = {
+  resourceId: string;
+  download: boolean;
+  controller: AbortController;
+  popup: Window | null;
+};
+
+function isPendingResumeTab(popup: Window | null): popup is Window {
+  try {
+    return popup !== null && !popup.closed && popup.location.href === "about:blank";
+  } catch {
+    // A user-navigated, cross-origin tab is no longer ours to change or close.
+    return false;
+  }
+}
+
 export default function ProfilePage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -88,6 +105,17 @@ export default function ProfilePage() {
   const [restoring, setRestoring] = useState(false);
   const [restoreConfirm, setRestoreConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const resumeActionRef = useRef<ResumeFileAction | null>(null);
+  const [resumeAction, setResumeAction] = useState<ResumeFileAction | null>(null);
+
+  useLayoutEffect(() => () => {
+    const action = resumeActionRef.current;
+    resumeActionRef.current = null;
+    if (action) {
+      action.controller.abort();
+      if (isPendingResumeTab(action.popup)) action.popup.close();
+    }
+  }, [user?.id]);
 
   const dirty = useMemo(
     () => JSON.stringify(details) !== JSON.stringify(savedDetails),
@@ -98,21 +126,27 @@ export default function ProfilePage() {
     [],
   );
 
-  async function reload(existingLease?: OwnerDispatchLease) {
-    if (!user?.id) return;
+  async function reload(existingLease?: OwnerDispatchLease, preserveDetails = false): Promise<boolean> {
+    if (!user?.id) return false;
     const requestContext = existingLease ?? captureOwnerDispatch(user.id);
     setLoading(true);
-    setError(null);
     try {
       const next = await fetchProfileResources(requestContext, user.email ?? "");
       requestContext.assertCurrent();
       setSnapshot(next);
-      setDetails(next.details);
-      setSavedDetails(next.details);
+      // Resume changes refresh resources without replacing personal edits or
+      // the baseline of a detail save that may finish while this read is pending.
+      if (!preserveDetails) {
+        setDetails(next.details);
+        setSavedDetails(next.details);
+      }
+      setError(null);
+      return true;
     } catch (caught) {
       if (ownerDispatchIsCurrent(requestContext)) {
         setError(caught instanceof Error ? caught.message : "TED couldn't load your Profile.");
       }
+      return false;
     } finally {
       if (ownerDispatchIsCurrent(requestContext)) setLoading(false);
     }
@@ -182,8 +216,12 @@ export default function ProfilePage() {
       ensureApiConfigured();
       await uploadMasterResume(file, requestContext);
       requestContext.assertCurrent();
-      await reload(requestContext);
+      const refreshed = await reload(requestContext, true);
       requestContext.assertCurrent();
+      if (!refreshed) {
+        showToast({ message: "Your resume change was saved, but TED couldn't refresh your saved resources. Try again below.", tone: "error" });
+        return;
+      }
       showToast({
         message: "Current resume updated. Your previous version is still available.",
         tone: "success",
@@ -201,28 +239,67 @@ export default function ProfilePage() {
   }
 
   async function openResume(resource: ProfileResumeResource, download = false) {
-    if (!user?.id) return;
-    const requestContext = captureOwnerDispatch(user.id);
+    if (!user?.id || resumeActionRef.current || loading || error || uploading || restoring) return;
+    const ownerContext = captureOwnerDispatch(user.id);
+    const action: ResumeFileAction = {
+      resourceId: resource.id, download, controller: new AbortController(), popup: null,
+    };
+    const requestContext = withOwnerDispatchSignal(ownerContext, action.controller.signal);
+    resumeActionRef.current = action;
+    setResumeAction(action);
+    let removeAbortListener = () => {};
+    const timer = window.setTimeout(() => action.controller.abort(new Error(
+      "Preparing the resume file took too long. Please try again.",
+    )), 30_000);
     try {
-      const url = await createResumeDownloadUrl(resource, requestContext);
+      if (!download) {
+        // Reserve the tab during the click's user activation, before signing.
+        action.popup = window.open("about:blank", "_blank");
+        if (!action.popup) {
+          throw new Error("Your browser blocked the resume tab. Allow popups for this site or use Download.");
+        }
+        action.popup.opener = null;
+        action.popup.document.title = "Opening resume";
+        action.popup.document.body.textContent = "Preparing your resume file…";
+      }
+      const cancelled = new Promise<never>((_, reject) => {
+        const abort = () => reject(requestContext.signal.reason);
+        requestContext.signal.addEventListener("abort", abort, { once: true });
+        removeAbortListener = () => requestContext.signal.removeEventListener("abort", abort);
+        if (requestContext.signal.aborted) abort();
+      });
+      // Bound the UI wait even if an underlying session request ignores abort.
+      const url = await Promise.race([createResumeDownloadUrl(resource, requestContext), cancelled]);
       requestContext.assertCurrent();
+      if (resumeActionRef.current !== action) return;
       if (download) {
         const anchor = document.createElement("a");
         anchor.href = url;
         anchor.download = resource.fileName;
         anchor.rel = "noopener";
         document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
+        try { anchor.click(); } finally { anchor.remove(); }
       } else {
-        window.open(url, "_blank", "noopener,noreferrer");
+        if (!isPendingResumeTab(action.popup)) {
+          throw new Error("The resume tab is no longer available. Try Open again or use Download.");
+        }
+        action.popup.location.replace(url);
       }
     } catch (caught) {
-      if (ownerDispatchIsCurrent(requestContext)) {
+      if (isPendingResumeTab(action.popup)) action.popup.close();
+      if (resumeActionRef.current === action && ownerDispatchIsCurrent(ownerContext)) {
         showToast({
           message: caught instanceof Error ? caught.message : "TED couldn't open that resume file.",
           tone: "error",
         });
+      }
+    } finally {
+      window.clearTimeout(timer);
+      removeAbortListener();
+      action.controller.abort();
+      if (resumeActionRef.current === action) {
+        resumeActionRef.current = null;
+        setResumeAction(null);
       }
     }
   }
@@ -235,8 +312,12 @@ export default function ProfilePage() {
       await restorePreviousResume(requestContext);
       requestContext.assertCurrent();
       setRestoreConfirm(false);
-      await reload(requestContext);
+      const refreshed = await reload(requestContext, true);
       requestContext.assertCurrent();
+      if (!refreshed) {
+        showToast({ message: "Your resume change was saved, but TED couldn't refresh your saved resources. Try again below.", tone: "error" });
+        return;
+      }
       showToast({ message: "Previous resume restored as Current.", tone: "success" });
     } catch (caught) {
       if (ownerDispatchIsCurrent(requestContext)) {
@@ -273,7 +354,8 @@ export default function ProfilePage() {
             Profile
           </h1>
           <p>{error}</p>
-          <Button onClick={() => void reload()}>Try again</Button>
+          <Button disabled={loading} onClick={() => void reload()}>Try again</Button>
+          {loading ? <p role="status">Refreshing Profile…</p> : null}
         </div>
       </section>
     );
@@ -281,6 +363,7 @@ export default function ProfilePage() {
 
   const currentResume = snapshot?.currentResume ?? null;
   const previousResume = snapshot?.previousResume ?? null;
+  const resourcesUnavailable = loading || error !== null || uploading || restoring || resumeAction !== null;
 
   return (
     <section className={styles.page} aria-labelledby="profile-heading">
@@ -296,9 +379,17 @@ export default function ProfilePage() {
           </p>
         </div>
         <div className={styles.saveState} aria-live="polite">
-          {saving ? "Saving changes…" : dirty ? "Unsaved changes" : "Profile up to date"}
+          {saving ? "Saving changes…" : loading ? "Refreshing Profile…" : dirty ? "Unsaved changes" : error ? "Profile refresh unavailable" : "Profile up to date"}
         </div>
       </header>
+
+      {error ? (
+        <div className={styles.errorCard} role="alert">
+          <p>{error}</p>
+          <p>Last loaded resources are shown. Try again before opening or changing a resume. Your personal edits are kept.</p>
+          <Button disabled={loading} onClick={() => void reload(undefined, true)}>Try again</Button>
+        </div>
+      ) : null}
 
       <div className={styles.layout}>
         <form className={styles.mainColumn} onSubmit={handleSave} aria-label="Edit Profile details">
@@ -431,7 +522,7 @@ export default function ProfilePage() {
           </section>
         </form>
 
-        <aside className={styles.sideColumn} aria-label="Saved Profile resources">
+        <aside className={styles.sideColumn} aria-label="Saved Profile resources" aria-busy={loading || uploading || restoring || resumeAction !== null}>
           <section className={styles.card} aria-labelledby="resume-resources-heading">
             <header className={styles.cardHeader}>
               <div>
@@ -467,12 +558,17 @@ export default function ProfilePage() {
                   ) : null}
                 </div>
                 <div className={styles.resourceActions}>
-                  <Button variant="ghost" size="sm" onClick={() => void openResume(currentResume)}>
+                  <Button variant="ghost" size="sm" disabled={resourcesUnavailable}
+                    loading={resumeAction?.resourceId === currentResume.id && !resumeAction.download}
+                    loadingLabel="Opening resume" onClick={() => void openResume(currentResume)}>
                     Open
                   </Button>
                   <Button
                     variant="ghost"
                     size="sm"
+                    disabled={resourcesUnavailable}
+                    loading={resumeAction?.resourceId === currentResume.id && resumeAction.download}
+                    loadingLabel="Preparing download"
                     onClick={() => void openResume(currentResume, true)}
                   >
                     Download
@@ -480,6 +576,7 @@ export default function ProfilePage() {
                   <Button
                     size="sm"
                     loading={uploading}
+                    disabled={resourcesUnavailable}
                     loadingLabel="Reading resume"
                     onClick={() => fileRef.current?.click()}
                     leadingIcon={<Icon name="upload" size={17} />}
@@ -497,6 +594,7 @@ export default function ProfilePage() {
                 </p>
                 <Button
                   loading={uploading}
+                  disabled={resourcesUnavailable}
                   loadingLabel="Reading resume"
                   onClick={() => fileRef.current?.click()}
                   leadingIcon={<Icon name="upload" size={17} />}
@@ -523,17 +621,22 @@ export default function ProfilePage() {
                   ) : null}
                 </div>
                 <div className={styles.resourceActions}>
-                  <Button variant="ghost" size="sm" onClick={() => void openResume(previousResume)}>
+                  <Button variant="ghost" size="sm" disabled={resourcesUnavailable}
+                    loading={resumeAction?.resourceId === previousResume.id && !resumeAction.download}
+                    loadingLabel="Opening resume" onClick={() => void openResume(previousResume)}>
                     Open
                   </Button>
                   <Button
                     variant="ghost"
                     size="sm"
+                    disabled={resourcesUnavailable}
+                    loading={resumeAction?.resourceId === previousResume.id && resumeAction.download}
+                    loadingLabel="Preparing download"
                     onClick={() => void openResume(previousResume, true)}
                   >
                     Download
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setRestoreConfirm(true)}>
+                  <Button variant="ghost" size="sm" disabled={resourcesUnavailable} onClick={() => setRestoreConfirm(true)}>
                     Restore as Current
                   </Button>
                 </div>
@@ -556,6 +659,7 @@ export default function ProfilePage() {
                       <Button
                         size="sm"
                         loading={restoring}
+                        disabled={resourcesUnavailable}
                         loadingLabel="Restoring resume"
                         onClick={() => void confirmRestore()}
                       >

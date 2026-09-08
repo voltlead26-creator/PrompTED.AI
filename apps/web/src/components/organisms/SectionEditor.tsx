@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { createNodeFromContent } from "@tiptap/core";
+import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import {
   renderTedPlaceholdersForEditor,
@@ -14,7 +16,7 @@ import type { Section } from "@prompted/shared/browser";
 import { isVisiblyEmpty } from "@prompted/shared/visible-content";
 import { Badge, type BadgeStatus } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
-import { useAutosave } from "@/hooks/useAutosave";
+import type { ContentEditOptions } from "@/hooks/useSection";
 import { useExplainWithTED } from "@/hooks/useExplainWithTED";
 import { type PersistedEditIdentity, useEditWithTED } from "@/hooks/useEditWithTED";
 import type { LegacySectionApplyResult } from "@/lib/api/sections";
@@ -27,7 +29,9 @@ import styles from "./SectionEditor.module.css";
 interface SectionEditorProps {
   section: Section | null;
   domain?: string;
-  onEdit: (id: string, content: string) => void;
+  onEdit: (id: string, content: string, options?: ContentEditOptions) => void;
+  /** Confirmed aggregate save state; local text equality is not a saved revision. */
+  workspaceSaved?: boolean;
   /** Merge a confirmed DB Apply response as authoritative truth without
    * scheduling a second generic document/section save. */
   onPersistedLegacyApply?: (result: LegacySectionApplyResult) => void;
@@ -52,6 +56,7 @@ interface ToolbarButton {
 }
 
 interface PendingTedChange {
+  sourceEpoch: number;
   suggested: string;
   changes: string[];
   range: { from: number; to: number } | null;
@@ -150,6 +155,7 @@ export function SectionEditor({
   onPlaceholderSelect,
   revisionApproval = false,
   ledgerBindingStatus,
+  workspaceSaved = false,
 }: SectionEditorProps) {
   const [showTEdit, setShowTEdit] = useState(false);
   const [showExplainPanel, setShowExplainPanel] = useState(false);
@@ -157,8 +163,9 @@ export function SectionEditor({
   const [selection, setSelection] = useState<{ from: number; to: number; text: string } | null>(
     null,
   );
-  const [pendingTedChange, setPendingTedChange] = useState<PendingTedChange | null>(null);
+  const [pendingTedSnapshot, setPendingTedChange] = useState<PendingTedChange | null>(null);
   const [proposalNotice, setProposalNotice] = useState<string | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const [confirmedRevision, setConfirmedRevision] = useState<{
     sectionId: string;
     revision: number;
@@ -167,9 +174,40 @@ export function SectionEditor({
   const [legacyRecoveryState, setLegacyRecoveryState] = useState<"checking" | "reconciling" | null>(
     null,
   );
-  const [html, setHtml] = useState(section?.content ?? "");
+  const typingBurst = useRef<{ identity: string; lastInputAt: number } | null>(null);
+  const syncedIdentity = useRef<string | null>(null);
+  const lastPublished = useRef<{ identity: string; content: string } | null>(null);
+  const editorIdentity = section ? `${section.user_id}:${section.document_id}:${section.id}` : null;
   const ai = useEditWithTED();
   const explain = useExplainWithTED();
+  const editLifetimeRef = useRef<symbol | null>(null);
+  const sourceSnapshot = {
+    identity: editorIdentity,
+    revision: (section as RevisionedSection | null)?.revision,
+    content: section?.content,
+    binding: ledgerBindingStatus ?? (section as RevisionedSection | null)?.ledger_binding_status,
+    confirmedRevision: confirmedRevision?.revision,
+  };
+  const editSourceRef = useRef({ ...sourceSnapshot, epoch: 0 });
+  const previousSource = editSourceRef.current;
+  const sourceChanged = previousSource.identity !== sourceSnapshot.identity ||
+    previousSource.revision !== sourceSnapshot.revision || previousSource.content !== sourceSnapshot.content ||
+    previousSource.binding !== sourceSnapshot.binding || previousSource.confirmedRevision !== sourceSnapshot.confirmedRevision;
+  editSourceRef.current = { ...sourceSnapshot, epoch: previousSource.epoch + Number(sourceChanged) };
+  const sourceEpoch = editSourceRef.current.epoch;
+  const pendingTedChange = pendingTedSnapshot?.sourceEpoch === sourceEpoch ? pendingTedSnapshot : null;
+
+  useLayoutEffect(() => {
+    const lifetime = Symbol("section-editor");
+    editLifetimeRef.current = lifetime;
+    return () => {
+      if (editLifetimeRef.current === lifetime) editLifetimeRef.current = null;
+    };
+  }, []);
+
+  const editSourceIsCurrent = useCallback((epoch: number, lifetime: symbol | null) =>
+    lifetime !== null && editLifetimeRef.current === lifetime && editSourceRef.current.epoch === epoch,
+  []);
 
   const editor = useEditor({
     extensions: [StarterKit, TedPlaceholderExtension],
@@ -204,8 +242,39 @@ export function SectionEditor({
         },
       },
     },
-    onUpdate: ({ editor: currentEditor }) =>
-      setHtml(serialiseTedPlaceholdersFromEditor(currentEditor.getHTML())),
+    onUpdate: ({ editor: currentEditor, transaction }) => {
+      if (
+        !transaction.docChanged ||
+        !section ||
+        !editorIdentity ||
+        section.status === "locked" ||
+        ai.streaming ||
+        pendingTedChange
+      )
+        return;
+      const value = sanitiseSectionContent(
+        serialiseTedPlaceholdersFromEditor(currentEditor.getHTML()),
+      );
+      // Several transactions may precede React's next render (including undo).
+      // Compare with the previous publication, not the previous render's prop.
+      const previousContent =
+        lastPublished.current?.identity === editorIdentity
+          ? lastPublished.current.content
+          : section.content;
+      if (value === previousContent || wouldEraseTedPlaceholder(value, previousContent)) return;
+      const now = Date.now();
+      const previous = typingBurst.current;
+      const continuing =
+        previous?.identity === editorIdentity &&
+        now >= previous.lastInputAt &&
+        now - previous.lastInputAt < 500;
+      typingBurst.current = { identity: editorIdentity, lastInputAt: now };
+      lastPublished.current = { identity: editorIdentity, content: value };
+      onEdit(section.id, value, { recordHistory: !continuing });
+    },
+    onBlur: () => {
+      typingBurst.current = null;
+    },
     onSelectionUpdate: ({ editor: currentEditor }) => {
       const { from, to } = currentEditor.state.selection;
       const text = currentEditor.state.doc.textBetween(from, to, "\n").trim();
@@ -252,23 +321,38 @@ export function SectionEditor({
   }, [sectionContent, sectionId, sectionRevision]);
 
   useEffect(() => {
-    if (!editor || !sectionId) return;
-    if (editor.getHTML() !== sectionContent) {
-      editor.commands.setContent(renderTedPlaceholdersForEditor(sectionContent || "<p></p>"), {
-        emitUpdate: false,
-      });
-    }
-    setHtml(sectionContent ?? "");
+    if (!editor || !editorIdentity) return;
+    const incomingHtml = renderTedPlaceholdersForEditor(sectionContent || "<p></p>");
+    const incoming = createNodeFromContent(incomingHtml, editor.schema, { slice: false });
+    const sameIdentity = syncedIdentity.current === editorIdentity;
+    syncedIdentity.current = editorIdentity;
+    lastPublished.current = { identity: editorIdentity, content: sectionContent ?? "" };
+    // Compare with the same schema that renders the editor. Tokens, plain text
+    // and equivalent HTML must not reset the caret on a local echo or receipt.
+    if (sameIdentity && incoming instanceof ProseMirrorNode && editor.state.doc.eq(incoming))
+      return;
+    editor.commands.setContent(incomingHtml, { emitUpdate: false });
+    typingBurst.current = null;
     setSelection(null);
     setHasSelection(false);
     setPendingTedChange(null);
     setProposalNotice(null);
     setShowTEdit(false);
     setShowExplainPanel(false);
-  }, [editor, sectionContent, sectionId, sectionRevision]);
+  }, [editor, editorIdentity, sectionContent]);
 
   useEffect(() => {
-    if (!sectionId || !revisionBoundLegacy) {
+    // Preserve the existing invalidation of suggestions bound to an older
+    // revision while allowing unchanged wording to retain its caret.
+    setPendingTedChange(null);
+    setProposalNotice(null);
+  }, [editorIdentity, sectionRevision]);
+
+  useEffect(() => {
+    // Local wording has no matching persisted edit to recover yet. Keep the
+    // composer available so its existing save guard can explain the blocker;
+    // the account receipt will restart recovery against the saved revision.
+    if (!sectionId || !revisionBoundLegacy || !workspaceSaved) {
       setLegacyRecoveryState(null);
       return;
     }
@@ -276,10 +360,11 @@ export function SectionEditor({
     let active = true;
     let timer: number | null = null;
     let pollAttempt = 0;
+    const acceptedLifetime = editLifetimeRef.current;
     setLegacyRecoveryState("checking");
     const poll = async (): Promise<void> => {
       const recovered = await recoverLegacyEdit(sectionId);
-      if (!active) return;
+      if (!active || !editSourceIsCurrent(sourceEpoch, acceptedLifetime)) return;
       if (!recovered) {
         setLegacyRecoveryState(null);
         return;
@@ -333,6 +418,7 @@ export function SectionEditor({
         requestFingerprint: null,
       };
       setPendingTedChange({
+        sourceEpoch,
         suggested: recovered.suggested_content,
         changes: recovered.changes,
         range: null,
@@ -352,29 +438,20 @@ export function SectionEditor({
       active = false;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [ai.streaming, pendingTedChange, recoverLegacyEdit, revisionBoundLegacy, sectionId]);
+  }, [ai.streaming, pendingTedChange, recoverLegacyEdit, revisionBoundLegacy, sectionId, sourceEpoch, editSourceIsCurrent, workspaceSaved]);
 
   const locked = section?.status === "locked";
   useEffect(() => {
-    editor?.setEditable(!ai.streaming && !locked && !pendingTedChange);
+    editor?.setEditable(!ai.streaming && !locked && !pendingTedChange, false);
   }, [editor, ai.streaming, locked, pendingTedChange]);
-
-  useAutosave(html, (value) => {
-    if (
-      section &&
-      value !== section.content &&
-      !pendingTedChange &&
-      !wouldEraseTedPlaceholder(value, section.content)
-    ) {
-      onEdit(section.id, sanitiseSectionContent(value));
-    }
-  });
 
   const runAiEdit = useCallback(
     async (action: EditAction, instruction?: string, ignoreReviewedSuggestion = false) => {
+      const acceptedLifetime = editLifetimeRef.current;
       if (
         !editor ||
         !section ||
+        !editSourceIsCurrent(sourceEpoch, acceptedLifetime) ||
         (pendingTedChange && !ignoreReviewedSuggestion) ||
         ai.streaming ||
         legacyRecoveryState !== null
@@ -399,6 +476,12 @@ export function SectionEditor({
         onEdit(section.id, currentContent);
         return;
       }
+      if (revisionBoundLegacy && !workspaceSaved) {
+        setProposalNotice(
+          "Save the current wording before asking TED to edit it, so the suggestion is bound to the exact saved revision.",
+        );
+        return;
+      }
       // The service reloads the provider input from Postgres. Sending the
       // byte-exact stored body here is solely for its accepted SHA-256 binding;
       // an editor/sanitiser-normalised equivalent must not create a false stale.
@@ -419,6 +502,8 @@ export function SectionEditor({
             }
           : undefined,
       });
+      if (!editSourceIsCurrent(sourceEpoch, acceptedLifetime) || editor.isDestroyed ||
+          sanitiseSectionContent(serialiseTedPlaceholdersFromEditor(editor.getHTML())) !== currentContent) return;
       if (!result?.content.trim()) return;
       if (revisionBoundLegacy && !result.persisted) {
         setProposalNotice(
@@ -428,6 +513,7 @@ export function SectionEditor({
       }
       const range = selection ? { from: selection.from, to: selection.to } : null;
       setPendingTedChange({
+        sourceEpoch,
         suggested: result.content.trim(),
         changes: result.changes,
         range,
@@ -458,20 +544,27 @@ export function SectionEditor({
       persistedSectionRevision,
       revisionBoundLegacy,
       legacyRecoveryState,
+      workspaceSaved,
+      sourceEpoch,
+      editSourceIsCurrent,
     ],
   );
 
   const applyTedChange = useCallback(async () => {
     if (!editor || !section || !pendingTedChange) return;
+    const accepted = pendingTedChange;
+    const acceptedLifetime = editLifetimeRef.current;
+    if (!editSourceIsCurrent(accepted.sourceEpoch, acceptedLifetime) || editor.isDestroyed) return;
     if (!pendingTedChange.recoverableApply) {
       setProposalNotice(
         "This recovered suggestion cannot be applied safely because its exact accepted wording or selection is no longer current.",
       );
       return;
     }
+    typingBurst.current = null;
     if (pendingTedChange.persisted) {
       const applied = await ai.applyPersisted(pendingTedChange.persisted);
-      if (!applied) return;
+      if (!applied || !editSourceIsCurrent(accepted.sourceEpoch, acceptedLifetime) || editor.isDestroyed) return;
       setConfirmedRevision({
         sectionId: section.id,
         revision: applied.section_revision,
@@ -481,7 +574,6 @@ export function SectionEditor({
       editor.commands.setContent(renderTedPlaceholdersForEditor(applied.section_content), {
         emitUpdate: false,
       });
-      setHtml(applied.section_content);
     } else {
       if (pendingTedChange.range) {
         editor.chain().insertContentAt(pendingTedChange.range, pendingTedChange.suggested).run();
@@ -493,32 +585,39 @@ export function SectionEditor({
         editor.commands.setContent(asHtml, { emitUpdate: false });
       }
       const next = sanitiseSectionContent(serialiseTedPlaceholdersFromEditor(editor.getHTML()));
-      setHtml(next);
       onEdit(section.id, next);
     }
-    setPendingTedChange(null);
+    setPendingTedChange((current) => current === accepted ? null : current);
     setProposalNotice(null);
-  }, [ai, editor, section, pendingTedChange, onEdit, onPersistedLegacyApply]);
+  }, [ai, editor, section, pendingTedChange, onEdit, onPersistedLegacyApply, editSourceIsCurrent]);
 
   const discardTedChange = useCallback(async () => {
     if (!pendingTedChange) return;
+    const accepted = pendingTedChange;
+    const acceptedLifetime = editLifetimeRef.current;
+    if (!editSourceIsCurrent(accepted.sourceEpoch, acceptedLifetime)) return;
     if (pendingTedChange.persisted && !(await ai.discardPersisted(pendingTedChange.persisted))) {
       return;
     }
-    setPendingTedChange(null);
+    if (!editSourceIsCurrent(accepted.sourceEpoch, acceptedLifetime)) return;
+    setPendingTedChange((current) => current === accepted ? null : current);
     setProposalNotice(null);
-  }, [ai, pendingTedChange]);
+  }, [ai, pendingTedChange, editSourceIsCurrent]);
 
   const retryTedChange = useCallback(async () => {
     if (!pendingTedChange) return;
+    const accepted = pendingTedChange;
+    const acceptedLifetime = editLifetimeRef.current;
+    if (!editSourceIsCurrent(accepted.sourceEpoch, acceptedLifetime)) return;
     const { action, instruction } = pendingTedChange;
     if (pendingTedChange.persisted && !(await ai.discardPersisted(pendingTedChange.persisted))) {
       return;
     }
-    setPendingTedChange(null);
+    if (!editSourceIsCurrent(accepted.sourceEpoch, acceptedLifetime)) return;
+    setPendingTedChange((current) => current === accepted ? null : current);
     setProposalNotice(null);
-    window.setTimeout(() => void runAiEdit(action, instruction, true), 0);
-  }, [ai, pendingTedChange, runAiEdit]);
+    await runAiEdit(action, instruction, true);
+  }, [ai, pendingTedChange, runAiEdit, editSourceIsCurrent]);
 
   const runAiExplain = useCallback(
     async (question?: string) => {
@@ -560,20 +659,19 @@ export function SectionEditor({
           {!pendingTedChange && proposalNotice && <p role="alert">{proposalNotice}</p>}
 
           {pendingTedChange && (
-            <>
-              {(proposalNotice || ai.error) && <p role="alert">{proposalNotice || ai.error}</p>}
-              <TedChangeReview
-                suggested={pendingTedChange.suggested}
-                changes={pendingTedChange.changes}
-                explanation={editExplanation(pendingTedChange.action)}
-                onDiscard={() => void discardTedChange()}
-                onRetry={() => void retryTedChange()}
-                onApply={() => void applyTedChange()}
-              />
-            </>
+            <TedChangeReview
+              suggested={pendingTedChange.suggested}
+              changes={pendingTedChange.changes}
+              explanation={editExplanation(pendingTedChange.action)}
+              onDiscard={discardTedChange}
+              onRetry={retryTedChange}
+              onApply={applyTedChange}
+              notice={proposalNotice || ai.error}
+              returnFocusRef={toolbarRef}
+            />
           )}
 
-          <div className={styles.contextBar} role="toolbar" aria-label="Edit selected content">
+          <div ref={toolbarRef} tabIndex={-1} className={styles.contextBar} role="toolbar" aria-label="Edit selected content">
             <button
               type="button"
               className={styles.contextAction}

@@ -11,7 +11,7 @@ select has_function(
 );
 select has_function(
   'public', 'record_upload_extraction_snapshot',
-  array['uuid', 'uuid', 'text', 'uuid', 'text', 'text', 'text', 'text', 'boolean', 'text'],
+  array['uuid', 'uuid', 'text', 'uuid', 'text', 'text', 'text', 'text', 'boolean', 'text', 'text', 'jsonb'],
   'successful extraction has one immutable checkpoint command'
 );
 select has_function(

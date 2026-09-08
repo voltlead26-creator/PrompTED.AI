@@ -1,29 +1,34 @@
 "use client";
 
-import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ingestUpload } from "@prompted/shared/api-client";
+import { ingestUpload, type IngestUploadOutput } from "@prompted/shared/api-client";
 import type { Section } from "@prompted/shared/browser";
 import {
-  preflightUploadMetadata,
-  UPLOAD_REQUIREMENT,
+  preflightUploadMetadataV2 as preflightUploadMetadata,
+  UPLOAD_ACCEPT_ATTRIBUTE_V2 as ACCEPT_ATTRIBUTE,
+  UPLOAD_REQUIREMENT_V2 as UPLOAD_REQUIREMENT,
+  UPLOAD_RESOURCE_POLICY_VERSION_V2,
 } from "@prompted/shared/ingest-upload";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useAuth } from "@/components/providers";
-import { ACCEPT_ATTRIBUTE } from "@/hooks/useFileAttachment";
 import { ensureApiConfigured } from "@/lib/api";
 import {
   captureOwnerDispatch,
   ownerDispatchIsCurrent,
+  type OwnerDispatchLease,
 } from "@/lib/browser-principal-state";
-import { commitDocumentImport } from "@/lib/api/import-workspace";
-import {
-  savePendingOutcome,
-  saveWorkspace,
-  userWorkspaceCacheScope,
-} from "@/lib/workspace-store";
+import { commitDocumentImport, getWorkspaceUpload, type CommitDocumentImportResult } from "@/lib/api/import-workspace";
+import { savePendingOutcome, saveWorkspace, userWorkspaceCacheScope } from "@/lib/workspace-store";
 import { ImportReviewPanel } from "./ImportReviewPanel";
 import { assessImportFidelity, type ImportFidelityReport } from "./import-fidelity";
 import { splitImportedDocument } from "./import-structure";
@@ -41,6 +46,8 @@ type ImportFailureCode =
   | "unknown";
 
 interface PendingImport {
+  creditFallback?: IngestUploadOutput["credit_fallback"];
+  lease: OwnerDispatchLease;
   uploadId: string;
   fileName: string;
   title: string;
@@ -48,6 +55,8 @@ interface PendingImport {
   outcomeId: string;
   documentId: string;
   sections: Section[];
+  confirmedSections?: Section[];
+  savedReplay?: CommitDocumentImportResult;
   fidelity: ImportFidelityReport;
 }
 
@@ -86,29 +95,59 @@ function importFailureMessage(code: ImportFailureCode): string {
     case "password_protected":
       return "That document appears to be password protected. Save an unlocked copy and import that version.";
     case "network_error":
-      return "Your connection dropped before the import finished. Your original file is safe; check your connection and try again.";
+      return "Your connection dropped before the import finished. Retention in your account is not yet confirmed; check the uploaded file or retry the same file.";
     case "sync_failed":
-      return "TED read the document but could not save it securely to your account. Nothing was added to your workspace. Please try again.";
+      return "TED read the document but could not confirm the save to your account. Try again to check the same import and reopen it if it was saved.";
     case "service_unavailable":
-      return "Document import is temporarily unavailable. Your original file is safe; please try again shortly.";
+      return "Document import is temporarily unavailable. Retention in your account is not yet confirmed; please try again shortly.";
     default:
-      return `TED could not import that document. Your original file is safe. ${UPLOAD_REQUIREMENT}`;
+      return `TED could not finish reading that document. Check the uploaded file to confirm its availability. ${UPLOAD_REQUIREMENT}`;
   }
 }
 
 export function MasterWorkspaceImport() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
+  const userId = user?.id;
   const fileRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const lifetimeRef = useRef<AbortController | null>(null);
+  const requestRef = useRef<OwnerDispatchLease | null>(null);
+  const [activeRequest, setActiveRequest] = useState<OwnerDispatchLease | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingImport | null>(null);
+  const [sourceNotice, setSourceNotice] = useState<{ lease: OwnerDispatchLease; uploadId: string; available: boolean | null } | null>(null);
+  const busy = activeRequest !== null && ownerDispatchIsCurrent(activeRequest);
+  const visiblePending =
+    pending &&
+    !authLoading &&
+    pending.lease.expectedUserId === userId?.toLowerCase() &&
+    ownerDispatchIsCurrent(pending.lease)
+      ? pending
+      : null;
+
+  // Retire the lease during the unmount/owner-change commit, before a late
+  // promise can publish content while passive effect cleanup is still queued.
+  useLayoutEffect(() => {
+    const controller = new AbortController();
+    lifetimeRef.current = controller;
+    requestRef.current = null;
+    setActiveRequest(null);
+    setPending(null);
+    setSourceNotice(null);
+    setError(null);
+    setDragOver(false);
+    return () => {
+      controller.abort();
+      if (lifetimeRef.current === controller) lifetimeRef.current = null;
+    };
+  }, [userId]);
 
   const pickFile = useCallback(() => fileRef.current?.click(), []);
 
   const handleFile = useCallback(
     async (file: File) => {
+      if (requestRef.current && ownerDispatchIsCurrent(requestRef.current)) return;
       const preflight = preflightUploadMetadata({
         fileName: file.name,
         mimeType: file.type,
@@ -119,26 +158,53 @@ export function MasterWorkspaceImport() {
         return;
       }
       if (authLoading) return;
-      if (!user?.id) {
+      if (!userId) {
         // Anonymous access was removed: there is no fallback session to wait
         // out here anymore. If there's no user, there's no account.
         setError("Sign in to upload a document \u2014 anonymous uploads are no longer supported.");
         return;
       }
-      const requestContext = captureOwnerDispatch(user.id);
+      const lifetime = lifetimeRef.current;
+      if (!lifetime || lifetime.signal.aborted) return;
+      let requestContext: OwnerDispatchLease;
+      try {
+        requestContext = captureOwnerDispatch(userId, lifetime.signal);
+      } catch {
+        setError("Your sign-in changed. Reconnect to your account before importing the document.");
+        return;
+      }
 
-      setBusy(true);
+      requestRef.current = requestContext;
+      setActiveRequest(requestContext);
       setError(null);
       setPending(null);
+      setSourceNotice(null);
 
+      let preparedUploadId: string | undefined;
+      let readbackAttempted = false;
+      let retainedOriginalConfirmed = false;
       try {
         ensureApiConfigured();
         const result = await ingestUpload(
           file,
           "Import this finished document into Master Workspace for editing. Keep its heading hierarchy, subheadings, paragraphs and list structure where they can be identified reliably.",
           requestContext,
+          { metadataPolicyVersion: UPLOAD_RESOURCE_POLICY_VERSION_V2,
+            beforeDispatch: (prepared) => { preparedUploadId = prepared.uploadId; } },
         );
         requestContext.assertCurrent();
+        preparedUploadId = result.upload_id;
+        // A plain-text preview cannot recreate the source's layout or package.
+        // Retain and reopen binary originals without manufacturing editor HTML.
+        if (preflight.format !== "text" || result.confirm_payload?.truncated === true) {
+          setSourceNotice({ lease: requestContext, uploadId: result.upload_id, available: null });
+          readbackAttempted = true;
+          const source = await getWorkspaceUpload(result.upload_id, requestContext);
+          requestContext.assertCurrent();
+          setSourceNotice({ lease: requestContext, uploadId: result.upload_id, available: Boolean(source?.original) });
+          if (!source) throw new ImportFailure("sync_failed");
+          return;
+        }
         const extracted = result.extracted_text.trim();
         if (!extracted) throw new ImportFailure("empty_document");
 
@@ -149,7 +215,7 @@ export function MasterWorkspaceImport() {
         const sections = splitImportedDocument({
           extracted,
           documentId,
-          userId: user?.id ?? "",
+          userId: requestContext.expectedUserId,
           now,
         });
         const fidelity = assessImportFidelity({
@@ -160,7 +226,9 @@ export function MasterWorkspaceImport() {
         });
 
         setPending({
+          lease: requestContext,
           uploadId: result.upload_id,
+          creditFallback: result.credit_fallback,
           fileName: file.name,
           title,
           extracted,
@@ -170,26 +238,45 @@ export function MasterWorkspaceImport() {
           fidelity,
         });
       } catch (caught) {
+        if (preparedUploadId && !readbackAttempted && ownerDispatchIsCurrent(requestContext)) {
+          setSourceNotice({ lease: requestContext, uploadId: preparedUploadId, available: null });
+          try {
+            const source = await getWorkspaceUpload(preparedUploadId, requestContext);
+            requestContext.assertCurrent();
+            retainedOriginalConfirmed = Boolean(source?.original);
+            setSourceNotice({ lease: requestContext, uploadId: preparedUploadId, available: Boolean(source?.original) });
+          } catch {
+            // Keep availability unknown; a failed read is not evidence of loss.
+          }
+        }
         if (ownerDispatchIsCurrent(requestContext)) {
-          setError(importFailureMessage(classifyImportFailure(caught)));
+          setError(retainedOriginalConfirmed
+            ? "TED could not finish reading this document. Your original is available; open it below or retry the same file."
+            : importFailureMessage(classifyImportFailure(caught)));
         }
       } finally {
-        if (ownerDispatchIsCurrent(requestContext)) setBusy(false);
+        if (requestRef.current === requestContext) {
+          requestRef.current = null;
+          if (ownerDispatchIsCurrent(requestContext)) setActiveRequest(null);
+        }
       }
     },
-    [authLoading, user],
+    [authLoading, userId],
   );
 
   const createWorkspace = useCallback(
     async (sections: Section[]) => {
-      if (!pending) return;
-      const userId = user?.id;
-      if (!userId) {
-        setError(importFailureMessage("sync_failed"));
-        return;
-      }
-      const requestContext = captureOwnerDispatch(userId);
-      setBusy(true);
+      if (!visiblePending || !userId) return;
+      if (requestRef.current && ownerDispatchIsCurrent(requestRef.current)) return;
+      const pending = visiblePending;
+      const requestContext = pending.lease;
+      if (!ownerDispatchIsCurrent(requestContext)) return;
+      const acceptedSections = pending.confirmedSections ?? sections;
+      // After dispatch, a lost response is uncertain persistence. Keep the
+      // confirmed wording immutable until the same upload can be reconciled.
+      setPending({ ...pending, confirmedSections: acceptedSections });
+      requestRef.current = requestContext;
+      setActiveRequest(requestContext);
       setError(null);
 
       try {
@@ -212,7 +299,7 @@ export function MasterWorkspaceImport() {
           templateId: "imported_document",
           conversationContext: "",
           uploadContext: pending.extracted,
-          sections,
+          sections: acceptedSections,
         };
         const recommendationPayload = {
           primary: { template_id: "imported_document", reason: pending.title },
@@ -223,8 +310,9 @@ export function MasterWorkspaceImport() {
           upload_id: pending.uploadId,
         };
 
+        let receipt;
         try {
-          await commitDocumentImport(
+          receipt = await commitDocumentImport(
             {
               uploadId: pending.uploadId,
               outcomeId: pending.outcomeId,
@@ -232,7 +320,7 @@ export function MasterWorkspaceImport() {
               title: pending.title,
               situationText: pendingOutcome.situation,
               recommendationPayload,
-              sections,
+              sections: acceptedSections,
             },
             requestContext,
           );
@@ -241,22 +329,40 @@ export function MasterWorkspaceImport() {
           throw new ImportFailure("sync_failed", { cause: syncError });
         }
 
-        const cacheScope = userWorkspaceCacheScope(userId);
+        if (
+          receipt.idempotent_replay &&
+          (receipt.outcome_id.toLowerCase() !== pending.outcomeId.toLowerCase() ||
+            receipt.document_id.toLowerCase() !== pending.documentId.toLowerCase())
+        ) {
+          // This review cannot replace an earlier import's document. Keep it
+          // visible and explain that result before the owner chooses to leave.
+          setPending({ ...pending, confirmedSections: acceptedSections, savedReplay: receipt });
+          return;
+        }
+
+        // A replay accepted the original saved content, not this review copy.
+        // Reopen through the canonical server loader without publishing it to caches.
+        if (!receipt.idempotent_replay) {
+          const cacheScope = userWorkspaceCacheScope(requestContext.expectedUserId);
+          requestContext.assertCurrent();
+          savePendingOutcome(cacheScope, receipt.outcome_id, pendingOutcome);
+          requestContext.assertCurrent();
+          saveWorkspace(cacheScope, workspace);
+        }
         requestContext.assertCurrent();
-        savePendingOutcome(cacheScope, pending.outcomeId, pendingOutcome);
-        requestContext.assertCurrent();
-        saveWorkspace(cacheScope, workspace);
-        requestContext.assertCurrent();
-        router.push(`/outcomes/${pending.outcomeId}`);
+        router.push(`/outcomes/${receipt.outcome_id}`);
       } catch (caught) {
         if (ownerDispatchIsCurrent(requestContext)) {
           setError(importFailureMessage(classifyImportFailure(caught)));
         }
       } finally {
-        if (ownerDispatchIsCurrent(requestContext)) setBusy(false);
+        if (requestRef.current === requestContext) {
+          requestRef.current = null;
+          if (ownerDispatchIsCurrent(requestContext)) setActiveRequest(null);
+        }
       }
     },
-    [pending, router, user],
+    [visiblePending, router, userId],
   );
 
   const importFile = useCallback(
@@ -295,18 +401,62 @@ export function MasterWorkspaceImport() {
         aria-hidden="true"
       />
 
-      {pending ? (
-        <ImportReviewPanel
-          title={pending.title}
-          initialSections={pending.sections}
-          fidelity={pending.fidelity}
-          onBack={() => {
-            setPending(null);
-            setError(null);
-          }}
-          onConfirm={createWorkspace}
-          busy={busy}
-        />
+      {sourceNotice && !authLoading && sourceNotice.lease.expectedUserId === userId?.toLowerCase() && ownerDispatchIsCurrent(sourceNotice.lease) && (
+        <p role="status">
+          {sourceNotice.available === true ? "Your original is available in this account." : "The original’s availability has not been confirmed."}
+          {" "}<Link href={`/workspace?upload=${sourceNotice.uploadId}`}>{sourceNotice.available === true ? "Open uploaded original" : "Check uploaded file"}</Link>
+          {" "}Open the original-file view to download the retained file and inspect its text preview.
+        </p>
+      )}
+
+      {visiblePending ? (
+        <>
+          {visiblePending.savedReplay ? (
+            <p role="status">
+              This original file is already in your workspace. Changes in this import review have
+              not been applied to it. Open the saved workspace to review and edit that document.
+            </p>
+          ) : visiblePending.confirmedSections ? (
+            <p role="status">
+              This review is locked while TED checks the save of the wording you confirmed. You can
+              continue editing when the saved workspace opens.
+            </p>
+          ) : null}
+          {visiblePending.creditFallback && (
+            <p role="status">
+              OpenAI credit was exhausted, so TED used local Ollama ({visiblePending.creditFallback.model})
+              to classify this upload. Review the imported text before creating your workspace.
+            </p>
+          )}
+          <ImportReviewPanel
+            title={visiblePending.title}
+            initialSections={visiblePending.sections}
+            fidelity={visiblePending.fidelity}
+            onBack={() => {
+              setPending(null);
+              setError(null);
+            }}
+            onConfirm={
+              visiblePending.savedReplay
+                ? () => {
+                    const savedReplay = visiblePending.savedReplay;
+                    if (savedReplay && ownerDispatchIsCurrent(visiblePending.lease)) {
+                      router.push(`/outcomes/${savedReplay.outcome_id}`);
+                    }
+                  }
+                : createWorkspace
+            }
+            busy={busy}
+            readOnly={Boolean(visiblePending.confirmedSections)}
+            confirmLabel={
+              visiblePending.savedReplay
+                ? "Open saved workspace"
+                : visiblePending.confirmedSections
+                  ? "Check saved import"
+                  : "Create workspace"
+            }
+          />
+        </>
       ) : (
         <div className={styles.body}>
           {!authLoading && !user ? (
@@ -367,8 +517,8 @@ export function MasterWorkspaceImport() {
                       {dragOver ? "Drop it here" : "Drag a document into this page"}
                     </p>
                     <p className={styles.description}>
-                      TED will organise the readable content, explain any layout risks, then ask you
-                      to check the sections before anything is added to your workspace.
+                      PDF, Word (DOCX) and spreadsheet files stay as originals. For complete text
+                      files, review the wording before creating an editable workspace.
                     </p>
                     <span className={styles.uploadButton}>
                       <Icon name="upload" size={18} />
@@ -388,7 +538,8 @@ export function MasterWorkspaceImport() {
           <aside className={styles.sidePanel} aria-label="Sections available after import">
             <h2 className={styles.panelHeading}>Sections</h2>
             <p className={styles.panelSub}>
-              Detected sections and layout warnings will appear here after TED reads the document.
+              Complete text imports can be reviewed as sections. Original files open with a separate
+              extracted text preview.
             </p>
             <div className={styles.sectionsStack} aria-hidden="true">
               {Array.from({ length: SECTION_PREVIEW_COUNT }, (_, index) => (
@@ -403,7 +554,7 @@ export function MasterWorkspaceImport() {
         </div>
       )}
 
-      {pending && error && (
+      {visiblePending && error && (
         <p className={styles.error} role="alert">
           {error}
         </p>

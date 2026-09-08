@@ -141,16 +141,7 @@ export async function fetchWorkspaceSectionBody(input: {
     invalidWorkspaceSectionBody();
 
   const { data, error } = await withOwnerSupabase(lease, async (supabase) => {
-    const rpc = supabase.rpc as unknown as (
-      name: "get_workspace_section_body_v1",
-      args: {
-        p_outcome_id: string;
-        p_section_id: string;
-        p_expected_document_revision: number;
-        p_expected_section_revision: number;
-      },
-    ) => Promise<{ data: unknown; error: { code?: string; message?: string } | null }>;
-    return await rpc("get_workspace_section_body_v1", {
+    return await supabase.rpc("get_workspace_section_body_v1", {
       p_outcome_id: input.outcomeId,
       p_section_id: input.sectionId,
       p_expected_document_revision: input.expectedDocumentRevision,

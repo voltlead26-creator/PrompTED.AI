@@ -116,7 +116,14 @@ function createOwnerBoundDataClient(
       headers,
       signal: requestSignal(input, init, lease),
     });
-    lease.assertCurrent();
+    try {
+      lease.assertCurrent();
+    } catch (error) {
+      // A late response must not leave its body flowing after ownership or
+      // selection has retired. Cleanup cannot delay the original stale error.
+      void response.body?.cancel().catch(() => undefined);
+      throw error;
+    }
     return response;
   };
 

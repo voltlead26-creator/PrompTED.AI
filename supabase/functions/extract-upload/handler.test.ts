@@ -1,11 +1,17 @@
 // deno-lint-ignore-file no-import-prefix
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { PrivateStorageObjectError } from "../_shared/private-storage-object.ts";
-import { UploadExtractionError } from "../_shared/upload-extraction.ts";
+import {
+  extractBoundedUploadWithSource,
+  UploadExtractionError,
+} from "../_shared/upload-extraction.ts";
 import {
   handleExtractUpload,
   type UploadExtractorDependencies,
 } from "./handler.ts";
+import {
+  requestIsolatedUploadExtraction,
+} from "../_shared/upload-extraction-client.ts";
 
 const SERVICE_KEY = "synthetic-service-role-key";
 const USER_ID = "71000000-0000-4000-8000-000000000001";
@@ -21,10 +27,10 @@ async function sha256(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function request(
+function request(
   overrides: Record<string, unknown> = {},
   key = SERVICE_KEY,
-): Promise<Request> {
+): Request {
   return new Request("https://example.invalid/functions/v1/extract-upload", {
     method: "POST",
     headers: {
@@ -118,6 +124,236 @@ Deno.test("extract-upload reloads and verifies exact retained bytes before parsi
   });
   assertEquals(deps.reads, 1);
   assertEquals(deps.extracts, 1);
+});
+
+Deno.test("extract-upload v2 uses the accepted version and emits a closed source-absent response", async () => {
+  const deps = {
+    ...dependencies(),
+    extractWithSource: extractBoundedUploadWithSource,
+  };
+  const load = deps.loadSnapshot;
+  deps.loadSnapshot = async (input) => {
+    const snapshot = await load(input);
+    if (!snapshot) throw new Error("fixture missing");
+    return {
+      ...snapshot,
+      extractionContractVersion: "upload-extraction.2" as const,
+    };
+  };
+  const response = await handleExtractUpload(
+    await request({ extraction_contract_version: "upload-extraction.2" }),
+    deps,
+  );
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    upload_id: UPLOAD_ID,
+    user_id: USER_ID,
+    request_sha256: REQUEST_SHA256,
+    claim_token: CLAIM_TOKEN,
+    content_sha256: await sha256(BYTES),
+    content_byte_length: BYTES.length,
+    text: "Reliable retained source",
+    format: "text",
+    truncated: false,
+    resource_policy_version: "upload-resource-policy.1",
+    extraction_contract_version: "upload-extraction.2",
+    source_manifest: null,
+  });
+  assertEquals(deps.extracts, 0);
+});
+
+Deno.test("extract-upload v2 transports a real DOCX from one retained read through both boundaries", async () => {
+  const bytes = await Deno.readFile(
+    new URL("./fixtures/source-preservation.docx", import.meta.url),
+  );
+  const original = Uint8Array.from(bytes);
+  const digest = await sha256(bytes);
+  assertEquals(
+    digest,
+    "a096ad4a8de77f395cef7f999d2e0037147945ae62c6663fabf6b43556c3b799",
+  );
+  const deps = dependencies();
+  const load = deps.loadSnapshot;
+  let reads = 0;
+  let combinedReads = 0;
+  deps.loadSnapshot = async (identity) => {
+    const snapshot = await load(identity);
+    assert(snapshot);
+    return {
+      ...snapshot,
+      filename: "source.docx",
+      fileType: "application/octet-stream",
+      byteLength: bytes.length,
+      contentSha256: digest,
+      extractionContractVersion: "upload-extraction.2",
+    };
+  };
+  deps.readOriginal = () => {
+    reads += 1;
+    return Promise.resolve(bytes);
+  };
+  deps.extractWithSource = (...args) => {
+    combinedReads += 1;
+    return extractBoundedUploadWithSource(...args);
+  };
+  const result = await requestIsolatedUploadExtraction({
+    uploadId: UPLOAD_ID,
+    userId: USER_ID,
+    requestSha256: REQUEST_SHA256,
+    claimToken: CLAIM_TOKEN,
+    extractionContractVersion: "upload-extraction.2",
+    expectedContentSha256: digest,
+    expectedByteLength: bytes.length,
+  }, {
+    baseUrl: "http://127.0.0.1:54321",
+    serviceRoleKey: SERVICE_KEY,
+    timeoutMs: 1_000,
+  }, (url, init) => handleExtractUpload(new Request(url, init), deps));
+  assert(result.format === "docx");
+  assertEquals(result.text, "Format protected document");
+  assertEquals(result.sourceManifest.archiveSha256, digest);
+  assertEquals(
+    result.sourceManifest.mainPart.source.nodes.map((node) => node.text),
+    ["Format protected document"],
+  );
+  assert(result.sourceManifest.blockers.includes("layout_unassessed"));
+  assertEquals([reads, combinedReads, deps.extracts], [1, 1, 0]);
+  assertEquals(bytes, original);
+});
+
+Deno.test("extract-upload rejects version mismatches before Storage and never guesses unknown versions", async () => {
+  for (
+    const version of [
+      undefined,
+      "upload-extraction.1",
+      "upload-extraction.2",
+      null,
+      "upload-extraction.3",
+      ["upload-extraction.1"],
+    ]
+  ) {
+    for (const requested of [undefined, "upload-extraction.2"]) {
+      const deps = dependencies();
+      const load = deps.loadSnapshot;
+      deps.loadSnapshot = async (identity) => {
+        const snapshot = await load(identity);
+        assert(snapshot);
+        return {
+          ...snapshot,
+          extractionContractVersion: version,
+        } as unknown as NonNullable<Awaited<ReturnType<typeof load>>>;
+      };
+      const compatible =
+        (version === undefined || version === "upload-extraction.1") &&
+        requested === undefined;
+      const needsMissingReader = version === "upload-extraction.2" &&
+        requested === "upload-extraction.2";
+      const response = await handleExtractUpload(
+        await request(
+          requested ? { extraction_contract_version: requested } : {},
+        ),
+        deps,
+      );
+      assertEquals(
+        response.status,
+        compatible ? 200 : needsMissingReader ? 503 : 409,
+      );
+      if (!compatible) assertEquals([deps.reads, deps.extracts], [0, 0]);
+    }
+  }
+  for (
+    const version of [null, "upload-extraction.1", "upload-extraction.4", [
+      "upload-extraction.2",
+    ]]
+  ) {
+    const deps = dependencies();
+    assertEquals(
+      (await handleExtractUpload(
+        await request({ extraction_contract_version: version }),
+        deps,
+      )).status,
+      400,
+    );
+    assertEquals(deps.reads, 0);
+  }
+});
+
+Deno.test("extract-upload v2 rejects an invalid producer manifest without downgrading", async () => {
+  const bytes = await Deno.readFile(
+    new URL("./fixtures/source-preservation.docx", import.meta.url),
+  );
+  const deps = dependencies();
+  const load = deps.loadSnapshot;
+  deps.loadSnapshot = async (identity) => {
+    const snapshot = await load(identity);
+    assert(snapshot);
+    return {
+      ...snapshot,
+      filename: "source.docx",
+      fileType: "application/octet-stream",
+      byteLength: bytes.length,
+      contentSha256: await sha256(bytes),
+      extractionContractVersion: "upload-extraction.2",
+    };
+  };
+  deps.readOriginal = () => Promise.resolve(bytes);
+  deps.extractWithSource = () =>
+    Promise.resolve({
+      text: "Never accept a missing DOCX source",
+      format: "docx",
+      truncated: false,
+      resourcePolicyVersion: "upload-resource-policy.1",
+      sourceManifest: null,
+    } as unknown as Awaited<ReturnType<typeof extractBoundedUploadWithSource>>);
+  const response = await handleExtractUpload(
+    await request({ extraction_contract_version: "upload-extraction.2" }),
+    deps,
+  );
+  assertEquals(response.status, 503);
+  assertEquals(
+    (await response.json()).error.code,
+    "UPLOAD_EXTRACTION_UNAVAILABLE",
+  );
+  assertEquals(deps.extracts, 0);
+});
+
+Deno.test("extract-upload v2 cannot downgrade an accepted DOCX to source-absent text", async () => {
+  const bytes = await Deno.readFile(
+    new URL("./fixtures/source-preservation.docx", import.meta.url),
+  );
+  const deps = dependencies();
+  const load = deps.loadSnapshot;
+  deps.loadSnapshot = async (identity) => {
+    const snapshot = await load(identity);
+    assert(snapshot);
+    return {
+      ...snapshot,
+      filename: "original.docx",
+      fileType: "application/octet-stream",
+      byteLength: bytes.length,
+      contentSha256: await sha256(bytes),
+      extractionContractVersion: "upload-extraction.2",
+    };
+  };
+  deps.readOriginal = () => Promise.resolve(bytes);
+  deps.extractWithSource = () =>
+    Promise.resolve({
+      text: "Format protected document",
+      format: "text",
+      truncated: false,
+      resourcePolicyVersion: "upload-resource-policy.1",
+      sourceManifest: null,
+    });
+  const response = await handleExtractUpload(
+    await request({ extraction_contract_version: "upload-extraction.2" }),
+    deps,
+  );
+  assertEquals(response.status, 503);
+  assertEquals(
+    (await response.json()).error.code,
+    "UPLOAD_EXTRACTION_RESPONSE_INVALID",
+  );
+  assertEquals(deps.extracts, 0);
 });
 
 Deno.test("extract-upload rejects caller metadata and stale durable claims before Storage", async () => {

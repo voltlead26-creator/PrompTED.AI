@@ -19,29 +19,35 @@ export interface DesignInput {
   signal?: AbortSignal;
 }
 
-interface RawDesign {
-  name?: unknown;
-  domain?: unknown;
-  structure_type?: unknown;
-  sections?: unknown;
-}
+/** Included in the server-owned allowance policy for new bespoke requests. */
+export const BESPOKE_DESIGN_VALIDATOR_VERSION = "bespoke-section-validation.1";
 
-function cleanText(value: unknown, max: number): string {
-  return typeof value === "string" ? value.slice(0, max).trim() : "";
-}
-
-function cleanArray(
+function isClosedObject(
   value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key));
+}
+
+function isText(
+  value: unknown,
+  max: number,
+  allowEmpty = false,
+): value is string {
+  return typeof value === "string" && value.length <= max &&
+    (allowEmpty || value.trim().length > 0);
+}
+
+function isTextArray(
+  value: unknown,
+  minItems: number,
   maxItems: number,
   maxLen: number,
-): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const items = value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.slice(0, maxLen).trim())
-    .filter(Boolean)
-    .slice(0, maxItems);
-  return items.length > 0 ? items : undefined;
+): value is string[] {
+  return Array.isArray(value) && value.length >= minItems &&
+    value.length <= maxItems && value.every((item) => isText(item, maxLen));
 }
 
 function slugKey(label: string, index: number): string {
@@ -53,12 +59,14 @@ function slugKey(label: string, index: number): string {
 }
 
 /**
- * Ask the model to design a bespoke section structure. Returns null on any
- * failure so the caller can fall back to its existing behaviour.
+ * Ask the model to design a bespoke section structure. Invalid completed output
+ * returns null; provider and accounting failures retain their exact identity so
+ * the caller can reconcile uncertain work. No caller scaffold is substituted.
  */
 export async function designBespokeTemplate(
   input: DesignInput,
 ): Promise<ResolvedTemplate | null> {
+  input.signal?.throwIfAborted();
   const content = [
     `The user needs a document that no catalogue template covers: "${input.documentName}".`,
     `Situation:\n${input.situation || "(not provided)"}`,
@@ -78,65 +86,72 @@ export async function designBespokeTemplate(
     ].filter(Boolean).join("\n"),
   ].filter(Boolean).join("\n\n");
 
-  try {
-    const result = await routeRequest({
-      task: "document",
-      logicalStageKey: "generate-document.design",
-      outputSchema: SECTION_DESIGN_OUTPUT_SCHEMA,
-      systemPrompt: input.systemPrompt,
-      messages: [{ role: "user", content }],
-      maxTokens: 2200,
-      signal: input.signal,
-    });
+  const result = await routeRequest({
+    task: "document",
+    logicalStageKey: "generate-document.design",
+    outputSchema: SECTION_DESIGN_OUTPUT_SCHEMA,
+    systemPrompt: input.systemPrompt,
+    messages: [{ role: "user", content }],
+    maxTokens: 2200,
+    signal: input.signal,
+  });
+  input.signal?.throwIfAborted();
 
-    const parsed = result.structured as RawDesign | undefined;
-    if (!parsed || !Array.isArray(parsed.sections)) return null;
+  const parsed: unknown = result.structured;
+  if (
+    !isClosedObject(parsed, ["name", "domain", "structure_type", "sections"]) ||
+    !isText(parsed.name, 120) || !isText(parsed.domain, 20) ||
+    !["employment", "education", "business", "finance", "general"].includes(
+      parsed.domain,
+    ) ||
+    (parsed.structure_type !== "compose" &&
+      parsed.structure_type !== "structured_form" &&
+      parsed.structure_type !== "checklist") ||
+    !Array.isArray(parsed.sections) || parsed.sections.length < 3 ||
+    parsed.sections.length > 9
+  ) return null;
 
-    const sections: TemplateSection[] = [];
-    for (const raw of parsed.sections.slice(0, 9)) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const item = raw as Record<string, unknown>;
-      const label = cleanText(item.label, 120);
-      if (!label) continue;
-      const section: TemplateSection = {
-        key: slugKey(label, sections.length),
-        label,
-        required: item.required !== false,
-      };
-      const hint = cleanText(item.hint, 300);
-      if (hint) section.hint = hint;
-      const vital = cleanArray(item.vital, 6, 200);
-      if (vital) section.vital = vital;
-      const improver = cleanArray(item.improver, 10, 200);
-      if (improver) section.improver = improver;
-      sections.push(section);
-    }
-    if (sections.length < 3) return null;
-
-    const domainRaw = cleanText(parsed.domain, 20);
-    const domain =
-      ["employment", "education", "business", "finance", "general"].includes(
-          domainRaw,
-        )
-        ? domainRaw
-        : "general";
-    const structureRaw = cleanText(parsed.structure_type, 20);
-    const structureType =
-      structureRaw === "structured_form" || structureRaw === "checklist"
-        ? structureRaw
-        : "compose";
-
-    return {
-      id: "bespoke",
-      name: cleanText(parsed.name, 120) || input.documentName,
-      domain,
-      structureType,
-      // Bespoke documents get the cautious middle setting: TED flags
-      // judgement calls without positioning itself as professional advice.
-      adviceBoundary: "light",
-      sections,
+  const sections: TemplateSection[] = [];
+  const keys = new Set<string>();
+  for (const item of parsed.sections) {
+    if (
+      !isClosedObject(item, [
+        "label",
+        "required",
+        "hint",
+        "vital",
+        "improver",
+      ]) ||
+      !isText(item.label, 120) || typeof item.required !== "boolean" ||
+      !isText(item.hint, 300, true) || !isTextArray(item.vital, 2, 6, 200) ||
+      !isTextArray(item.improver, 4, 10, 200)
+    ) return null;
+    const label = item.label.trim();
+    const key = slugKey(label, sections.length);
+    // The browser stream and subsequent scoped requests use this exact key.
+    // Reject ambiguous or oversized identity rather than renaming its meaning.
+    if (key.length > 80 || keys.has(key)) return null;
+    keys.add(key);
+    const section: TemplateSection = {
+      key,
+      label,
+      required: item.required,
+      vital: item.vital.map((value) => value.trim()),
+      improver: item.improver.map((value) => value.trim()),
     };
-  } catch {
-    return null;
+    const hint = item.hint.trim();
+    if (hint) section.hint = hint;
+    sections.push(section);
   }
+
+  return {
+    id: "bespoke",
+    name: parsed.name.trim(),
+    domain: parsed.domain,
+    structureType: parsed.structure_type,
+    // Bespoke documents get the cautious middle setting: TED flags
+    // judgement calls without positioning itself as professional advice.
+    adviceBoundary: "light",
+    sections,
+  };
 }

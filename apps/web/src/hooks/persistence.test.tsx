@@ -11,6 +11,7 @@ import type { User } from "@supabase/supabase-js";
 import { ApiError, generateDocumentStream } from "@prompted/shared/api-client";
 import type { Section } from "@prompted/shared/browser";
 import { captureOwnerDispatch, recordBrowserPrincipal } from "@/lib/browser-principal-state";
+import type { PersistedSection } from "@/lib/api/sections";
 
 const mockUpsertDocument = vi.fn().mockResolvedValue(undefined);
 const mockUpsertSections = vi.fn().mockResolvedValue(undefined);
@@ -539,7 +540,9 @@ describe("useDocument — DB persistence wiring", () => {
   it("hydrates authoritative wording and revision before autosave without a stale write", async () => {
     vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
     mockFetchDocumentByOutcomeId.mockResolvedValue(dbDocument);
-    mockFetchSections.mockResolvedValue([
+    const hydration = deferred<PersistedSection[]>();
+    mockFetchSections.mockImplementationOnce(() => hydration.promise);
+    const authoritative: PersistedSection[] = [
       {
         ...serverInitialState.workspace!.sections[0]!,
         content: "Authoritative B",
@@ -548,7 +551,7 @@ describe("useDocument — DB persistence wiring", () => {
         approved_revision: null,
         ledger_binding_status: "legacy_unversioned",
       },
-    ]);
+    ];
 
     const { result } = renderHook(() => useDocument("outcome-1", serverInitialState));
 
@@ -562,21 +565,28 @@ describe("useDocument — DB persistence wiring", () => {
         expect.objectContaining({ expectedUserId: "user-1" }),
       ),
     );
-    await waitFor(() =>
-      expect(
-        (
-          result.current.state?.sections[0] as Section & {
-            revision?: number;
-            ledger_binding_status?: string;
-          }
-        )?.ledger_binding_status,
-      ).toBe("legacy_unversioned"),
-    );
-    expect(result.current.loading).toBe(false);
-    expect(result.current.state?.sections[0]?.content).toBe("Authoritative B");
+    // This binding is already present in the initial snapshot. It cannot
+    // establish that the later section read and baseline hashing completed.
+    expect(result.current.loading).toBe(true);
+    expect(result.current.state?.sections[0]?.content).toBe("Server wording");
     expect((result.current.state?.sections[0] as Section & { revision?: number })?.revision).toBe(
-      2,
+      1,
     );
+    expect(mockSaveLegacyWorkspaceV1).not.toHaveBeenCalled();
+    await act(async () => {
+      hydration.resolve(authoritative);
+      await hydration.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+      expect(result.current.state?.sections[0]).toEqual(
+        expect.objectContaining({
+          content: "Authoritative B",
+          revision: 2,
+          ledger_binding_status: "legacy_unversioned",
+        }),
+      );
+    });
 
     await act(async () => {
       capturedAutosaveCallback?.(result.current.state);
@@ -594,6 +604,27 @@ describe("useDocument — DB persistence wiring", () => {
 
     await act(async () => Promise.resolve());
     expect(result.current.state?.sections[0]?.content).toBe("Immediate local edit");
+    await act(async () => {
+      capturedAutosaveCallback?.(result.current.state);
+    });
+    await waitFor(() => expect(result.current.currentRevision).toBe(5));
+    expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalledTimes(1);
+    expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedDocumentRevision: 4,
+        sections: [
+          expect.objectContaining({
+            expected: expect.objectContaining({
+              revision: 2,
+              content_sha256: await digestText("Authoritative B"),
+            }),
+            content: "Immediate local edit",
+          }),
+        ],
+      }),
+      expect.objectContaining({ expectedUserId: "user-1" }),
+    );
+    expect(mockFetchOutcome).not.toHaveBeenCalled();
     expect(mockFetchDocumentByOutcomeId).not.toHaveBeenCalled();
   });
 
@@ -999,6 +1030,36 @@ describe("useDocument — DB persistence wiring", () => {
     expect(result.current.currentRevision).toBe(5);
   });
 
+  it("refuses an approval callback whose rendered wording has just been edited", async () => {
+    vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+    const { result } = renderHook(() => useDocument("outcome-1", capturedInitialState));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      result.current.setSections((current) =>
+        current.map((section) => ({
+          ...section,
+          content: "New wording before React commits.",
+          status: "edited",
+        })),
+      );
+      expect(await result.current.approveDocument()).toBe(false);
+    });
+    expect(mockEditCapturedSection).not.toHaveBeenCalled();
+    expect(mockApproveCapturedRevision).not.toHaveBeenCalled();
+    expect(result.current.state?.sections[0]?.content).toBe("New wording before React commits.");
+  });
+
+  it("refuses a retained approval callback after the workspace unmounts", async () => {
+    vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+    const { result, unmount } = renderHook(() => useDocument("outcome-1", capturedInitialState));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const approve = result.current.approveDocument;
+    unmount();
+    expect(await approve()).toBe(false);
+    expect(mockEditCapturedSection).not.toHaveBeenCalled();
+    expect(mockApproveCapturedRevision).not.toHaveBeenCalled();
+  });
+
   it("flushes captured wording before revision-bound approval", async () => {
     vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
     const { result } = renderHook(() => useDocument("outcome-1", capturedInitialState));
@@ -1147,6 +1208,134 @@ describe("useDocument — DB persistence wiring", () => {
     );
   });
 
+  it.each(["DOCUMENT_STREAM_INCOMPLETE", "DOCUMENT_STREAM_JSON_INVALID"])(
+    "never saves a provisional draft when generation rejects with %s",
+    async (code) => {
+      vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+      mockFetchOutcome.mockResolvedValue({
+        situation_text: "I was charged $10 twice.",
+        recommendation_payload: {
+          situation: "I was charged $10 twice.",
+          primary: { template_id: "complaint_letter", reason: "Complaint Letter" },
+        },
+      });
+      mockFetchDocumentByOutcomeId.mockResolvedValue({
+        ...dbDocument,
+        title: "Complaint Letter",
+        template_id: "complaint_letter",
+      });
+      const sibling = {
+        ...dbSections[0]!,
+        id: "request",
+        key: "request",
+        name: "Request",
+        order_index: 1,
+        content: "Please review the duplicate charge.",
+        status: "approved",
+        revision: 3,
+        approved_revision: 3,
+      };
+      mockFetchSections.mockResolvedValue([
+        { ...dbSections[0]!, id: "issue", key: "issue", name: "Issue", content: "" },
+        sibling,
+      ]);
+      const provisional = "Synthetic provisional wording that must never become canonical.";
+      let previewDelivered = false;
+      vi.mocked(generateDocumentStream).mockImplementation(
+        async (_input, _section, _context, _design, _missing, _unresolved, onDraft) => {
+          expect(onDraft).toBeTypeOf("function");
+          onDraft?.({ type: "draft_section", key: "issue", label: "Issue", content: provisional });
+          previewDelivered = true;
+          throw new ApiError(502, code, {});
+        },
+      );
+      const { result } = renderHook(() => useDocument("outcome-1"));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(previewDelivered).toBe(true);
+      expect(JSON.stringify(result.current.state)).not.toContain(provisional);
+      expect(result.current.state?.sections.find((item) => item.id === "request")).toMatchObject(
+        sibling,
+      );
+      expect(result.current.generationIssues).toEqual([
+        expect.objectContaining({
+          sectionId: "issue",
+          reason: expect.stringContaining("did not complete"),
+        }),
+      ]);
+      await act(async () => {
+        capturedAutosaveCallback?.(result.current.state);
+      });
+      await waitFor(() => expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalled());
+      expect(JSON.stringify(mockSaveWorkspace.mock.calls)).not.toContain(provisional);
+      expect(JSON.stringify(mockSaveLegacyWorkspaceV1.mock.calls)).not.toContain(provisional);
+    },
+  );
+
+  it.each([null, 401, 402])(
+    "keeps a reconciliation hold through editing and later status %s",
+    async (laterStatus) => {
+      vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+      mockFetchOutcome.mockResolvedValue({
+        situation_text: "I was charged $10 twice.",
+        recommendation_payload: {
+          situation: "I was charged $10 twice.",
+          primary: { template_id: "complaint_letter", reason: "Complaint Letter" },
+        },
+      });
+      mockFetchDocumentByOutcomeId.mockResolvedValue({
+        ...dbDocument,
+        title: "Complaint Letter",
+        template_id: "complaint_letter",
+      });
+      mockFetchSections.mockResolvedValue([
+        { ...dbSections[0]!, id: "issue", key: "issue", name: "Issue", content: "" },
+        {
+          ...dbSections[0]!,
+          id: "request",
+          key: "request",
+          name: "Request",
+          content: "Please review the duplicate charge.",
+          order_index: 1,
+        },
+      ]);
+      vi.mocked(generateDocumentStream).mockRejectedValue(
+        new ApiError(409, "GENERATION_RECONCILIATION_REQUIRED", {}),
+      );
+      const { result } = renderHook(() => useDocument("outcome-1"));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.generationIssues).toEqual([
+        expect.objectContaining({ sectionId: "issue", retryable: false }),
+      ]);
+      act(() => {
+        result.current.setSections((sections) =>
+          sections.map((section) => ({
+            ...section,
+            content: "Owner-entered wording while completion remains uncertain.",
+          })),
+        );
+      });
+      expect(result.current.generationIssues).toEqual([
+        expect.objectContaining({ sectionId: "issue", retryable: false }),
+      ]);
+      if (laterStatus) {
+        vi.mocked(generateDocumentStream).mockRejectedValueOnce(
+          new ApiError(laterStatus, laterStatus === 401 ? "AUTH_REQUIRED" : "PAYWALL", {}),
+        );
+        await act(async () => {
+          await result.current.retryGenerationSection("request");
+        });
+        expect(generateDocumentStream).toHaveBeenCalledTimes(2);
+        expect(result.current.generationIssues).toContainEqual(
+          expect.objectContaining({ sectionId: "issue", retryable: false }),
+        );
+      }
+      await act(async () => {
+        await result.current.retryGenerationSection("issue");
+      });
+      expect(generateDocumentStream).toHaveBeenCalledTimes(laterStatus ? 2 : 1);
+    },
+  );
+
   it("shows placeholders for stored DB blanks while regeneration is still pending", async () => {
     vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
     mockFetchOutcome.mockResolvedValue({
@@ -1189,7 +1378,7 @@ describe("useDocument — DB persistence wiring", () => {
     unmount();
   });
 
-  it("keeps placeholders for stored DB blanks when regeneration finishes without content", async () => {
+  it("keeps existing placeholders when regeneration rejects an incomplete stream", async () => {
     vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
     mockFetchOutcome.mockResolvedValue({
       id: "outcome-1",
@@ -1216,6 +1405,9 @@ describe("useDocument — DB persistence wiring", () => {
         content: '<p><br class="ProseMirror-trailingBreak"></p>',
       },
     ]);
+    vi.mocked(generateDocumentStream).mockRejectedValue(
+      new ApiError(502, "DOCUMENT_STREAM_INCOMPLETE", {}),
+    );
 
     const { result } = renderHook(() => useDocument("outcome-1"));
 
@@ -1270,6 +1462,7 @@ describe("useDocument — DB persistence wiring", () => {
         {
           ...dbSections[0]!,
           id: "issue",
+          document_id: cachedWorkspace.documentId,
           key: "issue",
           name: "The Issue",
           content: "",
@@ -1303,11 +1496,21 @@ describe("useDocument — DB persistence wiring", () => {
     const firstRequest = vi.mocked(generateDocumentStream).mock.calls[0]?.[0];
     firstMount.unmount();
 
-    vi.mocked(generateDocumentStream).mockResolvedValueOnce(undefined);
+    vi.mocked(generateDocumentStream).mockImplementationOnce(async (_input, receive) => {
+      await receive({
+        type: "section",
+        key: "issue",
+        label: "The Issue",
+        content: "I was charged twice for the same purchase.",
+      });
+    });
     const replayMount = renderHook(() => useDocument("outcome-reload"));
     await waitFor(() => expect(generateDocumentStream).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(replayMount.result.current.loading).toBe(false));
     const replayRequest = vi.mocked(generateDocumentStream).mock.calls[1]?.[0];
+    expect(replayMount.result.current.state?.sections[0]?.content).toBe(
+      "I was charged twice for the same purchase.",
+    );
 
     expect(firstRequest?.generation_request_id).toBeTruthy();
     expect(replayRequest?.generation_request_id).toBe(firstRequest?.generation_request_id);
@@ -1332,6 +1535,7 @@ describe("useDocument — DB persistence wiring", () => {
         {
           ...dbSections[0]!,
           id: "issue",
+          document_id: cachedWorkspace.documentId,
           key: "issue",
           name: "The Issue",
           content: "",
@@ -1353,6 +1557,9 @@ describe("useDocument — DB persistence wiring", () => {
       template_id: "complaint_letter",
     });
     mockFetchSections.mockResolvedValue(repairWorkspace.sections);
+    vi.mocked(generateDocumentStream).mockRejectedValueOnce(
+      new ApiError(502, "STREAM_RESPONSE_LOST", {}),
+    );
 
     const { result } = renderHook(() => useDocument("outcome-repair"));
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -1368,11 +1575,21 @@ describe("useDocument — DB persistence wiring", () => {
     });
     const firstRepair = vi.mocked(generateDocumentStream).mock.calls[0]?.[0];
 
-    vi.mocked(generateDocumentStream).mockResolvedValueOnce(undefined);
+    vi.mocked(generateDocumentStream).mockImplementationOnce(async (_input, receive) => {
+      await receive({
+        type: "section",
+        key: "issue",
+        label: "The Issue",
+        content: "I was charged twice for the same purchase.",
+      });
+    });
     await act(async () => {
       await result.current.retryGenerationSection("issue");
     });
     const replayRepair = vi.mocked(generateDocumentStream).mock.calls[1]?.[0];
+    expect(result.current.state?.sections[0]?.content).toBe(
+      "I was charged twice for the same purchase.",
+    );
 
     expect(firstRepair?.generation_request_id).toBeTruthy();
     expect(replayRepair?.generation_request_id).toBe(firstRepair?.generation_request_id);
@@ -1418,6 +1635,8 @@ describe("useDocument — DB persistence wiring", () => {
       status: "in_progress",
       is_saved: false,
     });
+    mockFetchDocumentByOutcomeId.mockResolvedValue(dbDocument);
+    mockFetchSections.mockResolvedValue([{ ...dbSections[0]!, key: "introduction", content: "" }]);
     vi.mocked(generateDocumentStream).mockRejectedValueOnce(
       new ApiError(401, "INVALID_TOKEN", {
         error: { code: "INVALID_TOKEN", message: "Your session has expired." },
@@ -1427,6 +1646,7 @@ describe("useDocument — DB persistence wiring", () => {
     const { result } = renderHook(() => useDocument("outcome-1"));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
     expect(result.current.generationIssues).toEqual([
       expect.objectContaining({
         sectionId: "__auth__",
@@ -1662,7 +1882,8 @@ describe("useDocument — DB persistence wiring", () => {
     });
     await waitFor(() => expect(result.current.syncStatus).toBe("failed"));
     const uncertainRequest = mockSaveLegacyWorkspaceV1.mock.calls[0]?.[0] as
-      SaveLegacyWorkspaceV1Input | undefined;
+      | SaveLegacyWorkspaceV1Input
+      | undefined;
     expect(uncertainRequest).toBeDefined();
 
     mockSaveLegacyWorkspaceV1.mockImplementation(async (input: SaveLegacyWorkspaceV1Input) =>
@@ -1683,9 +1904,11 @@ describe("useDocument — DB persistence wiring", () => {
 
     await waitFor(() => expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalledTimes(3));
     const replayRequest = mockSaveLegacyWorkspaceV1.mock.calls[1]?.[0] as
-      SaveLegacyWorkspaceV1Input | undefined;
+      | SaveLegacyWorkspaceV1Input
+      | undefined;
     const newerRequest = mockSaveLegacyWorkspaceV1.mock.calls[2]?.[0] as
-      SaveLegacyWorkspaceV1Input | undefined;
+      | SaveLegacyWorkspaceV1Input
+      | undefined;
     expect(replayRequest).toBe(uncertainRequest);
     expect(newerRequest).toEqual(
       expect.objectContaining({

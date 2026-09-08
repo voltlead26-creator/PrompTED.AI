@@ -28,14 +28,6 @@
   box-shadow: none;
 }
 
-/* Immediate visual feedback on press, ahead of whatever the click handler
-   does (which may be async) — makes the button feel like it registered the
-   tap right away instead of appearing to lag. */
-.button:not(:disabled):active {
-  transform: scale(0.97);
-  transition-duration: 0.05s;
-}
-
 /* ---- Sizes ---- */
 .sm {
   font-size: var(--text-label);
@@ -89,6 +81,12 @@
 }
 .text:not(:disabled):hover {
   text-decoration: underline;
+}
+
+/* Keep press feedback after equally specific variant hover transforms. */
+.button:not(:disabled):active {
+  transform: scale(0.97);
+  transition-duration: 0.05s;
 }
 
 .fullWidth {

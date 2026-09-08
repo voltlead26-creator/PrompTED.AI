@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "esnext"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "typeRoots": ["../../apps/web/node_modules/@types"]
+  },
+  "include": ["../../playwright.config.ts", "workspace-fixtures.ts", "workspace-fixtures.test.ts", "retained-uploads.spec.ts",
+    "workspace-upload-fixtures.ts", "workspace-upload-fixtures.test.ts", "upload.playwright.config.ts", "workspace-upload.spec.ts"]
+}

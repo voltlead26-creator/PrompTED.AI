@@ -60,7 +60,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...rest}
     >
       {loading ? (
-        <Spinner label={loadingLabel} size={size === "lg" ? "md" : "sm"} />
+        <Spinner label={loadingLabel} size={size === "lg" ? "md" : "sm"} showLabel />
       ) : (
         <>
           {leadingIcon}

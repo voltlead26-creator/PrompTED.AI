@@ -1,0 +1,27 @@
+{
+  "writer": "/usr/bin/textutil -convert rtf -font Helvetica -fontsize 12",
+  "reader": "/usr/bin/textutil -convert txt",
+  "writerMarker": "cocoartf2870 (observed metadata, not an authority)",
+  "fixture": "synthetic local AppKit-produced text; no user document",
+  "originalByteLength": 449,
+  "originalSha256": "c544c9bbf850cd478a42d530a5243ac6acca35c633e3b92c2db486c28357bc84",
+  "originalBytesUnchanged": true,
+  "originalWordingMatchesNativeReadback": true,
+  "extractedWordingMatchesNativeReadback": true,
+  "extractedText": "Source-preservation fixture\nRenée — 日本語 😀\nKeep each paragraph and these exact words.",
+  "truncated": false,
+  "manifest": {
+    "version": "rtf-source-manifest.1",
+    "assessment": "source_only",
+    "originalSha256": "c544c9bbf850cd478a42d530a5243ac6acca35c633e3b92c2db486c28357bc84",
+    "originalByteLength": 449,
+    "extractedTextSha256": "8f4a2ccc7caabefe92a6b7a07e63babde18f86e54e8815d506efa195d39ad3ea",
+    "blockers": [
+      "rtf-format-preserving-editing-unverified"
+    ]
+  },
+  "persistence": "unverified; v3 wire/SQL not integrated",
+  "masterWorkflow": "unverified",
+  "editing": "unimplemented",
+  "exportInspection": "unverified"
+}

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   savePendingOutcome: vi.fn(),
   useExport: vi.fn(),
   useWorkspace: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -45,12 +46,13 @@ vi.mock("@/components/organisms/CapturedAdmission", () => ({
 vi.mock("@/hooks/useWorkspace", () => ({
   useWorkspace: (...args: unknown[]) => mocks.useWorkspace(...args),
 }));
+vi.mock("@/components/organisms/WorkspacePane", () => ({ WorkspacePane: () => null }));
 vi.mock("@/hooks/useExport", () => ({
   useExport: () => mocks.useExport(),
 }));
 vi.mock("@/hooks/useDeferredTour", () => ({ useDeferredTour: () => false }));
 vi.mock("@/components/providers", () => ({ useAuth: () => ({ user: { id: "user-1" } }) }));
-vi.mock("@/components/atoms/Toast", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock("@/components/atoms/Toast", () => ({ useToast: () => ({ showToast: mocks.showToast }) }));
 vi.mock("@/lib/api", () => ({ ensureApiConfigured: mocks.ensureApiConfigured }));
 vi.mock("@/lib/api/outcomes", () => ({
   attachOutcomeUpload: (...args: unknown[]) => mocks.attachOutcomeUpload(...args),
@@ -162,6 +164,96 @@ describe("WorkspaceScreen durable recovery", () => {
   });
 
   afterEach(() => recordBrowserPrincipal(undefined));
+
+  it.each(["idle", "local_only", "failed"] as const)(
+    "attempts saving from %s instead of fabricating a saved toast",
+    async (syncStatus) => {
+      const retry = vi.fn();
+      mocks.useWorkspace.mockReturnValue({
+        loading: false,
+        title: "Synthetic document",
+        sections: [],
+        activeSectionId: null,
+        generationIssues: [],
+        missingInfoQuestions: [],
+        syncStatus,
+        deviceSaveStatus: "quota_exceeded",
+        currentRevision: 1,
+        approvedRevision: null,
+        drafting: false,
+        captured: false,
+        retrySync: retry,
+        isAllApproved: false,
+        dirtySectionCount: 0,
+      });
+      render(<WorkspaceScreen outcomeId="22222222-2222-4222-8222-222222222222" />);
+      await userEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(mocks.showToast).not.toHaveBeenCalled();
+      await userEvent.click(screen.getByRole("button", { name: /^Save problem:/ }));
+      expect(screen.queryByText("This version is saved on this device")).toBeNull();
+      expect(screen.getByText(/browser storage is full/i)).toBeInTheDocument();
+    },
+  );
+
+  it.each([true, false])(
+    "shows the actual generation reason with retryable=%s",
+    async (retryable) => {
+      const user = userEvent.setup();
+      const retry = vi.fn();
+      const reason = retryable
+        ? "Generation did not complete. Try this section again, or edit its wording."
+        : "TED could not confirm whether the previous generation finished. New generation is paused for this section. You can still edit its wording.";
+      mocks.useWorkspace.mockReturnValue({
+        loading: false,
+        title: "Synthetic complaint",
+        sections: [],
+        activeSectionId: "issue",
+        generationIssues: [
+          { sectionId: "issue", sectionName: "Issue", reason, retryable, attempts: 0 },
+        ],
+        missingInfoQuestions: [],
+        syncStatus: "saved",
+        currentRevision: 1,
+        approvedRevision: null,
+        drafting: false,
+        captured: false,
+        retryGenerationSection: retry,
+      });
+      render(
+        <WorkspaceScreen
+          outcomeId={initialState.intake!.outcomeId}
+          initialState={{
+            ...initialState,
+            truth: {
+              ...initialState.truth,
+              ledgerBindingStatus: "legacy_unversioned",
+              operationStatus: null,
+              operationId: null,
+              operationRevision: null,
+            },
+          }}
+        />,
+      );
+      const trigger = screen.getByRole("button", {
+        name: "Needs attention: Issue needs attention",
+      });
+      await user.click(trigger);
+      expect(screen.getByText(reason)).toBeVisible();
+      if (retryable) {
+        await user.click(screen.getByRole("button", { name: "Try this section again" }));
+        expect(retry).toHaveBeenCalledExactlyOnceWith("issue");
+      } else {
+        expect(screen.queryByRole("button", { name: "Try this section again" })).toBeNull();
+        await user.tab();
+        expect(trigger).not.toHaveFocus();
+        await user.keyboard("{Escape}");
+        expect(trigger).toHaveFocus();
+        expect(screen.queryByText(reason)).toBeNull();
+        expect(retry).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it("fails closed when authoritative workspace state is unavailable", async () => {
     const { container } = render(
@@ -302,8 +394,9 @@ describe("WorkspaceScreen durable recovery", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: /I can build your Business Proposal/i }))
-      .toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: /I can build your Business Proposal/i }),
+    ).toBeVisible();
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
     await user.upload(input!, new File(["source"], "source.txt", { type: "text/plain" }));
@@ -346,8 +439,9 @@ describe("WorkspaceScreen durable recovery", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: /I can build your Business Proposal/i }))
-      .toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: /I can build your Business Proposal/i }),
+    ).toBeVisible();
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
     await user.upload(input!, new File(["source"], "source.txt", { type: "text/plain" }));

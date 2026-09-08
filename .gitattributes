@@ -1,0 +1,9 @@
+# Source-preservation fixtures must retain their original bytes on every checkout.
+*.pdf binary
+*.docx binary
+*.rtf binary
+
+# These reviewed historical SQL/acceptance bytes include a final blank line.
+# Preserve their pinned digests; all other whitespace checks still apply.
+supabase/migrations/20260908140000_complete_catalogue_persistence_seeds.sql whitespace=-blank-at-eof
+docs/evidence/web-operational-readiness/catalogue-upgrade-sql-baseline.json whitespace=-blank-at-eof

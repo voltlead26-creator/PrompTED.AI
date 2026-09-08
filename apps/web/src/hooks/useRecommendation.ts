@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   jobMatch,
-  recommend,
   type ClarifyTurn,
   type JobMatchResult,
 } from "@prompted/shared/api-client";
@@ -14,6 +13,7 @@ import { useAuth } from "@/components/providers";
 import {
   captureOwnerDispatch,
   ownerDispatchIsCurrent,
+  OwnerDispatchError,
 } from "@/lib/browser-principal-state";
 import { useInterpretIntent } from "./useInterpretIntent";
 
@@ -22,7 +22,7 @@ export interface UseRecommendation {
   thinking: boolean;
   result: IntentResult | null;
   conversationStarted: boolean;
-  /** True once intent is clear and a recommendation is available. */
+  /** True only after the user confirms the current document knowledge summary. */
   showRecommendation: boolean;
   /** Seed TED with upload-derived context before the first recommendation turn. */
   seedUploadContext: (params: {
@@ -54,6 +54,11 @@ export interface UseRecommendation {
   }) => void;
   reset: () => void;
 }
+
+const CONFIRM_KNOWLEDGE = "Confirm knowledge summary";
+const CORRECT_KNOWLEDGE = "Correct or add details";
+// Matches clarify's factual-input budget; presentation labels stay out of it.
+const MAX_CLARIFICATION_INPUT_CHARS = 20_000;
 
 function extractLocation(text: string): string | undefined {
   const patterns = [
@@ -146,6 +151,32 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
   const uploadSummaryRef = useRef<string>("");
   const uploadTextRef = useRef<string>("");
   const historyRef = useRef<ClarifyTurn[]>([]);
+  const contextRevision = useRef(0);
+  const submissionRef = useRef<symbol | null>(null);
+  const pendingKnowledge = useRef<{ result: IntentResult; summary: string; revision: number; userId: string } | null>(null);
+  const confirmedKnowledge = useRef<string | null>(null);
+
+  const invalidateKnowledge = useCallback(() => {
+    contextRevision.current += 1;
+    pendingKnowledge.current = null;
+    confirmedKnowledge.current = null;
+    setResult(null);
+  }, []);
+
+  useEffect(() => {
+    invalidateKnowledge();
+    submissionRef.current = null;
+    situationRef.current = "";
+    historyRef.current = [];
+    uploadContextRef.current = "";
+    uploadIdRef.current = undefined;
+    uploadTextRef.current = "";
+    uploadFileNameRef.current = "";
+    uploadSummaryRef.current = "";
+    setMessages([]);
+    setThinking(false);
+    return () => { contextRevision.current += 1; };
+  }, [user?.id, invalidateKnowledge]);
 
   const addMessage = useCallback(
     (role: "user" | "ted", text: string, options?: string[] | null) => {
@@ -166,6 +197,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
       summary?: string;
       extractedText: string;
     }) => {
+      invalidateKnowledge();
       const cleanExtracted = extractedText.trim();
       const cleanSummary = summary?.trim() ?? "";
       const cleanFileName = fileName?.trim() ?? "";
@@ -190,10 +222,11 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
         );
       }
     },
-    [addMessage],
+    [addMessage, invalidateKnowledge],
   );
 
   const replaceUploadContext = useCallback((extractedText: string) => {
+    invalidateKnowledge();
     const cleanExtracted = extractedText.trim();
     uploadTextRef.current = cleanExtracted;
     uploadContextRef.current = [
@@ -203,15 +236,16 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
     ]
       .filter(Boolean)
       .join("\n\n");
-  }, []);
+  }, [invalidateKnowledge]);
 
   const clearUploadContext = useCallback(() => {
+    invalidateKnowledge();
     uploadContextRef.current = "";
     uploadIdRef.current = undefined;
     uploadFileNameRef.current = "";
     uploadSummaryRef.current = "";
     uploadTextRef.current = "";
-  }, []);
+  }, [invalidateKnowledge]);
 
   const getUploadContext = useCallback(() => uploadContextRef.current, []);
   const getUploadId = useCallback(() => uploadIdRef.current, []);
@@ -221,6 +255,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
       .map((message) => `${message.role === "ted" ? "TED" : "User"}: ${message.text}`)
       .join("\n");
     return [
+      confirmedKnowledge.current && `User-confirmed knowledge summary:\n${confirmedKnowledge.current}\nUse this confirmed brief over superseded summaries in the transcript.`,
       situationRef.current && `Current situation:\n${situationRef.current}`,
       transcript && `Conversation transcript:\n${transcript}`,
     ]
@@ -230,21 +265,79 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
 
   const applyResult = useCallback(
     (next: IntentResult) => {
-      setResult(next);
       if (clarifyShouldContinue(next) && next.question) {
+        setResult(next);
         addMessage("ted", next.question, next.questionOptions);
         historyRef.current.push({ role: "assistant", content: next.question });
+      } else if (next.intentClear && next.recommendation && user?.id) {
+        const summary = next.knowledgeSummary?.trim();
+        if (!summary) {
+          setResult(null);
+          onError?.("TED returned a document suggestion without the knowledge summary. Your answers are kept; please retry so you can review the details before continuing.");
+          return;
+        }
+        const gaps = next.missingInformation.length
+          ? `\n\nStill missing or unresolved:\n${next.missingInformation.map((item) => `- ${item}`).join("\n")}`
+          : "";
+        const question = `Knowledge summary — please review\n\n${summary}${gaps}\n\nIs this accurate and complete enough for the proposed document? Confirm this summary, or correct or add details before continuing.`;
+        pendingKnowledge.current = { result: next, summary: `${summary}${gaps}`, revision: contextRevision.current, userId: user.id };
+        setResult({ ...next, intentClear: false, recommendation: null, question, questionOptions: [CONFIRM_KNOWLEDGE, CORRECT_KNOWLEDGE] });
+        addMessage("ted", question, [CONFIRM_KNOWLEDGE, CORRECT_KNOWLEDGE]);
+        historyRef.current.push({ role: "assistant", content: question });
+      } else {
+        setResult(null);
+        onError?.("TED couldn't finish checking the document requirements. Your answers are kept; please try again.");
       }
     },
-    [addMessage],
+    [addMessage, onError, user?.id],
   );
 
   const submit = useCallback(
     async (typed: string, displayText?: string, extractedText?: string) => {
       const trimmed = typed.trim();
       if (!trimmed && !displayText) return false;
-      if (!user?.id) return false;
-      const requestContext = captureOwnerDispatch(user.id);
+      if (!user?.id || submissionRef.current) return false;
+      if ((trimmed || displayText?.trim() || "").length > MAX_CLARIFICATION_INPUT_CHARS) {
+        onError?.("This message is longer than 20,000 characters. Shorten it before sending; your existing answers have not been changed.");
+        return false;
+      }
+      let requestContext;
+      try {
+        requestContext = captureOwnerDispatch(user.id);
+      } catch (error) {
+        if (!(error instanceof OwnerDispatchError)) throw error;
+        invalidateKnowledge();
+        onError?.("Your sign-in changed. Please wait for your account to finish loading before continuing.");
+        return false;
+      }
+
+      if (trimmed === CONFIRM_KNOWLEDGE && !extractedText) {
+        const pending = pendingKnowledge.current;
+        if (!pending || pending.userId !== user.id || pending.revision !== contextRevision.current) {
+          onError?.("The knowledge summary needs to be refreshed after those changes. Tell TED what to update before confirming again.");
+          return false;
+        }
+        requestContext.assertCurrent();
+        addMessage("user", CONFIRM_KNOWLEDGE);
+        historyRef.current.push({ role: "user", content: CONFIRM_KNOWLEDGE });
+        confirmedKnowledge.current = pending.summary;
+        pendingKnowledge.current = null;
+        setResult(pending.result);
+        return true;
+      }
+
+      if (trimmed === CORRECT_KNOWLEDGE && pendingKnowledge.current && !extractedText) {
+        invalidateKnowledge();
+        addMessage("user", CORRECT_KNOWLEDGE);
+        const question = "What should I correct or add to the knowledge summary before I continue?";
+        addMessage("ted", question);
+        historyRef.current.push({ role: "assistant", content: question });
+        return true;
+      }
+
+      invalidateKnowledge();
+      const submission = Symbol("clarification");
+      submissionRef.current = submission;
 
       addMessage("user", displayText ?? trimmed);
 
@@ -255,6 +348,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
       const docText = extractedText?.trim();
       if (docText) replaceUploadContext(docText);
       const effectiveExtractedText = uploadTextRef.current || docText || undefined;
+      const revision = contextRevision.current;
 
       const isFirstTurn = situationRef.current === "";
       setThinking(true);
@@ -271,12 +365,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
 
         let next: IntentResult;
         if (isFirstTurn) {
-          const contextParts = [
-            trimmed && `User request: ${trimmed}`,
-            !trimmed && displayText ? displayText : "",
-          ].filter(Boolean);
-          const firstUserContent =
-            contextParts.length > 0 ? contextParts.join("\n\n") : displayText || trimmed || "";
+          const firstUserContent = trimmed || displayText?.trim() || "";
           situationRef.current = firstUserContent;
           historyRef.current.push({ role: "user", content: firstUserContent });
           next = await api.start(firstUserContent, effectiveExtractedText, requestContext);
@@ -289,12 +378,13 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
               domain: result?.domain,
               history: historyRef.current,
               answer,
-              extractedText: uploadContextRef.current || effectiveExtractedText,
+              extractedText: effectiveExtractedText || uploadContextRef.current || undefined,
             },
             requestContext,
           );
         }
         requestContext.assertCurrent();
+        if (revision !== contextRevision.current) return false;
         // Every message is interpreted by TED first. TED — not a keyword
         // check — decides whether the user is explicitly asking for live
         // job openings. Because the decision is re-made from the latest
@@ -311,6 +401,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
             requestContext,
           );
           requestContext.assertCurrent();
+          if (revision !== contextRevision.current) return false;
           const reply = formatJobMatch(jobResult);
           addMessage("ted", reply);
           historyRef.current.push({ role: "assistant", content: reply });
@@ -321,20 +412,6 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
 
         applyResult(next);
 
-        // Safety net: if TED neither asked a question nor produced a
-        // recommendation, force a recommendation so the chat can never
-        // silently stall mid-conversation.
-        if (!clarifyShouldContinue(next) && !next.recommendation) {
-          const forced = await recommend(
-            {
-              situation: situationRef.current || trimmed,
-              domain: next.domain,
-            },
-            requestContext,
-          );
-          requestContext.assertCurrent();
-          setResult(forced);
-        }
         return true;
       } catch {
         if (ownerDispatchIsCurrent(requestContext)) {
@@ -342,15 +419,18 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
         }
         return false;
       } finally {
-        if (ownerDispatchIsCurrent(requestContext)) setThinking(false);
+        if (submissionRef.current === submission) {
+          submissionRef.current = null;
+          if (ownerDispatchIsCurrent(requestContext)) setThinking(false);
+        }
       }
     },
-    [addMessage, api, applyResult, replaceUploadContext, result, onError, user?.id],
+    [addMessage, api, applyResult, invalidateKnowledge, replaceUploadContext, result, onError, user?.id],
   );
 
   const adjustUnderstanding = useCallback((next: string) => {
-    setResult((prev) => (prev ? { ...prev, situation: next } : prev));
-  }, []);
+    void submit(next);
+  }, [submit]);
 
   const hydrate = useCallback(
     ({
@@ -365,6 +445,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
       uploadId?: string;
     }) => {
       if (saved.length === 0 && !situation?.trim()) return;
+      invalidateKnowledge();
       const hydrated = saved.map((m, i) => ({
         id: `m${i}`,
         role: m.role,
@@ -387,10 +468,12 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
       setResult(null);
       setThinking(false);
     },
-    [],
+    [invalidateKnowledge],
   );
 
   const reset = useCallback(() => {
+    invalidateKnowledge();
+    submissionRef.current = null;
     setMessages([]);
     setResult(null);
     setThinking(false);
@@ -401,7 +484,7 @@ export function useRecommendation(onError?: (message: string) => void): UseRecom
     uploadSummaryRef.current = "";
     uploadTextRef.current = "";
     historyRef.current = [];
-  }, []);
+  }, [invalidateKnowledge]);
 
   return {
     messages,

@@ -1,7 +1,22 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Section } from "@prompted/shared/browser";
+import type { Editor, UseEditorOptions } from "@tiptap/react";
+import type { DependencyList } from "react";
+
+const observed = vi.hoisted(() => ({ editor: null as Editor | null }));
+vi.mock("@tiptap/react", async () => {
+  const actual = await vi.importActual<typeof import("@tiptap/react")>("@tiptap/react");
+  return {
+    ...actual,
+    useEditor: function useObservedEditor(options: UseEditorOptions, deps?: DependencyList) {
+      const editor = actual.useEditor(options, deps);
+      observed.editor = editor;
+      return editor;
+    },
+  };
+});
 
 const mockRun = vi.fn();
 const mockApply = vi.fn();
@@ -60,6 +75,7 @@ function section(
 }
 
 const requiredProps = {
+  workspaceSaved: true,
   onApprove: vi.fn(),
   onUnapprove: vi.fn(),
   onToggleLock: vi.fn(),
@@ -92,6 +108,113 @@ async function chooseClearer(): Promise<void> {
 }
 
 describe("SectionEditor revision-bound TED edits", () => {
+  it.each(["Apply", "Discard"] as const)("fences a held %s receipt from a replacement section and its new proposal", async (action) => {
+    const identity = {
+      operationId: "44444444-4444-4444-8444-444444444444", acceptedSectionRevision: 3,
+      resultSha256: "a".repeat(64), appliedCandidateContent: "<p>Applied first section.</p>",
+      appliedCandidateSha256: "b".repeat(64), requestFingerprint: "c".repeat(64),
+    };
+    mockRun.mockResolvedValueOnce({ content: "First proposal.", changes: [], persisted: identity })
+      .mockResolvedValueOnce({ content: "Second proposal.", changes: [], persisted: {
+        ...identity, operationId: "44444444-4444-4444-8444-444444444445", appliedCandidateContent: "<p>Applied second section.</p>",
+      } });
+    let finish!: (value: unknown) => void;
+    const held = new Promise((resolve) => { finish = resolve; });
+    if (action === "Apply") mockApply.mockReturnValue(held);
+    else mockDiscard.mockReturnValue(held);
+    const onEdit = vi.fn();
+    const onPersistedLegacyApply = vi.fn();
+    const props = { ...requiredProps, ledgerBindingStatus: "legacy_unversioned" as const, onEdit, onPersistedLegacyApply };
+    const original = section();
+    const view = render(<SectionEditor {...props} section={original} />);
+    await chooseClearer();
+    fireEvent.click(await screen.findByRole("button", { name: action }));
+    const next = section({ id: "22222222-2222-4222-8222-222222222223", content: "<p>Second section.</p>" });
+    view.rerender(<SectionEditor {...props} section={next} />);
+    await chooseClearer();
+    await screen.findByText("Second proposal.");
+    await act(async () => finish(action === "Discard" ? true : {
+      state: "applied", code: "APPLIED", operation_id: identity.operationId,
+      section_id: original.id, document_id: original.document_id,
+      section_content: identity.appliedCandidateContent, section_content_sha256: identity.appliedCandidateSha256,
+      section_status: "edited", section_revision: 4, section_approved_revision: null,
+      section_updated_at: "2026-09-01T00:01:00.000Z", document_status: "edited", document_revision: 1,
+      document_approved_revision: null, document_updated_at: "2026-09-01T00:01:00.000Z",
+      applied_section_revision: 4, idempotent_replay: false,
+    }));
+    expect(within(screen.getByRole("dialog")).getByText("Second proposal.")).toBeInTheDocument();
+    expect(observed.editor!.getHTML()).toBe("<p>Second section.</p>");
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(onPersistedLegacyApply).not.toHaveBeenCalled();
+  });
+
+  it.each(["revision", "section", "section-return"] as const)("does not present a held proposal after its accepted %s changes", async (change) => {
+    let finish!: (value: { content: string; changes: string[]; persisted: null }) => void;
+    mockRun.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const original = section({ ledger_binding_status: "captured" });
+    const onEdit = vi.fn();
+    const props = { ...requiredProps, ledgerBindingStatus: "captured" as const, revisionApproval: true, onEdit };
+    const view = render(<SectionEditor {...props} section={original} />);
+    await chooseClearer();
+    const replacement = section({
+      ledger_binding_status: "captured",
+      ...(change === "revision" ? { revision: 4 } : { id: "22222222-2222-4222-8222-222222222223" }),
+      content: "<p>Newer section wording.</p>",
+    });
+    view.rerender(<SectionEditor {...props} section={replacement} />);
+    if (change === "section-return") view.rerender(<SectionEditor {...props} section={original} />);
+    await act(async () => finish({ content: "Obsolete proposal from the previous revision.", changes: [], persisted: null }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(mockApply).not.toHaveBeenCalled();
+  });
+
+  it("opens a completed section proposal in a focused modal without applying it", async () => {
+    mockRun.mockResolvedValue({ content: "Clear revised wording.", changes: [], persisted: null });
+    const onEdit = vi.fn();
+    render(<SectionEditor {...requiredProps} section={section({ ledger_binding_status: "captured" })}
+      ledgerBindingStatus="captured" revisionApproval onEdit={onEdit} />);
+    await chooseClearer();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading")).toHaveFocus();
+    expect(within(dialog).getByText("Clear revised wording.")).toBeInTheDocument();
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(mockApply).not.toHaveBeenCalled();
+  });
+
+  it("publishes a captured selection Apply exactly once without changing its surrounding wording", async () => {
+    mockRun.mockResolvedValue({ content: "Hi", changes: [], persisted: null });
+    const onEdit = vi.fn();
+    render(
+      <SectionEditor
+        {...requiredProps}
+        section={section({ ledger_binding_status: "captured" })}
+        ledgerBindingStatus="captured"
+        revisionApproval
+        onEdit={onEdit}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "Edit Introduction" });
+    act(() => {
+      observed.editor!.commands.setTextSelection({ from: 1, to: 6 });
+    });
+    await chooseClearer();
+    expect(mockRun).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        content: "Hello.",
+        selection: "Hello",
+        persistence: undefined,
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Apply" }));
+    expect(observed.editor!.getHTML()).toBe("<p>Hi.</p>");
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(
+      "22222222-2222-4222-8222-222222222222",
+      "<p>Hi.</p>",
+    );
+    expect(mockApply).not.toHaveBeenCalled();
+  });
+
   it("binds a legacy section carrying a display key to exact revision CAS", async () => {
     const identity = {
       operationId: "44444444-4444-4444-8444-444444444444",

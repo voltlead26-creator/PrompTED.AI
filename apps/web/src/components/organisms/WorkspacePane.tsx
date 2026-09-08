@@ -455,6 +455,7 @@ export const WorkspacePane = forwardRef<WorkspacePaneHandle, WorkspacePaneProps>
                     section={current}
                     documentMode
                     onEdit={section.editContent}
+                    workspaceSaved={workspace.syncStatus === "saved"}
                     onPersistedLegacyApply={workspace.mergePersistedLegacyApply}
                     onApprove={
                       workspace.captured ? () => void workspace.approveDocument() : section.approve
