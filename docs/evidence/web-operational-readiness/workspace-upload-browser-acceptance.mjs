@@ -257,29 +257,13 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
           'text_digest_valid',u.ingest_extraction_text_sha256=encode(extensions.digest(convert_to(u.ingest_extraction_text,'UTF8'),'sha256'),'hex'),
           'source_digest_valid',case when u.ingest_source_manifest is null then u.ingest_source_manifest_sha256 is null else
             u.ingest_source_manifest_sha256=private.upload_source_manifest_digest(u.ingest_source_manifest) end,
-          'accounting_valid',(select coalesce(bool_and(
-            l.event_type='model_call' and l.model_call_status='succeeded' and l.provider_status='completed' and l.provider='openai'
-            and l.provider_error_code is null and l.provider_attempt_number=1 and a.attempt_number=1
-            and a.checkpoint_scope='ingest-upload' and a.logical_stage_key='ingest-upload.classify'
-            and a.origin_reservation_id is null and a.dispatched_at is not null and a.dispatch_token is not null
-            and a.reconciliation_required_at is null and a.reconciliation_code is null
-            and r.origin_reservation_id is null and r.response_sha256=encode(extensions.digest(convert_to(r.response_envelope::text,'UTF8'),'sha256'),'hex')
-            and exists(select 1 from private.user_external_egress_dispatches e where e.user_key=private.account_deletion_user_key(u.user_id)
-              and e.egress_kind='openai' and e.egress_route='responses' and e.state='completed' and e.completed_at is not null
-              and e.resource_sha256=encode(extensions.digest(convert_to(a.id::text,'UTF8'),'sha256'),'hex'))),false)
-            from public.usage_ledger l join private.legacy_model_attempt_admissions a on a.id::text=l.provider_attempt_id and a.user_id=l.user_id
-              and a.logical_request_id=l.logical_request_id and a.checkpoint_scope=l.checkpoint_scope
-              and a.logical_stage_key=l.logical_stage_key and a.request_sha256=l.provider_request_sha256
-            join private.legacy_model_call_results r on r.user_id=l.user_id and r.usage_ledger_id=l.id
-              and r.logical_request_id=l.logical_request_id and r.checkpoint_scope=l.checkpoint_scope
-              and r.logical_stage_key=l.logical_stage_key and r.request_sha256=l.provider_request_sha256
-            where l.user_id=u.user_id and l.logical_request_id=u.id::text),
+          'source_completion_valid',private.completed_upload_source_preparation_is_valid(u),
           'usage',coalesce((select jsonb_agg(to_jsonb(l)) from public.usage_ledger l where l.user_id=u.user_id and l.logical_request_id=u.id::text),'[]'::jsonb),
           'attempt_count',(select count(*) from private.legacy_model_attempt_admissions a where a.user_id=u.user_id and a.logical_request_id=u.id::text),
           'result_count',(select count(*) from private.legacy_model_call_results r where r.user_id=u.user_id and r.logical_request_id=u.id::text))
           from public.uploads u where u.id=${literal(record.uploadId)}::uuid and u.user_id=${literal(user.id)}::uuid;`;
         const proof = JSON.parse(sql('new-upload-independent-proof-' + proofs.length, query)); const u = proof.upload;
-        for (const key of ['receipt_matches', 'text_matches', 'text_digest_valid', 'source_digest_valid', 'accounting_valid']) assert.equal(proof[key], true, key);
+        for (const key of ['receipt_matches', 'text_matches', 'text_digest_valid', 'source_digest_valid', 'source_completion_valid']) assert.equal(proof[key], true, key);
         assert.equal(u.ingest_status, 'completed'); assert.equal(u.ingest_stage, 'terminal'); assert.equal(u.ingest_http_status, 200);
         assert.ok(u.completed_at); assert.equal(u.error_code, null); assert.equal(u.status, file.importText ? 'committed' : 'ready');
         assert.equal(u.ingest_extraction_contract_version, 'upload-extraction.3'); assert.equal(u.ingest_extraction_policy_version, 'upload-resource-policy.2');
@@ -287,12 +271,7 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
         assert.equal(u.ingest_content_sha256, file.sha256); assert.equal(u.file_size_bytes, file.byteLength);
         assert.equal(u.file_name, record.name); assert.equal(u.outcome_id, record.outcomeId);
         if (!file.importText) assert.equal(u.document_id, null);
-        assert.equal(proof.attempt_count, 1); assert.equal(proof.result_count, 1); assert.equal(proof.usage.length, 1);
-        const usage = proof.usage[0]; assert.equal(usage.event_type, 'model_call'); assert.equal(usage.model_call_status, 'succeeded');
-        assert.equal(usage.provider_status, 'completed'); assert.equal(usage.provider, 'openai'); assert.equal(usage.model, 'synthetic-upload-fast');
-        assert.equal(usage.routing_version, 'routing.upload-local-acceptance.1'); assert.equal(usage.provider_attempt_number, 1);
-        assert.equal(usage.provider_error_code, null); assert.equal(usage.input_tokens, 17); assert.equal(usage.output_tokens, 9);
-        assert.equal(usage.checkpoint_scope, 'ingest-upload'); assert.equal(usage.logical_stage_key, 'ingest-upload.classify');
+        assert.equal(proof.attempt_count, 0); assert.equal(proof.result_count, 0); assert.deepEqual(proof.usage, []);
         const actual = await request('/storage/v1/object/original-documents/' + u.storage_path.split('/').map(encodeURIComponent).join('/'),
           { method: 'GET', token: session.access_token, binary: true });
         assert.ok(actual.equals(readFileSync(file.path))); assert.equal(sha(actual), file.sha256);
@@ -312,7 +291,7 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
           ]);
         }
         proofs.push({ uploadId: u.id, ownerId: u.user_id, name: u.file_name, byteLength: actual.length, sha256: sha(actual),
-          status: u.status, outcomeId: u.outcome_id, documentId: u.document_id, providerResponseId: usage.provider_response_id });
+          status: u.status, outcomeId: u.outcome_id, documentId: u.document_id, classificationStatus: 'not_requested' });
       }
     }
     for (const user of users) {
@@ -321,17 +300,13 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
         'attempts',(select count(*) from private.legacy_model_attempt_admissions where user_id=${literal(user.id)}::uuid),
         'results',(select count(*) from private.legacy_model_call_results where user_id=${literal(user.id)}::uuid),
         'leases',(select count(*) from private.openai_capacity_leases where user_id=${literal(user.id)}::uuid),
-        'leases_valid',(select coalesce(bool_and(environment='test' and semantic_route='fast' and config_revision=1
-          and dispatched_at is not null and released_at is not null and terminal_outcome='completed'),false)
-          from private.openai_capacity_leases where user_id=${literal(user.id)}::uuid),
         'egress',(select count(*) from private.user_external_egress_dispatches where user_key=private.account_deletion_user_key(${literal(user.id)}::uuid)),
         'documents',(select count(*) from public.documents where user_id=${literal(user.id)}::uuid),
         'outcomes',(select count(*) from public.outcomes where user_id=${literal(user.id)}::uuid));`));
-      assert.deepEqual(totals, { usage: files.length, attempts: files.length, results: files.length, leases: files.length,
-        leases_valid: true, egress: files.length, documents: 1, outcomes: 1 });
+      assert.deepEqual(totals, { usage: 0, attempts: 0, results: 0, leases: 0, egress: 0, documents: 1, outcomes: 1 });
     }
     const dispatches = children.find(child => child.label === 'ingest-upload').output.split('\n').filter(line => line.startsWith('{"event":"synthetic-responses"')).map(line => JSON.parse(line));
-    assert.equal(dispatches.length, count); assert.equal(new Set(dispatches.map(row => row.clientRequestId)).size, count);
+    assert.deepEqual(dispatches, [], 'Source preparation must not dispatch provider work');
     assert.ok(proxyChecks.every(row => !row.failed), 'Unexpected local proxy failure');
     save('new-upload-independent-proofs.json', { passed: true, proofs, dispatches });
     save('profile-browser-independent-proofs.json', { passed: true, proofs: profileProofs,

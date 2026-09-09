@@ -1,5 +1,7 @@
 // deno-lint-ignore-file no-import-prefix no-unversioned-import
 import { isOllamaCreditFallbackPolicy, type OllamaCreditFallbackPolicy } from "../../../packages/shared/src/document-operation.ts";
+import { parseSourcePreparedUpload, UPLOAD_SOURCE_PREPARATION_VERSION } from "../../../packages/shared/src/upload-source-preparation.ts";
+import { preflightUploadMetadataV2 } from "../../../packages/shared/src/ingest-upload.ts";
 import { decodeBase64 } from "jsr:@std/encoding/base64";
 import type { AuthContext } from "../_shared/auth-guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
@@ -43,6 +45,7 @@ interface IngestBody {
   content_base64?: string;
   note?: string;
   situation_text?: string;
+  processing_policy_version?: unknown;
 }
 
 export interface IngestClaimInput {
@@ -177,6 +180,7 @@ export interface IngestStore {
     },
   ): Promise<void>;
   settle(input: IngestSettlement): Promise<void>;
+  completeSource?(input: IngestExtractionIdentity): Promise<Record<string, unknown>>;
 }
 
 export interface IngestDependencies {
@@ -302,6 +306,7 @@ export async function deriveUploadRequestIdentity(input: {
   mime: string;
   bytes: Uint8Array;
   situationText: string;
+  processingPolicyVersion?: typeof UPLOAD_SOURCE_PREPARATION_VERSION;
 }): Promise<{
   uploadId: string;
   requestSha256: string;
@@ -327,7 +332,8 @@ export async function deriveUploadRequestIdentity(input: {
   }
   const contentSha256 = await sha256(input.bytes);
   const request = {
-    contract: "ingest-upload.request.v1",
+    contract: input.processingPolicyVersion ? "ingest-upload.request.v2" : "ingest-upload.request.v1",
+    ...(input.processingPolicyVersion ? { processing_policy_version: input.processingPolicyVersion } : {}),
     filename,
     mime,
     byte_length: input.bytes.byteLength,
@@ -340,7 +346,7 @@ export async function deriveUploadRequestIdentity(input: {
   const identitySha256 = await sha256(
     new TextEncoder().encode(
       JSON.stringify({
-        contract: "ingest-upload.identity.v1",
+        contract: input.processingPolicyVersion ? "ingest-upload.identity.v2" : "ingest-upload.identity.v1",
         user_id: input.userId,
         request,
       }),
@@ -560,6 +566,18 @@ function sameExtraction(
 
 export function createUploadIngestStore(auth: AuthContext): IngestStore {
   return {
+    async completeSource(input) {
+      const { data, error } = await auth.admin.rpc("complete_upload_source_preparation_v1", {
+        p_upload_id: input.uploadId, p_user_id: input.userId,
+        p_request_sha256: input.requestSha256, p_claim_token: input.claimToken,
+      });
+      const receipt = asRecord(data);
+      const response = asRecord(receipt?.response);
+      if (error || !receipt || !hasExactKeys(receipt, ["outcome", "http_status", "response"]) ||
+        !["settled", "idempotent_replay"].includes(String(receipt.outcome)) ||
+        receipt.http_status !== 200 || !response) throw new Error("UPLOAD_SOURCE_COMPLETION_UNRESOLVED");
+      return response;
+    },
     async claim(input) {
       const { data, error } = await auth.admin.rpc("claim_upload_ingest", {
         p_upload_id: input.uploadId,
@@ -822,6 +840,7 @@ async function parseInput(
   mime: string;
   bytes: Uint8Array;
   situationText: string;
+  processingPolicyVersion?: typeof UPLOAD_SOURCE_PREPARATION_VERSION;
 }> {
   const suppliedIdentities = [
     req.headers.get("x-idempotency-key") ?? "",
@@ -831,6 +850,7 @@ async function parseInput(
   let filename = "upload";
   let mime = "";
   let situationText = "";
+  let processingPolicy: unknown;
   let bytes: Uint8Array;
 
   if (contentType.includes("multipart/form-data")) {
@@ -843,6 +863,10 @@ async function parseInput(
       );
     }
     const file = form.get("file");
+    if (form.getAll("processing_policy_version").length > 1) {
+      throw requestError(400, "UPLOAD_PROCESSING_POLICY_INVALID", "The upload processing policy is invalid.");
+    }
+    processingPolicy = form.get("processing_policy_version") ?? undefined;
     if (!(file instanceof File)) {
       throw requestError(400, "UPLOAD_FILE_REQUIRED", "file is required");
     }
@@ -887,6 +911,7 @@ async function parseInput(
         "The upload request was not admitted by the request guard.",
       );
     }
+    processingPolicy = body.processing_policy_version;
     suppliedIdentities.push(
       String(body?.upload_id ?? ""),
       String(body?.request_id ?? ""),
@@ -929,6 +954,9 @@ async function parseInput(
     }
   }
 
+  if (processingPolicy !== undefined && processingPolicy !== UPLOAD_SOURCE_PREPARATION_VERSION) {
+    throw requestError(400, "UPLOAD_PROCESSING_POLICY_INVALID", "The upload processing policy is invalid.");
+  }
   const identities = suppliedIdentities
     .map((identity) => identity.trim().toLowerCase())
     .filter(Boolean);
@@ -952,6 +980,7 @@ async function parseInput(
     mime,
     bytes,
     situationText,
+    processingPolicyVersion: processingPolicy,
   };
 }
 
@@ -1064,6 +1093,7 @@ export async function handleIngestUpload(
       mime: parsed.mime,
       bytes: parsed.bytes,
       situationText: parsed.situationText,
+      processingPolicyVersion: parsed.processingPolicyVersion,
     });
   } catch (error) {
     if (error instanceof RequestError) {
@@ -1088,7 +1118,7 @@ export async function handleIngestUpload(
   } = identity;
   const bytes = parsed.bytes;
   if (parsed.suppliedIdentities.length === 0) {
-    if (!dependencies.allowLegacyMissingIdentity) {
+    if (parsed.processingPolicyVersion || !dependencies.allowLegacyMissingIdentity) {
       return jsonResponse(
         errorBody(
           "UPLOAD_REQUEST_ID_REQUIRED",
@@ -1170,6 +1200,19 @@ export async function handleIngestUpload(
     claim.outcome === "completed" || claim.outcome === "failed" ||
     claim.outcome === "reconciliation_required"
   ) {
+    if (claim.outcome === "completed") {
+      try {
+        if (parsed.processingPolicyVersion) {
+          const metadata = preflightUploadMetadataV2({ fileName: filename, mimeType: mime, byteLength: bytes.byteLength });
+          if (!metadata.ok) throw new Error("UPLOAD_RESPONSE_INVALID");
+          await parseSourcePreparedUpload(claim.response, { uploadId, ownerId: auth.userId, format: metadata.format });
+        } else if (claim.response?.contract_version === UPLOAD_SOURCE_PREPARATION_VERSION) {
+          throw new Error("UPLOAD_RESPONSE_INVALID");
+        }
+      } catch {
+        return jsonResponse(errorBody("UPLOAD_REPLAY_STATE_INVALID", "The saved upload result could not be verified. Retry this exact upload."), 503, origin);
+      }
+    }
     return terminalReplay(claim, uploadId, origin);
   }
   if (claim.outcome !== "accepted" && claim.outcome !== "resumed") {
@@ -1655,6 +1698,23 @@ export async function handleIngestUpload(
       "Reading this upload was cancelled. You can retry this exact upload.",
     );
   if (req.signal.aborted) return cancelled();
+  if (parsed.processingPolicyVersion) {
+    if (!isV3 || stage !== "storage_completed" || !dependencies.store.completeSource) {
+      return checkpointUnavailable("UPLOAD_SOURCE_PREPARATION_UNAVAILABLE", "This upload cannot complete source preparation in its current state. Retry this exact upload.");
+    }
+    try {
+      const receipt = await dependencies.store.completeSource(extractionIdentity);
+      const result = await parseSourcePreparedUpload(receipt, { uploadId, ownerId: auth.userId, format: extraction.format });
+      if (result.storage_path !== storagePath || result.extracted_text !== extraction.text ||
+        result.truncated !== extraction.truncated || result.resource_policy_version !== extraction.resourcePolicyVersion) {
+        throw new Error("UPLOAD_SOURCE_COMPLETION_INVALID");
+      }
+      if (req.signal.aborted) return cancelled();
+      return jsonResponse(result, 200, origin);
+    } catch {
+      return checkpointUnavailable("UPLOAD_SOURCE_COMPLETION_UNRESOLVED", "The original was retained, but its completed upload could not be confirmed. Retry this exact file to recover the same result.");
+    }
+  }
   // A v2/v3 provider-stage resume also replays the original transition. Its DB
   // command checks the current claim/lease and checkpoint before returning an
   // idempotent receipt, fencing changes during asynchronous manifest readback.

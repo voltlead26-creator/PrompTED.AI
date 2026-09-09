@@ -168,6 +168,27 @@ Deno.test("multipart guard rejects oversized envelopes before native form parsin
   });
 });
 
+Deno.test("multipart guard admits the exact source preparation field alongside the existing identity", async () => {
+  await withUser(verifiedUser, async () => {
+    const form = new FormData();
+    form.append("file", new File(["Retained source"], "source.md", { type: "text/markdown" }));
+    form.append("upload_id", "71000000-0000-8000-8000-000000000001");
+    form.append("request_id", "71000000-0000-8000-8000-000000000001");
+    form.append("situation_text", "Review this source");
+    form.append("processing_policy_version", "upload-source-preparation.1");
+    const auth = await guardRequest(new Request("https://example.test/functions/v1/ingest-upload", {
+      method: "POST", headers: { authorization: "Bearer test-token" }, body: form,
+    }), { enforceCap: false });
+    assertEquals(auth.multipartBody?.get("processing_policy_version"), "upload-source-preparation.1");
+    assertEquals(auth.multipartBody?.get("request_id"), "71000000-0000-8000-8000-000000000001");
+    form.append("processing_policy_version", "upload-source-preparation.1");
+    const error = await assertRejects(() => guardRequest(new Request("https://example.test/functions/v1/ingest-upload", {
+      method: "POST", headers: { authorization: "Bearer test-token" }, body: form,
+    }), { enforceCap: false }), AuthError);
+    assertEquals(error.status, 400);
+  });
+});
+
 Deno.test("multipart guard rejects duplicate and unknown parts", async () => {
   await withUser(verifiedUser, async () => {
     const form = new FormData();

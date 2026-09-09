@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { loadUploadBrowserFixture, type UploadFixture } from './workspace-upload-fixtures';
 
@@ -34,7 +35,7 @@ test('real file chooser settles owned sources and reopens identical originals', 
   const persist = () => writeFileSync(info.outputPath('upload-browser-checks.json'), JSON.stringify({
     project: info.project.name, ownerId: fixture.users[info.project.name === 'desktop-chromium' ? 0 : 1]!.id,
     complete, failure, records, profileStages, profileReadFaultAttempts, errors, external,
-    scope: 'New chooser uploads and Profile access/detail save/reload, real Auth/RPC/Storage and production entrypoints, controlled synthetic Responses; no hosted/live-model/resume-lifecycle/format-preserving editing/export proof.',
+    scope: 'New chooser uploads and Profile access/detail save/reload, real Auth/RPC/Storage and production entrypoints, provider calls prohibited; no hosted/live-model/resume-lifecycle/format-preserving editing/export proof.',
   }, null, 2));
   const stage = (record: typeof records[number], name: string) => { record.stages.push(name); persist(); };
   page.on('pageerror', e => errors.push(e.message));
@@ -49,6 +50,9 @@ test('real file chooser settles owned sources and reopens identical originals', 
   const slot = info.project.name === 'desktop-chromium' ? 0 : 1;
   try {
     await login(page, slot);
+    const manifest = await page.request.get(`${fixture.webOrigin}/manifest.webmanifest`);
+    expect(manifest.status()).toBe(200);
+    expect((await manifest.json()).name).toBe('PrompTED');
     async function choose(file: UploadFixture, lostAck = false) {
       await page.goto('/workspace');
       const button = master(page).getByRole('button', { name: 'Drop a document here, or click to browse', exact: true });
@@ -64,9 +68,12 @@ test('real file chooser settles owned sources and reopens identical originals', 
       const chooser = await pendingChooser;
       await chooser.setFiles({ name: `${info.project.name}-${file.name}`, mimeType: file.mime, buffer: readFileSync(file.path) });
       const response = await pendingResponse; const receipt = await response.json();
-      expect(receipt.classification_status).toBe('completed'); expect(receipt.original_retained).toBe(true);
+      expect(receipt.contract_version).toBe('upload-source-preparation.1');
+      expect(receipt.classification_status).toBe('not_requested'); expect(receipt.original_retained).toBe(true);
       expect(receipt.extraction_format).toBe(file.format); expect(receipt.resource_policy_version).toBe('upload-resource-policy.2');
-      expect(receipt.extracted_text).toBe(file.text); expect(receipt.confirm_payload.truncated).toBe(false);
+      expect(receipt.extracted_text).toBe(file.text); expect(receipt.truncated).toBe(false);
+      expect(receipt.extraction_text_sha256).toBe(createHash('sha256').update(file.text).digest('hex'));
+      expect(receipt).not.toHaveProperty('confirm_payload'); expect(receipt).not.toHaveProperty('credit_fallback');
       expect(receipt).not.toHaveProperty('source_manifest');
       expect(receipt.upload_id).toMatch(/^[0-9a-f-]{36}$/);
       const existing = records.find(record => record.name === `${info.project.name}-${file.name}`);

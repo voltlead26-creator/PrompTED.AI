@@ -188,6 +188,7 @@ const MULTIPART_POLICIES: Readonly<Record<string, MultipartPolicy>> = {
       situation_text: { max: 30_000, strip: true },
       upload_id: { max: 160, strip: true },
       request_id: { max: 160, strip: true },
+      processing_policy_version: { max: 80, strip: false },
     },
   },
   "brand-logo": {

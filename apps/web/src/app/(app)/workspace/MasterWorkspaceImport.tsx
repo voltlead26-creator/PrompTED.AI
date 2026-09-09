@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ingestUpload, type IngestUploadOutput } from "@prompted/shared/api-client";
+import { prepareUploadSource } from "@prompted/shared/api-client";
 import type { Section } from "@prompted/shared/browser";
 import {
   preflightUploadMetadataV2 as preflightUploadMetadata,
@@ -46,7 +46,6 @@ type ImportFailureCode =
   | "unknown";
 
 interface PendingImport {
-  creditFallback?: IngestUploadOutput["credit_fallback"];
   lease: OwnerDispatchLease;
   uploadId: string;
   fileName: string;
@@ -185,7 +184,7 @@ export function MasterWorkspaceImport() {
       let retainedOriginalConfirmed = false;
       try {
         ensureApiConfigured();
-        const result = await ingestUpload(
+        const result = await prepareUploadSource(
           file,
           "Import this finished document into Master Workspace for editing. Keep its heading hierarchy, subheadings, paragraphs and list structure where they can be identified reliably.",
           requestContext,
@@ -196,7 +195,7 @@ export function MasterWorkspaceImport() {
         preparedUploadId = result.upload_id;
         // A plain-text preview cannot recreate the source's layout or package.
         // Retain and reopen binary originals without manufacturing editor HTML.
-        if (preflight.format !== "text" || result.confirm_payload?.truncated === true) {
+        if (preflight.format !== "text" || result.truncated) {
           setSourceNotice({ lease: requestContext, uploadId: result.upload_id, available: null });
           readbackAttempted = true;
           const source = await getWorkspaceUpload(result.upload_id, requestContext);
@@ -228,7 +227,6 @@ export function MasterWorkspaceImport() {
         setPending({
           lease: requestContext,
           uploadId: result.upload_id,
-          creditFallback: result.credit_fallback,
           fileName: file.name,
           title,
           extracted,
@@ -422,12 +420,6 @@ export function MasterWorkspaceImport() {
               continue editing when the saved workspace opens.
             </p>
           ) : null}
-          {visiblePending.creditFallback && (
-            <p role="status">
-              OpenAI credit was exhausted, so TED used local Ollama ({visiblePending.creditFallback.model})
-              to classify this upload. Review the imported text before creating your workspace.
-            </p>
-          )}
           <ImportReviewPanel
             title={visiblePending.title}
             initialSections={visiblePending.sections}

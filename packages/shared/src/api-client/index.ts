@@ -1,4 +1,6 @@
 import { isOllamaCreditFallbackPolicy, type OllamaCreditFallbackPolicy } from "../document-operation";
+import { parseSourcePreparedUpload, UPLOAD_SOURCE_PREPARATION_VERSION, type SourcePreparedUpload } from "../upload-source-preparation";
+export type { SourcePreparedUpload } from "../upload-source-preparation";
 // =====================================================
 // PrompTED — Typed API Client
 // Thin fetch wrappers around the orchestration Edge Functions.
@@ -1493,6 +1495,7 @@ async function prepareUploadDispatch(
   situationText: string,
   userId: string,
   preflight: typeof preflightUploadMetadataV2,
+  processingPolicy?: typeof UPLOAD_SOURCE_PREPARATION_VERSION,
 ): Promise<Readonly<PreparedUploadDispatch>> {
   const normalisedName = String(file.name || "")
     .normalize("NFKC")
@@ -1543,7 +1546,8 @@ async function prepareUploadDispatch(
   // ingest-upload. Deriving the UUID from it lets a lost-response replay after
   // a reload recover the same upload row without keeping browser-local state.
   const requestContract = {
-    contract: "ingest-upload.request.v1",
+    contract: processingPolicy ? "ingest-upload.request.v2" : "ingest-upload.request.v1",
+    ...(processingPolicy ? { processing_policy_version: processingPolicy } : {}),
     filename: normalisedName,
     mime: normalisedType,
     byte_length: fileBytes.byteLength,
@@ -1552,7 +1556,7 @@ async function prepareUploadDispatch(
   };
   const identityEnvelope = new TextEncoder().encode(
     JSON.stringify({
-      contract: "ingest-upload.identity.v1",
+      contract: processingPolicy ? "ingest-upload.identity.v2" : "ingest-upload.identity.v1",
       user_id: userId,
       request: requestContract,
     }),
@@ -1676,15 +1680,44 @@ export async function ingestUpload(
   requestContext: ApiRequestContext,
   options: IngestUploadOptions = {},
 ): Promise<IngestUploadOutput> {
+  return dispatchUpload(file, situationText, requestContext, options, undefined, parseIngestUploadSuccess);
+}
+
+/** Explicit no-classification upload for Master Workspace; legacy intake keeps ingestUpload. */
+export async function prepareUploadSource(
+  file: File,
+  situationText: string,
+  requestContext: ApiRequestContext,
+  options: IngestUploadOptions = {},
+): Promise<SourcePreparedUpload> {
+  return dispatchUpload(file, situationText, requestContext, options, UPLOAD_SOURCE_PREPARATION_VERSION,
+    (value, prepared, ownerId) => {
+      const metadata = preflightUploadMetadataV2({ fileName: prepared.fileName, mimeType: prepared.mimeType,
+        byteLength: prepared.fileSizeBytes });
+      if (!metadata.ok) throw new Error("UPLOAD_RESPONSE_INVALID");
+      return parseSourcePreparedUpload(value, { uploadId: prepared.uploadId, ownerId, format: metadata.format });
+    });
+}
+
+async function dispatchUpload<T>(
+  file: File,
+  situationText: string,
+  requestContext: ApiRequestContext,
+  options: IngestUploadOptions,
+  processingPolicy: typeof UPLOAD_SOURCE_PREPARATION_VERSION | undefined,
+  parseResult: (value: unknown, prepared: Readonly<PreparedUploadDispatch>, ownerId: string) => T | Promise<T>,
+): Promise<T> {
   assertRequestCurrent(requestContext);
-  // Capture policy before any await. It is deliberately absent from the stable
-  // identity envelope, prepared request, multipart body and server claim.
-  const metadataPolicy = options.metadataPolicyVersion === undefined ? UPLOAD_RESOURCE_POLICY_VERSION : options.metadataPolicyVersion;
+  // Local metadata admission and server processing are distinct captured policies.
+  // Legacy requests retain their literal v1 identity and multipart fields.
+  const metadataPolicy = options.metadataPolicyVersion === undefined
+    ? (processingPolicy ? UPLOAD_RESOURCE_POLICY_VERSION_V2 : UPLOAD_RESOURCE_POLICY_VERSION)
+    : options.metadataPolicyVersion;
   if (metadataPolicy !== UPLOAD_RESOURCE_POLICY_VERSION && metadataPolicy !== UPLOAD_RESOURCE_POLICY_VERSION_V2) {
     throw new Error("UPLOAD_METADATA_POLICY_UNSUPPORTED");
   }
   const preflight = metadataPolicy === UPLOAD_RESOURCE_POLICY_VERSION_V2 ? preflightUploadMetadataV2 : preflightUploadMetadata;
-  const prepared = await prepareUploadDispatch(file, situationText, requestContext.expectedUserId, preflight);
+  const prepared = await prepareUploadDispatch(file, situationText, requestContext.expectedUserId, preflight, processingPolicy);
   assertRequestCurrent(requestContext);
   await options.beforeDispatch?.(prepared);
   assertRequestCurrent(requestContext);
@@ -1692,6 +1725,7 @@ export async function ingestUpload(
   form.append("file", file);
   form.append("upload_id", prepared.uploadId);
   form.append("request_id", prepared.uploadId);
+  if (processingPolicy) form.append("processing_policy_version", processingPolicy);
   if (prepared.situationText) form.append("situation_text", prepared.situationText);
 
   const request = async () => {
@@ -1753,9 +1787,9 @@ export async function ingestUpload(
       }
       throw new ApiError(response.status, String(error?.code ?? "UPLOAD_FAILED"), data);
     }
-    let result: IngestUploadOutput;
+    let result: T;
     try {
-      result = parseIngestUploadSuccess(await readBoundedUploadSuccess(response), prepared, requestContext.expectedUserId);
+      result = await parseResult(await readBoundedUploadSuccess(response), prepared, requestContext.expectedUserId);
     } catch (error) {
       if (requestContext.signal.aborted) throw error;
       assertRequestCurrent(requestContext);

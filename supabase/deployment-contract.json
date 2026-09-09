@@ -138,6 +138,7 @@
     "complete_legacy_section_edit": "uuid, uuid, text, text, text, jsonb, jsonb",
     "complete_user_external_egress": "uuid, text, text, text, uuid, text",
     "complete_user_storage_dispatch": "uuid, uuid, text, text, text, uuid",
+    "complete_upload_source_preparation_v1": "uuid, uuid, text, uuid",
     "confirm_own_home_upload_intake_v1": "uuid, integer, text",
     "consume_rate_limit": "uuid, text, integer, integer",
     "create_and_link_own_business": "text, text, text, text, text, text",
@@ -301,7 +302,8 @@
       "20260907112000_upload_source_import_boundary",
       "20260907124000_workspace_upload_reads",
       "20260908140000_complete_catalogue_persistence_seeds",
-      "20260908160000_legacy_workspace_save_core"
+      "20260908160000_legacy_workspace_save_core",
+      "20260909105519_complete_upload_source_preparation"
     ],
     "requiredRpcs": [
       "get_latest_captured_document_operation",
@@ -646,12 +648,14 @@
         "20260907081500_upload_source_checkpoint_v3",
         "20260907094500_upload_rtf_mime_alias",
         "20260907102000_upload_fallback_settlement",
-        "20260907112000_upload_source_import_boundary"
+        "20260907112000_upload_source_import_boundary",
+        "20260909105519_complete_upload_source_preparation"
       ],
       "requiredRpcs": [
         "advance_upload_ingest",
         "begin_upload_extraction_attempt",
         "claim_upload_ingest",
+        "complete_upload_source_preparation_v1",
         "get_upload_extraction_checkpoint",
         "reconcile_upload_ingest_storage",
         "record_upload_extraction_snapshot",

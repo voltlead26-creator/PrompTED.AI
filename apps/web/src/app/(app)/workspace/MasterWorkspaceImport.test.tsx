@@ -8,7 +8,8 @@ import { recordBrowserPrincipal } from "@/lib/browser-principal-state";
 const auth = vi.hoisted(() => ({ user: null as null | { id: string }, loading: true }));
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
-  ingestUpload: vi.fn(),
+  prepareUploadSource: vi.fn(),
+  classifiedIngest: vi.fn(),
   commitDocumentImport: vi.fn(),
   getWorkspaceUpload: vi.fn(),
   savePendingOutcome: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock("@prompted/shared/api-client", async () => {
   const actual = await vi.importActual<typeof import("@prompted/shared/api-client")>(
     "@prompted/shared/api-client",
   );
-  return { ...actual, ingestUpload: mocks.ingestUpload };
+  return { ...actual, prepareUploadSource: mocks.prepareUploadSource, ingestUpload: mocks.classifiedIngest };
 });
 vi.mock("@/lib/api", () => ({ ensureApiConfigured: () => undefined }));
 vi.mock("@/lib/api/import-workspace", () => ({
@@ -46,9 +47,12 @@ describe("MasterWorkspaceImport", () => {
     vi.resetAllMocks();
     auth.loading = true;
     auth.user = null;
-    mocks.ingestUpload.mockResolvedValue({
+    mocks.classifiedIngest.mockRejectedValue(new Error("Provider unavailable"));
+    mocks.prepareUploadSource.mockResolvedValue({
       upload_id: "upload-1",
       extracted_text: "Experience\n\nManaged daily workspace operations.",
+      truncated: false,
+      classification_status: "not_requested",
     });
     mocks.getWorkspaceUpload.mockResolvedValue({ original: { storage_path: "synthetic original" } });
     mocks.commitDocumentImport.mockImplementation(async (input) => ({
@@ -104,20 +108,22 @@ describe("MasterWorkspaceImport", () => {
     expect(mocks.push).toHaveBeenCalledWith(expect.stringMatching(/^\/outcomes\//));
   });
 
-  it("shows the retained local fallback before the user confirms an import", async () => {
+  it("prepares a source for owner review without depending on classified ingestion", async () => {
     auth.loading = false;
     auth.user = { id: "user-1" };
     recordBrowserPrincipal("user-1");
-    mocks.ingestUpload.mockResolvedValueOnce({
+    mocks.prepareUploadSource.mockResolvedValueOnce({
       upload_id: "upload-1", extracted_text: "Experience\n\nManaged daily workspace operations.",
-      credit_fallback: { provider: "ollama", model: "gpt-oss:20b", modelDigest: "a".repeat(64), configurationVersion: "local.1" },
+      classification_status: "not_requested", truncated: false,
     });
     const { container } = render(<MasterWorkspaceImport />);
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     if (!input) throw new Error("Upload input missing");
     fireEvent.change(input, { target: { files: [new File(["resume"], "Resume.txt", { type: "text/plain" })] } });
     await screen.findByRole("region", { name: "Review imported document" });
-    expect(screen.getByText(/OpenAI credit was exhausted/)).toHaveTextContent("local Ollama (gpt-oss:20b)");
+    expect(mocks.prepareUploadSource).toHaveBeenCalledTimes(1);
+    expect(mocks.classifiedIngest).not.toHaveBeenCalled();
+    expect(screen.queryByText(/OpenAI credit was exhausted/)).not.toBeInTheDocument();
     expect(mocks.commitDocumentImport).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Choose another file" }));
     expect(screen.queryByText(/OpenAI credit was exhausted/)).not.toBeInTheDocument();
@@ -136,21 +142,21 @@ describe("MasterWorkspaceImport", () => {
     fireEvent.change(input!, { target: { files: [workbook] } });
     await screen.findByRole("link", { name: "Open uploaded original" });
     expect(screen.queryByRole("region", { name: "Review imported document" })).not.toBeInTheDocument();
-    expect(mocks.ingestUpload).toHaveBeenCalledWith(
+    expect(mocks.prepareUploadSource).toHaveBeenCalledWith(
       workbook,
       expect.any(String),
       expect.objectContaining({ expectedUserId: "user-1" }),
       expect.objectContaining({ beforeDispatch: expect.any(Function) }),
     );
 
-    mocks.ingestUpload.mockClear();
+    mocks.prepareUploadSource.mockClear();
     const oversized = new File(["not read"], "Evidence.csv", { type: "text/csv" });
     Object.defineProperty(oversized, "size", { value: 1024 * 1024 + 1 });
     fireEvent.change(input!, { target: { files: [oversized] } });
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "TXT, Markdown and CSV files need to be 1MB or smaller.",
     );
-    expect(mocks.ingestUpload).not.toHaveBeenCalled();
+    expect(mocks.prepareUploadSource).not.toHaveBeenCalled();
   });
 
   it("does not persist or navigate when the authenticated commit fails", async () => {
@@ -180,7 +186,7 @@ describe("MasterWorkspaceImport", () => {
     Object.defineProperty(file, "size", { value: 1024 * 1024 + 1 });
     fireEvent.change(input!, { target: { files: [file] } });
     expect(await screen.findByRole("alert")).toHaveTextContent("RTF files need to be 1MB or smaller.");
-    expect(mocks.ingestUpload).not.toHaveBeenCalled();
+    expect(mocks.prepareUploadSource).not.toHaveBeenCalled();
     expect(mocks.commitDocumentImport).not.toHaveBeenCalled();
     expect(mocks.saveWorkspace).not.toHaveBeenCalled();
   });
@@ -196,7 +202,7 @@ describe("MasterWorkspaceImport", () => {
     const view = render(<MasterWorkspaceImport />);
     fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["original bytes"], name, { type })] } });
     expect(await screen.findByRole("link", { name: "Open uploaded original" })).toHaveAttribute("href", "/workspace?upload=upload-1");
-    expect(mocks.ingestUpload).toHaveBeenCalledWith(expect.any(File), expect.any(String),
+    expect(mocks.prepareUploadSource).toHaveBeenCalledWith(expect.any(File), expect.any(String),
       expect.objectContaining({ expectedUserId: "user-1" }),
       expect.objectContaining({ metadataPolicyVersion: "upload-resource-policy.2", beforeDispatch: expect.any(Function) }));
     expect(screen.queryByRole("region", { name: "Review imported document" })).not.toBeInTheDocument();
@@ -207,16 +213,16 @@ describe("MasterWorkspaceImport", () => {
   });
   it("does not turn a truncated text preview into a complete editable import", async () => {
     auth.loading = false; auth.user = { id: "user-1" }; recordBrowserPrincipal("user-1");
-    mocks.ingestUpload.mockResolvedValue({ upload_id: "upload-1", extracted_text: "only the start", confirm_payload: { truncated: true } });
+    mocks.prepareUploadSource.mockResolvedValue({ upload_id: "upload-1", extracted_text: "only the start", truncated: true });
     const view = render(<MasterWorkspaceImport />);
     fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["whole original"], "Original.md", { type: "text/markdown" })] } });
     await screen.findByRole("link", { name: "Open uploaded original" });
     expect(screen.queryByRole("region", { name: "Review imported document" })).not.toBeInTheDocument();
     expect(mocks.commitDocumentImport).not.toHaveBeenCalled();
   });
-  it.each([true, false])("recovers the prepared upload identity after failed classification with retention read %s", async (readable) => {
+  it.each([true, false])("recovers the prepared upload identity after an uncertain source response with retention read %s", async (readable) => {
     auth.loading = false; auth.user = { id: "user-1" }; recordBrowserPrincipal("user-1");
-    mocks.ingestUpload.mockImplementation(async (_file, _situation, _lease, options) => {
+    mocks.prepareUploadSource.mockImplementation(async (_file, _situation, _lease, options) => {
       options.beforeDispatch({ uploadId: "95071240-0000-8000-8000-000000000011" });
       throw new Error("failed to fetch");
     });
@@ -322,7 +328,7 @@ describe("MasterWorkspaceImport", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create workspace" }));
     await waitFor(() => expect(mocks.push).toHaveBeenCalledTimes(1));
     expect(mocks.commitDocumentImport.mock.calls[0]![1].principalEpoch).toBeGreaterThan(
-      mocks.ingestUpload.mock.calls[0]![2].principalEpoch,
+      mocks.prepareUploadSource.mock.calls[0]![2].principalEpoch,
     );
   });
 
@@ -402,7 +408,7 @@ describe("MasterWorkspaceImport", () => {
       </StrictMode>,
     );
     await openReview(view.container);
-    const context = mocks.ingestUpload.mock.calls[0]![2];
+    const context = mocks.prepareUploadSource.mock.calls[0]![2];
     expect(context.signal.aborted).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: "Create workspace" }));
     await waitFor(() => expect(mocks.push).toHaveBeenCalledTimes(1));
@@ -411,7 +417,7 @@ describe("MasterWorkspaceImport", () => {
   it("fences an upload result after unmount", async () => {
     signIn();
     let resolve!: (value: unknown) => void;
-    mocks.ingestUpload.mockImplementationOnce(
+    mocks.prepareUploadSource.mockImplementationOnce(
       () =>
         new Promise((done) => {
           resolve = done;
@@ -421,7 +427,7 @@ describe("MasterWorkspaceImport", () => {
     fireEvent.change(view.container.querySelector('input[type="file"]')!, {
       target: { files: [new File(["original"], "Original.txt", { type: "text/plain" })] },
     });
-    const context = mocks.ingestUpload.mock.calls[0]![2];
+    const context = mocks.prepareUploadSource.mock.calls[0]![2];
     view.unmount();
     await act(async () => resolve({ upload_id: "upload-old", extracted_text: "Prior owner text" }));
     expect(context.signal.aborted).toBe(true);
@@ -433,7 +439,7 @@ describe("MasterWorkspaceImport", () => {
     signIn();
     let resolveOld!: (value: unknown) => void;
     let resolveNew!: (value: unknown) => void;
-    mocks.ingestUpload
+    mocks.prepareUploadSource
       .mockImplementationOnce(
         () =>
           new Promise((done) => {

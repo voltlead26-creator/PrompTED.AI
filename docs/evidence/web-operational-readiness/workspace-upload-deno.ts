@@ -2,7 +2,7 @@
 // Network is restricted by both this adapter and Deno's exact --allow-net list.
 import assert from 'node:assert/strict';
 import { basename, dirname, join } from 'node:path';
-import { readUploadProbeBody, syntheticUploadResponse, uploadOrigins } from './workspace-upload-transport.mjs';
+import { uploadOrigins } from './workspace-upload-transport.mjs';
 
 const [entry, fixturePath] = Deno.args;
 assert.ok(entry === 'ingest-upload' || entry === 'extract-upload');
@@ -20,18 +20,10 @@ assert.equal((fixtureFile.mode ?? 0) & 0o077, 0);
 const fixtures = JSON.parse(Deno.readTextFileSync(fixturePath));
 assert.ok(Array.isArray(fixtures) && fixtures.length >= 5 && fixtures.length <= 20);
 const realFetch = globalThis.fetch.bind(globalThis);
-let dispatches = 0;
 globalThis.fetch = async (input, init) => {
   const request = new Request(input, init); const url = new URL(request.url);
   if (url.href === 'https://api.openai.com/v1/responses' && entry === 'ingest-upload') {
-    assert.equal(request.method, 'POST'); request.signal.throwIfAborted();
-    const raw = await readUploadProbeBody(request.body, 128 * 1024, request.signal);
-    const reply = syntheticUploadResponse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw)),
-      request.headers.get('X-Client-Request-Id'), fixtures, ++dispatches);
-    request.signal.throwIfAborted();
-    console.log(JSON.stringify({ event: 'synthetic-responses', dispatch: dispatches,
-      clientRequestId: request.headers.get('X-Client-Request-Id'), responseId: reply.id }));
-    return Response.json(reply);
+    throw new Error('SOURCE_PREPARATION_UNEXPECTED_PROVIDER_DISPATCH');
   }
   assert.equal(url.origin, uploadOrigins.supabase, 'Unexpected function network origin');
   if (url.pathname === '/functions/v1/extract-upload' && entry === 'ingest-upload') {

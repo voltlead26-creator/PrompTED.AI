@@ -1,0 +1,237 @@
+{
+  "baseRevision": "d96c6cbb6a267d91335192c591a0346eca69813c",
+  "run": "20260909112432446-28b6d4d2",
+  "sourceUnchangedDuringChecks": true,
+  "testedSourceSha256": {
+    "packages/shared/src/upload-source-preparation.ts": "433f7a266dbc4f25675c9efe395d7403dea5a4b11d22f5b2530ae7cb834c17f1",
+    "packages/shared/src/api-client/index.ts": "fd7bf8eceb4705ec8ca6a3a0012d149eb478fc6620df8e3e9a2f82804a5ff6ac",
+    "packages/shared/src/api-client/upload-source-preparation.test.ts": "994f0f6aa3a784f931765bb1dd31150d6f76ca32e1646a71df1e4f78d8c8af95",
+    "supabase/functions/ingest-upload/handler.ts": "89f5e14a02e7bf1dd9af0d522e101c6afa5046c84d312e9e71cf231a18bea4bc",
+    "supabase/functions/ingest-upload/source-preparation.test.ts": "9978e1d72718ecbddc1acd8fe9a0197ea68a77d1d8c40a6e533e977320583749",
+    "supabase/functions/_shared/auth-guard.ts": "7df2726ae93352fa92f04ae4e47e3d319d72dd21a9519598f750dd251d0a1653",
+    "supabase/functions/_shared/auth-guard.test.ts": "f2688e06707de5a9bbce0c5fb8700723d077541e2bd9ac012ab825700c63668a",
+    "supabase/migrations/20260909105519_complete_upload_source_preparation.sql": "05a0fdc8690af10353b9fd8fbcb2e51e1d043fa505d8d4840d57c0b70fa3acc3",
+    "supabase/tests/upload_source_preparation.test.sql": "e37d2c66aaf9a636ed38675c7762a4bb93a8304241b80643ff623dedd75a9d39",
+    "supabase/deployment-contract.json": "36bb0471bb3f7a8600dcf92e175ee54e0e2ff5946e98b65355e93cc50dc3055d",
+    "apps/web/src/app/(app)/workspace/MasterWorkspaceImport.tsx": "e04a67954fb90863f8d75d174f9a7cf76a7c690929dd517a2eb9265866db904b",
+    "apps/web/src/app/(app)/workspace/MasterWorkspaceImport.test.tsx": "22ea1cbb05ac2c83db9c0e5a8ab7fa4207c9d9bbd70dfbc08b7bdb9603cd8773",
+    "tests/e2e/workspace-upload.spec.ts": "c7f50b20f362a8d77f6b1da3e10a5d053ab28307454f24ae74f368fd0ff30bbb"
+  },
+  "database": {
+    "migrations": 81,
+    "files": 50,
+    "assertions": 2643,
+    "passed": true
+  },
+  "browser": {
+    "passed": true,
+    "stats": {
+      "startTime": "2026-09-09T11:26:00.825Z",
+      "duration": 80593.409,
+      "expected": 2,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "originals": [
+      {
+        "uploadId": "2e77f7ec-2b98-80ae-8199-c7e460d7113b",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-Protected.pdf",
+        "byteLength": 606,
+        "sha256": "5e0f34e6e0ad3f10b3838f9a9fa59ce8cbf04caf271755d4a31bb697da567e3f",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "391feac8-f492-8b57-a737-3f55b27785f4",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-Protected.docx",
+        "byteLength": 1370,
+        "sha256": "a096ad4a8de77f395cef7f999d2e0037147945ae62c6663fabf6b43556c3b799",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "419e4ce5-d433-861d-b902-558be8f72102",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-TextEdit.rtf",
+        "byteLength": 449,
+        "sha256": "c544c9bbf850cd478a42d530a5243ac6acca35c633e3b92c2db486c28357bc84",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "0d6b7126-b020-80c0-8633-80f3aa572018",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-TextEdit LE.txt",
+        "byteLength": 100,
+        "sha256": "344f660bab060078150e5d2017542307fe437b2ae9ca37446c240632234d6aed",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "d3d2fa42-7122-8bf6-80d4-678180575e25",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-TextEdit BE.txt",
+        "byteLength": 100,
+        "sha256": "a60119dfb633734dc83e0ec14d75dda4fce3135d71ed7e4d64e5c2dff17c4e56",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "9b63b418-5a47-8654-9a3d-76ec20271123",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-Plain.txt",
+        "byteLength": 60,
+        "sha256": "7468ed4b7fe624217d472755524fa61afa1a8186e7342aefa293cad32bac0b54",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "e520f8b9-6463-8356-977b-f33ef170a8e3",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-Notes.md",
+        "byteLength": 181,
+        "sha256": "02a38a8c42ce4fbe833c9d21acdb0a7c4e2f613996048f1367eb7705c4db7700",
+        "status": "committed",
+        "outcomeId": "f988ed33-3aa1-491c-ad65-4639efff1dcb",
+        "documentId": "0bc6061f-1b5f-46a7-bbc8-eae2b0f52bdd",
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "fbf35a69-c664-8624-b59d-2af35c72d501",
+        "ownerId": "0fc822b5-d2f4-4c3f-b411-602a34d00621",
+        "name": "desktop-chromium-Records.csv",
+        "byteLength": 24,
+        "sha256": "35196db0f9d76d11887c4bcd6290245bb5741acd5020cd42f6c975a468661340",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "3545cb90-e4af-884b-b61c-7e51eba01cb9",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-Protected.pdf",
+        "byteLength": 606,
+        "sha256": "5e0f34e6e0ad3f10b3838f9a9fa59ce8cbf04caf271755d4a31bb697da567e3f",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "b7ee72ef-8b86-8002-9daa-129bf9a3f730",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-Protected.docx",
+        "byteLength": 1370,
+        "sha256": "a096ad4a8de77f395cef7f999d2e0037147945ae62c6663fabf6b43556c3b799",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "475f23ff-1277-8a54-bc1d-2ad5c029f247",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-TextEdit.rtf",
+        "byteLength": 449,
+        "sha256": "c544c9bbf850cd478a42d530a5243ac6acca35c633e3b92c2db486c28357bc84",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "d9dc0b9b-abdb-81e4-8be5-e7b467dfaffe",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-TextEdit LE.txt",
+        "byteLength": 100,
+        "sha256": "344f660bab060078150e5d2017542307fe437b2ae9ca37446c240632234d6aed",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "ab6a9fd2-e2b0-8f4d-8369-12b07cef6d78",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-TextEdit BE.txt",
+        "byteLength": 100,
+        "sha256": "a60119dfb633734dc83e0ec14d75dda4fce3135d71ed7e4d64e5c2dff17c4e56",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "759dd402-6e4d-864d-9d77-b6c952a19a4f",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-Plain.txt",
+        "byteLength": 60,
+        "sha256": "7468ed4b7fe624217d472755524fa61afa1a8186e7342aefa293cad32bac0b54",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "1e0b2969-1a76-84bb-a3e4-52014c1f52ed",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-Notes.md",
+        "byteLength": 181,
+        "sha256": "02a38a8c42ce4fbe833c9d21acdb0a7c4e2f613996048f1367eb7705c4db7700",
+        "status": "committed",
+        "outcomeId": "46f4963b-c5e8-4e89-8533-a8ba49e6d33b",
+        "documentId": "4d5ee73b-fc61-4419-8ce6-6ba40540dbe3",
+        "classificationStatus": "not_requested"
+      },
+      {
+        "uploadId": "28ccfffd-33ca-88f2-b6fb-9b10f4e14bca",
+        "ownerId": "26e41eae-c87c-40e7-8e9e-99c012e4af38",
+        "name": "narrow-chromium-Records.csv",
+        "byteLength": 24,
+        "sha256": "35196db0f9d76d11887c4bcd6290245bb5741acd5020cd42f6c975a468661340",
+        "status": "ready",
+        "outcomeId": null,
+        "documentId": null,
+        "classificationStatus": "not_requested"
+      }
+    ],
+    "providerDispatchCount": 0
+  },
+  "webGate": {
+    "passed": true,
+    "sharedTests": 423,
+    "webTests": 1035,
+    "build": true
+  },
+  "edge": {
+    "passed": true,
+    "tests": 1575,
+    "steps": 220
+  },
+  "productionDependencyAudit": {
+    "passed": false,
+    "critical": 2,
+    "high": 1,
+    "nextFix": "15.5.24",
+    "sharpFix": "0.35.4"
+  },
+  "productionExercised": false,
+  "generatedExportInspected": false,
+  "formatPreservingEditingVerified": false
+}
