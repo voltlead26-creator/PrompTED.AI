@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { dmSans } from "@/design-system/fonts";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -39,7 +38,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={dmSans.variable} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{

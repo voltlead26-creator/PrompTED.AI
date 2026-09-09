@@ -57,8 +57,10 @@
   --ted-moment-soft: var(--ember-soft);
 
   /* Typography */
-  --font-family:    var(--font-body, "DM Sans"), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  /* Single typeface — DM Sans handles display and body weights. No serif display font. */
+  /* Installed fonts only; the generic fallback works without a font download. */
+  --font-body:      Arial, Helvetica, sans-serif;
+  --font-family:    var(--font-body);
+  --font-display:   var(--font-family);
   --font-mono:      ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --text-display:     2.5rem;
   --text-heading-xl:  1.75rem;
