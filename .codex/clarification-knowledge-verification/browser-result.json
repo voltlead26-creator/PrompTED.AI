@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "checks": [
+    "three questions rendered",
+    "recommendation held until summary confirmation",
+    "correction branch",
+    "failed answer retained for retry",
+    "explicit confirmation",
+    "confirmed brief in creation handoff",
+    "reload does not restore stale permission",
+    "mobile no horizontal overflow"
+  ],
+  "evidence": "Real hook and conversation UI; simulated interpretation responses. No live provider, database save or production calls.",
+  "errors": []
+}

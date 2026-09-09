@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "desktop": "1280x900",
+  "mobile": "390x844",
+  "checks": [
+    "direct title and description editing",
+    "save failure retains wording",
+    "retry",
+    "reload of simulated storage",
+    "tEdit title targeting",
+    "discard",
+    "narrow viewport without overflow"
+  ],
+  "persistence": "Simulated browser fixture only; no Supabase or production writes",
+  "errors": []
+}

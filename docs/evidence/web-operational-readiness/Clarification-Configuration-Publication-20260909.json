@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-09T13:57:22.785Z",
+  "root": "/Users/kaichurchw/PrompTED.AI",
+  "branch": "Thought-Enhanced-Document",
+  "publishedSourceCommit": "42f1c549486d91f26cd999887c195a69604caed8",
+  "remote": "https://github.com/voltlead26-creator/PrompTED.AI.git",
+  "clarification": [
+    {
+      "path": "apps/web/src/hooks/useRecommendation.ts",
+      "sha256": "3718e7fc399159f822a948f49692abaec10ce4f88dec88252f0fd2b9fb933af3",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": false
+    },
+    {
+      "path": "apps/web/src/app/(app)/home/HomeScreen.tsx",
+      "sha256": "1bbf2125ac7dcda36508c3719aece9c43a524ee4472768d152f869a4cbd64d41",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": false
+    },
+    {
+      "path": "packages/shared/src/orchestration.ts",
+      "sha256": "5399094ab57b4a4ca612b249e4a89e03955e462a05f163b37718a538b816cef0",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": true
+    },
+    {
+      "path": "supabase/functions/clarify/context.ts",
+      "sha256": "6410e8cc76d566c8aaac9f5469eb8aa5d14f40c836efb7a0cde94d8973827e15",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": false
+    },
+    {
+      "path": "supabase/functions/clarify/index.ts",
+      "sha256": "3a54bc4873a9adbd0177639dd966bf14362df54cb2277f0ed3eae83ef832ebf1",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": true
+    },
+    {
+      "path": "supabase/functions/interpret-intent/index.ts",
+      "sha256": "f6d977c16c44ba5cfb69cc0a3bc578c48b2361a1a20923a793547e21f0e51477",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": true
+    },
+    {
+      "path": "supabase/functions/_shared/prompt-builder.ts",
+      "sha256": "aadb9a40563435e09b8215c8bf9686f7b2235e0a575859f963893514ee80ce64",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": false
+    },
+    {
+      "path": "supabase/functions/_shared/document-intelligence.ts",
+      "sha256": "7d5569adab34c7a5b9d9e2f90b47645974f71fa431076a1fe8f92eac61545e58",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": true
+    },
+    {
+      "path": "supabase/functions/_shared/document-intelligence-profiles.ts",
+      "sha256": "4f178fe9b3cba64d66be106e1e1b468dd3b2ac1da1f916854044edb26de2a0b3",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": false
+    },
+    {
+      "path": "supabase/functions/_shared/model-output-contracts.ts",
+      "sha256": "42755695d835f59cf8dd6aab0f2a97b6ee2acf9734a465a0de89b1117992c6e1",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c",
+      "matchesOriginalReportSnapshot": true
+    }
+  ],
+  "checklist": [
+    {
+      "path": "apps/web/src/components/organisms/ArtifactActionScreen.tsx",
+      "sha256": "cb81eda2c4dd24919cdde73b0218ac7226e7c9d1c650891b62c33b9b7ff5b472",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    },
+    {
+      "path": "apps/web/src/components/organisms/ArtifactActionScreen.module.css",
+      "sha256": "3e7ae8ad110c75f7aca5636d251437b3750a9cee8b81e7615511292e8a199080",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    },
+    {
+      "path": "apps/web/src/components/organisms/ArtifactActionScreen.fields.test.tsx",
+      "sha256": "9534b67fff6d651244291505e9bb39e266c8af2a91ceb2dba7259803926527b3",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    },
+    {
+      "path": "apps/web/src/components/organisms/ActionStepFieldsEditor.tsx",
+      "sha256": "9cf7027d48f3bc921d4ddc9a5d081c4c5fd09fb95dc18fc4c55037c18552a6bd",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    },
+    {
+      "path": "apps/web/src/components/organisms/ActionStepFieldsEditor.module.css",
+      "sha256": "1a137a4a4be88103d346612c465ce4cd1c6931f3a2108bb2b5c3efd4139d6edb",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    },
+    {
+      "path": "apps/web/src/components/organisms/ActionStepFieldsEditor.test.tsx",
+      "sha256": "f25f311db53e9bc3e0e898afe9b81df8d17b967b97e4ef964716caf8fb73f1e9",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    }
+  ],
+  "configuration": [
+    {
+      "path": ".env.example",
+      "sha256": "763d192009dab32d606f39539572143c230c0cccef11adb6dde47e25983fbb52",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "68124981a0f481f2a79a4c2a2bd09537e8afcbdc"
+    },
+    {
+      "path": "apps/web/.env.example",
+      "sha256": "4358b9aa8c28d98c11c9868c281106e845c906df5e93bc0afd7eb1c8d39e8943",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "68124981a0f481f2a79a4c2a2bd09537e8afcbdc"
+    },
+    {
+      "path": ".github/production/.env.example",
+      "sha256": "23900d7a8e3f1c3878e7a457a075cdce53b792d9cd0a37873b798b918d9a1961",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    },
+    {
+      "path": "docs/ENVIRONMENT_CONFIGURATION.md",
+      "sha256": "f6a6d9d34b115b9a496ca5b7ef0002e996c68cdc4c73d60f6a38fc95448d5ecb",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "d96c6cbb6a267d91335192c591a0346eca69813c"
+    },
+    {
+      "path": "netlify.toml",
+      "sha256": "8ad1a26385d5b0b72192d6fbb2085be88ff80e98593508ffb03c3708705c409e",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "69c248f6b75842327bde5576ef4860658ba7809c"
+    },
+    {
+      "path": ".github/workflows/deploy-prod.yml",
+      "sha256": "15be1b5ea358400977410f6e9be80ee73ac138d366ce0fcfc77fac5eb3b82075",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "4bc44902d82375b74328af440b1db2b91afdef8a02795785aa223844b77f90c9",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "4f13e7f623a08cbe426e316fe2966857bd324c62"
+    },
+    {
+      "path": "supabase/deployment-contract.json",
+      "sha256": "36bb0471bb3f7a8600dcf92e175ee54e0e2ff5946e98b65355e93cc50dc3055d",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "4b0238e3aa6fbca7d31b9c24be20fa7978b48ad6"
+    },
+    {
+      "path": "supabase/config.toml",
+      "sha256": "804604625d02fad90cdab4a1283df76122e9edbea2a15ccdd61aa77ad6b620ad",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "222ea342fea748fdc4f3bfbff7a0502a9e347395"
+    },
+    {
+      "path": "package.json",
+      "sha256": "79e1f8a6172123a98e5819d7411c6ed55f816d1e67effefb6b45bf94b34b9c54",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "42f1c549486d91f26cd999887c195a69604caed8"
+    },
+    {
+      "path": "apps/web/package.json",
+      "sha256": "5f195b68097e32265ec0a78376c8908006e04f70a7f9b66caa7172afef6914f4",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "42f1c549486d91f26cd999887c195a69604caed8"
+    },
+    {
+      "path": "packages/shared/package.json",
+      "sha256": "6f033f0c0fe18ea6b4a7a210a77a404370451dca4acef5f4aead9315d5757496",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "42f1c549486d91f26cd999887c195a69604caed8"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "4c36d86cad508d4c5456f300b7d3bd1ede6abb7fd9b9384d4957d9ff330af2e1",
+      "matchesPublishedSource": true,
+      "lastChangedCommit": "42f1c549486d91f26cd999887c195a69604caed8"
+    }
+  ],
+  "scope": "Report publication and source/configuration attribution only. Current code already published; no runtime code or hosted changes.",
+  "localVerification": "Test-Toolchain-Verification-20260909.json",
+  "privateEnvironmentFiles": "Retained in ignored consumer-specific local paths; no values published.",
+  "excluded": "Personal sample, installed skill packages, another active task design, generated logs/screenshots/build bundles and raw database runs retained locally."
+}

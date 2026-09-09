@@ -41,6 +41,14 @@ change application functionality or establish deployment acceptance.
 
 ## Current release evidence
 
+- [Clarification and knowledge-confirmation repair](../../.codex/clarification-knowledge-verification/Verification.md)
+  preserves the original repair evidence with a dated publication addendum and
+  current source attribution.
+- [Checklist title/description repair](../../.codex/checklist-title-verification/Verification.md)
+  records field targeting, cancellation and recovery; its original simulated
+  persistence scope remains explicit.
+- [Test-toolchain advisory verification](web-operational-readiness/Test-Toolchain-Advisories-20260909.md)
+  records the patched YAML/Vitest graph, clean audits and full local web/Chromium gate.
 - [Upload source preparation](web-operational-readiness/Upload-Source-Preparation-20260909.md)
   describes the repair pushed in `4b0238e`; it distinguishes original retention
   and text import from unfinished formatting-preserving editing.
