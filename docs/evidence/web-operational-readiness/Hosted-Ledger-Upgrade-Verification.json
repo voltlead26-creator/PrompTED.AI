@@ -1,0 +1,94 @@
+{
+  "contract_version": "hosted-ledger-upgrade-verification.1",
+  "parent_commit": "4f13e7f623a08cbe426e316fe2966857bd324c62",
+  "verified_source_hashes": {
+    "run-isolated-db-baseline.mjs": "1f4ec8fdc941a1b6b669c007f65a1b6400249f574a3ad8b50f2ed5e0a7b07c53",
+    "hosted-ledger-upgrade-acceptance.mjs": "6398dca0df83f62a5d389fbf2b897844f6f980e5b73ae8a12127f68b5bb82a35",
+    "hosted-ledger-upgrade-acceptance.test.mjs": "b5e9116bc89504fb0314edf3acde5b832857ee7142bc20fdc862759dad9be5a0",
+    "hosted-ledger-upgrade-baseline.json": "512ec9a63dea20b6e4808b3cb465e2e60a50357b3893194b4c5a9fc5acf375f0"
+  },
+  "run": "db-20260909132320192-d9c9aec2",
+  "evidence": "/Users/kaichurchw/PrompTED.AI/docs/evidence/web-operational-readiness/db-20260909132320192-d9c9aec2",
+  "completed_at": "2026-09-09T13:25:42.702Z",
+  "passed": true,
+  "local_only": true,
+  "hosted_migrations_executed": false,
+  "observed_hosted_history_count": 68,
+  "upgraded_history_count": 81,
+  "pending_migrations_exercised": 13,
+  "sql": {
+    "files": 50,
+    "assertions": 2643,
+    "fresh": "passed",
+    "upgraded": "passed"
+  },
+  "http_checks": 22,
+  "preservation": {
+    "passed": true,
+    "users": [
+      "009b5754-a8ba-4393-b9c5-9873e1480593",
+      "fde1b0f0-f51f-458b-8233-ab3e74d98fbc"
+    ],
+    "fixtureIds": [
+      {
+        "outcomeId": "8cf41e4c-28ca-430c-9414-36159cc86898",
+        "documentId": "a9e6c78a-8b9c-4f8b-b39a-6d0e0ccfe741",
+        "uploadId": "99b39c5a-10f7-4df7-bc43-6b39ee84324f"
+      },
+      {
+        "outcomeId": "e802f509-8fab-4ce3-8900-8c969dd1bd1e",
+        "documentId": "a55875fe-62dc-45b2-bbe1-51777a20af21",
+        "uploadId": "3c28d35d-67c5-4998-9c91-8a7ba00374c8"
+      }
+    ],
+    "rowCounts": {
+      "public.outcomes": 2,
+      "public.documents": 2,
+      "public.sections": 4,
+      "public.uploads": 2,
+      "private.legacy_workspace_save_receipts": 2
+    },
+    "originalSha256": "a096ad4a8de77f395cef7f999d2e0037147945ae62c6663fabf6b43556c3b799",
+    "originalCount": 2,
+    "originalBytesPreserved": true,
+    "receiptsReplayed": 2,
+    "providerCalled": false,
+    "hostedMutation": false,
+    "limits": "Local rehearsal of the observed version ledger using reviewed repository SQL; does not establish hosted schema-byte equivalence, production acceptance or format-preserving editing."
+  },
+  "web_gate": {
+    "label": "web-gate",
+    "executable": "pnpm",
+    "args": [
+      "verify:web"
+    ],
+    "start": "2026-09-09T13:25:08.837Z",
+    "end": "2026-09-09T13:25:42.540Z",
+    "exit": 0,
+    "signal": null,
+    "error": null
+  },
+  "cleanup": {
+    "label": "cleanup",
+    "executable": "supabase",
+    "args": [
+      "--workdir",
+      "/private/var/folders/px/6p7kv1w51hq6786tm68jtfsr0000gn/T/prompted-db-20260909132320192-d9c9aec2-0NJ5IE",
+      "--agent",
+      "no",
+      "stop",
+      "--project-id",
+      "prompted-db-20260909132320192-d9c9aec2",
+      "--no-backup",
+      "--yes"
+    ],
+    "start": "2026-09-09T13:25:03.464Z",
+    "end": "2026-09-09T13:25:08.757Z",
+    "exit": 0,
+    "signal": null,
+    "error": null
+  },
+  "all_results_passed": true,
+  "ci_for_this_overlay": "not_yet_published",
+  "production_deploy": "blocked"
+}

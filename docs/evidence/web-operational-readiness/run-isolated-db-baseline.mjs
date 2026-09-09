@@ -29,6 +29,7 @@ import { selectUploadSourceSqlScope } from "./upload-source-sql-scope.mjs";
 import { exerciseWorkspaceReads, validateWorkspaceReadUpgradePlan } from "./workspace-upload-read-acceptance.mjs";
 import { exerciseWorkspaceBrowser } from "./workspace-browser-acceptance.mjs";
 import { exerciseNewWorkspaceUploads } from "./workspace-upload-browser-acceptance.mjs";
+import { assertHostedLedgerPhase, exerciseHostedLedgerUpgrade, validateHostedLedgerUpgradePlan } from "./hosted-ledger-upgrade-acceptance.mjs";
 import { exerciseLegacyPolicyUpgrade, validateLegacyPolicyUpgradePlan } from "./legacy-policy-upgrade-acceptance.mjs";
 import { assertLegacyWorkspaceCorePhase, exerciseLegacyWorkspaceCoreUpgrade,
   coreMigrationFile, coreMigrationSha, coreTestFile, coreTestSha,
@@ -44,10 +45,13 @@ import { exerciseUploadSourceV3Upgrade, validateV3UpgradePlan, exerciseUploadRtf
 
 process.umask(0o077);
 assert(
-  process.argv.slice(2).every(arg => ["--preflight-only", "--profile-read-acceptance", "--upload-source-acceptance", "--upload-source-v3-acceptance", "--upload-rtf-alias-acceptance", "--upload-fallback-acceptance", "--upload-source-import-acceptance", "--workspace-read-browser-acceptance", "--workspace-upload-browser-acceptance", "--legacy-policy-upgrade-acceptance", "--catalogue-upgrade-acceptance", "--legacy-audit-upgrade-acceptance", "--legacy-workspace-core-upgrade-acceptance"].includes(arg)) &&
+  process.argv.slice(2).every(arg => ["--preflight-only", "--profile-read-acceptance", "--upload-source-acceptance", "--upload-source-v3-acceptance", "--upload-rtf-alias-acceptance", "--upload-fallback-acceptance", "--upload-source-import-acceptance", "--workspace-read-browser-acceptance", "--workspace-upload-browser-acceptance", "--legacy-policy-upgrade-acceptance", "--catalogue-upgrade-acceptance", "--legacy-audit-upgrade-acceptance", "--legacy-workspace-core-upgrade-acceptance", "--hosted-ledger-upgrade-acceptance"].includes(arg)) &&
     new Set(process.argv.slice(2)).size === process.argv.length - 2,
-  "Only preflight, profile, v2 source, v3 source, RTF alias, fallback, source import, workspace browser, legacy policy, catalogue, legacy audit and workspace core upgrade acceptance flags are supported",
+  "Only preflight, profile, v2 source, v3 source, RTF alias, fallback, source import, workspace browser, legacy policy, catalogue, legacy audit, workspace core and hosted-ledger upgrade acceptance flags are supported",
 );
+const hostedLedgerUpgradeAcceptance = process.argv.includes("--hosted-ledger-upgrade-acceptance");
+assert(!(hostedLedgerUpgradeAcceptance && process.argv.slice(2).some(flag =>
+  !["--hosted-ledger-upgrade-acceptance", "--preflight-only"].includes(flag))), "Hosted-ledger upgrade mode is exclusive");
 const legacyWorkspaceCoreUpgradeAcceptance = process.argv.includes("--legacy-workspace-core-upgrade-acceptance");
 assert(!(legacyWorkspaceCoreUpgradeAcceptance && process.argv.slice(2).some(flag =>
   !["--legacy-workspace-core-upgrade-acceptance", "--preflight-only"].includes(flag))), "Legacy workspace core upgrade mode is exclusive");
@@ -86,6 +90,9 @@ const uploadSourceAcceptance = process.argv.includes("--upload-source-acceptance
 const uploadSourceV3Acceptance = process.argv.includes("--upload-source-v3-acceptance");
 const uploadRtfAliasAcceptance = process.argv.includes("--upload-rtf-alias-acceptance");
 const v3Inputs = [
+  ["./hosted-ledger-upgrade-acceptance.mjs", "hosted-ledger-upgrade-acceptance.mjs"],
+  ["./hosted-ledger-upgrade-acceptance.test.mjs", "hosted-ledger-upgrade-acceptance.test.mjs"],
+  ["./hosted-ledger-upgrade-baseline.json", "hosted-ledger-upgrade-baseline.json"],
   ["./legacy-workspace-core-upgrade-acceptance.mjs", "legacy-workspace-core-upgrade-acceptance.mjs"],
   ["./legacy-workspace-core-upgrade-acceptance.test.mjs", "legacy-workspace-core-upgrade-acceptance.test.mjs"],
   ["./legacy-workspace-core-upgrade-sql-baseline.json", "legacy-workspace-core-upgrade-sql-baseline.json"],
@@ -186,6 +193,9 @@ const heldLegacyAuditMigration = join(workdir, "held-legacy-audit-migration.sql"
 const heldLegacyAuditTest = join(workdir, "held-legacy-audit-test.sql");
 let legacyWorkspaceCoreUpgradePlan;
 let workspaceCorePhase = "full";
+let hostedLedgerUpgradePlan;
+let hostedLedgerPhase = "full";
+const heldHostedMigrations = join(workdir, "held-hosted-migrations");
 const heldWorkspaceCoreMigration = join(workdir, "held-workspace-core-migration.sql");
 const heldWorkspaceCoreTest = join(workdir, "held-workspace-core-test.sql");
 const heldSourcePreparationMigration = join(workdir, "held-source-preparation-migration.sql");
@@ -385,7 +395,9 @@ function checkTarget() {
     : legacyAuditUpgradePlan && legacyAuditPhase === "predecessor"
       ? legacyAuditUpgradePlan.prefixManifest
       : legacyWorkspaceCoreUpgradePlan && workspaceCorePhase === "predecessor"
-        ? legacyWorkspaceCoreUpgradePlan.prefixManifest : manifest;
+        ? legacyWorkspaceCoreUpgradePlan.prefixManifest
+        : hostedLedgerUpgradePlan && hostedLedgerPhase === "historical"
+          ? hostedLedgerUpgradePlan.historicalManifest : manifest;
   assert.deepEqual(currentFiles, Object.keys(activeManifest).sort(), "Copied SQL file inventory changed");
   const actualManifest = {};
   for (const [file, digest] of Object.entries(activeManifest)) {
@@ -418,6 +430,14 @@ function checkTarget() {
       sourceMigration: existsSync(heldSourcePreparationMigration) ? sha(readFileSync(heldSourcePreparationMigration)) : null,
       sourceTest: existsSync(heldSourcePreparationTest) ? sha(readFileSync(heldSourcePreparationTest)) : null,
     });
+  }
+  if (hostedLedgerUpgradePlan) {
+    const held = Object.fromEntries(readdirSync(heldHostedMigrations).sort().map(name => {
+      const file = join(heldHostedMigrations, name);
+      assert(lstatSync(file).isFile());
+      return [`supabase/migrations/${name}`, sha(readFileSync(file))];
+    }));
+    assertHostedLedgerPhase(hostedLedgerUpgradePlan, hostedLedgerPhase, actualManifest, held);
   }
 }
 function attestDatabase(label) {
@@ -526,6 +546,7 @@ try {
     "docs/evidence/web-operational-readiness/catalogue-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/legacy-audit-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/legacy-workspace-core-upgrade-acceptance.test.mjs",
+    "docs/evidence/web-operational-readiness/hosted-ledger-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/disposable-database-reset.test.mjs",
     "docs/evidence/web-operational-readiness/upload-source-sql-scope.test.mjs",
     "docs/evidence/web-operational-readiness/upload-source-v3-upgrade-acceptance.test.mjs",
@@ -557,6 +578,10 @@ try {
   if (catalogueUpgradeAcceptance) catalogueUpgradePlan = validateCatalogueUpgradePlan(manifest, sourceBefore);
   if (legacyAuditUpgradeAcceptance) legacyAuditUpgradePlan = validateLegacyAuditUpgradePlan(manifest, sourceBefore);
   if (legacyWorkspaceCoreUpgradeAcceptance) legacyWorkspaceCoreUpgradePlan = validateLegacyWorkspaceCoreUpgradePlan(manifest, sourceBefore);
+  if (hostedLedgerUpgradeAcceptance) {
+    hostedLedgerUpgradePlan = validateHostedLedgerUpgradePlan(manifest, sourceBefore);
+    mkdirSync(heldHostedMigrations);
+  }
   for (const input of v3Inputs) copyFileSync(input.url, join(workdir, input.target));
   copyFileSync(sourceManifestUrl, join(workdir, "source-manifest.json"));
   copyFileSync(sourceFixtureUrl, join(workdir, "source-preservation.docx"));
@@ -590,6 +615,8 @@ try {
     legacyAuditUpgradePlan: legacyAuditUpgradePlan ?? null,
     legacyWorkspaceCoreUpgradeAcceptance,
     legacyWorkspaceCoreUpgradePlan: legacyWorkspaceCoreUpgradePlan ?? null,
+    hostedLedgerUpgradeAcceptance,
+    hostedLedgerUpgradePlan: hostedLedgerUpgradePlan ?? null,
     workspaceReadUpgradePlan: workspaceReadUpgradePlan ?? null,
     v3UpgradePlan: v3UpgradePlan ?? null,
     rtfAliasUpgradePlan: rtfAliasUpgradePlan ?? null,
@@ -620,6 +647,60 @@ try {
     let database = attestDatabase("database-after-reset");
     assertDisposableReset(initialDatabase, database);
     supabase("fresh-tests", ["test", "db", "--local"], 10 * 60_000);
+    if (hostedLedgerUpgradeAcceptance) {
+      const plan = hostedLedgerUpgradePlan;
+      const sql = (label, query) => {
+        checkTarget();
+        return command(label, dockerExecutable, ["--host", dockerHost, "exec", database.container,
+          "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-At", "-c", query]);
+      };
+      const history = label => JSON.parse(sql(label,
+        "select coalesce(json_agg(version order by version),'[]'::json) from supabase_migrations.schema_migrations;"));
+      const transition = next => {
+        checkTarget(); assert.notEqual(next, hostedLedgerPhase);
+        assert.ok(next === "full" || next === "historical");
+        const moves = plan.pendingFiles.map(file => {
+          const active = join(workdir, file), held = join(heldHostedMigrations, file.split("/").at(-1));
+          const [from, to] = next === "historical" ? [active, held] : [held, active];
+          assert(lstatSync(from).isFile()); assert.equal(sha(readFileSync(from)), plan.manifest[file]);
+          assert(!existsSync(to)); return [from, to];
+        });
+        const moved = [];
+        try {
+          for (const [from, to] of moves) { renameSync(from, to); moved.push([from, to]); }
+        } catch (error) {
+          for (const [from, to] of moved.reverse()) renameSync(to, from);
+          throw error;
+        }
+        hostedLedgerPhase = next; checkTarget();
+      };
+      assert.deepEqual(history("hosted-ledger-fresh-history"), plan.versions);
+      try {
+        transition("historical");
+        assert.deepEqual(attestDatabase("hosted-ledger-before-reset"), database);
+        supabase("hosted-ledger-historical-reset", ["db", "reset", "--local", "--no-seed", "--yes"], 10 * 60_000);
+        const historicalDatabase = attestDatabase("hosted-ledger-after-reset");
+        assertDisposableReset(database, historicalDatabase); database = historicalDatabase;
+        assert.deepEqual(history("hosted-ledger-historical-history"), plan.hostedVersions);
+        await exerciseHostedLedgerUpgrade({ project, workdir, env: localEnv, checkTarget, save, sql,
+          applyMigration() {
+            assert.equal(hostedLedgerPhase, "historical");
+            assert.deepEqual(attestDatabase("hosted-ledger-before-forward"), database);
+            assert.deepEqual(history("hosted-ledger-history-before-forward"), plan.hostedVersions);
+            transition("full");
+            // This flag is confined to the explicitly identified disposable
+            // database. Production's strict inventory guard remains unchanged.
+            supabase("hosted-ledger-apply-forward", ["migration", "up", "--local", "--include-all", "--yes"], 10 * 60_000);
+            assert.deepEqual(attestDatabase("hosted-ledger-after-forward"), database);
+            assert.deepEqual(history("hosted-ledger-history-after-forward"), plan.versions);
+          },
+        });
+        assert.equal(hostedLedgerPhase, "full");
+        supabase("hosted-ledger-upgraded-tests", ["test", "db", "--local"], 10 * 60_000);
+      } finally {
+        if (hostedLedgerPhase === "historical") transition("full");
+      }
+    }
     if (uploadSourceAcceptance) {
       // This reset affects only the same identified disposable stack created
       // by this run. Recreate the exact predecessor schema, seed representative
@@ -1042,10 +1123,14 @@ try {
     legacyAuditUpgradePlan: legacyAuditUpgradePlan ?? null,
     legacyWorkspaceCoreUpgradeAcceptance,
     legacyWorkspaceCoreUpgradePlan: legacyWorkspaceCoreUpgradePlan ?? null,
+    hostedLedgerUpgradeAcceptance,
+    hostedLedgerUpgradePlan: hostedLedgerUpgradePlan ?? null,
     sourceImportAcceptance,
     uploadFallbackAcceptance,
     scope: preflightOnly
       ? "Preflight only; no database/service mutation or web gate"
+      : hostedLedgerUpgradeAcceptance
+        ? "All-current fresh SQL and observed68-to81 migration-ledger rehearsal on an identified disposable database; two authenticated owners, historical workspace receipt replay, exact row preservation, owned reads and original DOCX bytes. Reviewed repository migration bodies, not a hosted schema clone. No live provider, hosted mutation, browser, format-preserving edit or generated export proof."
       : legacyWorkspaceCoreUpgradeAcceptance
         ? "All-current fresh SQL and exact150000-to160000 save-core extraction on an identified disposable database; real local Auth/PostgREST, unchanged public function identity/permissions, historical receipts and independent workspace reads. No generation finalizer, live provider, browser, approval/export or hosted proof."
       : legacyAuditUpgradeAcceptance
