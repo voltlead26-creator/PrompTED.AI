@@ -117,7 +117,7 @@ jobs:
         env:
           PROMPTED_ACCEPTANCE_EXPECTED_HEAD: ${{ github.sha }}
 
-      - name: Prove all current SQL fresh and the exact 79-to-80 workspace core upgrade
+      - name: Prove all current SQL fresh and the reviewed 79-to-81 workspace upgrade
         # A separate sequential disposable run checks all current SQL fresh,
         # then preserves the reviewed 79-migration baseline through the exact
         # workspace core upgrade, including historical public receipt replay.

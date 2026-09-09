@@ -63,9 +63,10 @@ Evidence is in `db-20260909115330354-4384f798/` and the concise
 
 CI for upload commit `4b0238e` passed web, Edge and fresh database jobs but failed
 the separate historical-upgrade preflight because its manifest still admitted
-80 migrations and omitted the new upload migration/test. That failure needs its
-own reviewed 79-to-81 upgrade acceptance; local browser success does not waive it.
-Exact final-commit CI and hosted release prerequisites remain pending.
+80 migrations and omitted the new upload migration/test. The separately reviewed
+[79-to-81 upgrade repair](CI-Upgrade-Manifest-20260909.md) subsequently passed
+local upgrade acceptance and another Chromium run. Exact final-commit CI and
+hosted release prerequisites remain pending.
 
 No credentials, hosted schema, function activation, Netlify publication or
 account limit is changed by this dependency repair.

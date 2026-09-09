@@ -32,6 +32,7 @@ import { exerciseNewWorkspaceUploads } from "./workspace-upload-browser-acceptan
 import { exerciseLegacyPolicyUpgrade, validateLegacyPolicyUpgradePlan } from "./legacy-policy-upgrade-acceptance.mjs";
 import { assertLegacyWorkspaceCorePhase, exerciseLegacyWorkspaceCoreUpgrade,
   coreMigrationFile, coreMigrationSha, coreTestFile, coreTestSha,
+  sourcePreparationMigrationFile, sourcePreparationMigrationSha, sourcePreparationTestFile, sourcePreparationTestSha,
   validateLegacyWorkspaceCoreUpgradePlan } from "./legacy-workspace-core-upgrade-acceptance.mjs";
 import { assertLegacyAuditPhase, exerciseLegacyAuditUpgrade, legacyAuditMigrationFile,
   legacyAuditMigrationSha, legacyAuditTestFile, legacyAuditTestSha,
@@ -187,6 +188,8 @@ let legacyWorkspaceCoreUpgradePlan;
 let workspaceCorePhase = "full";
 const heldWorkspaceCoreMigration = join(workdir, "held-workspace-core-migration.sql");
 const heldWorkspaceCoreTest = join(workdir, "held-workspace-core-test.sql");
+const heldSourcePreparationMigration = join(workdir, "held-source-preparation-migration.sql");
+const heldSourcePreparationTest = join(workdir, "held-source-preparation-test.sql");
 mkdirSync(evidence, { recursive: true });
 save("runner.mjs", readFileSync(new URL(import.meta.url), "utf8"));
 save("profile-read-acceptance.mjs", readFileSync(profileProbeUrl, "utf8"));
@@ -406,12 +409,14 @@ function checkTarget() {
     });
   }
   if (legacyWorkspaceCoreUpgradePlan) {
-    for (const file of [heldWorkspaceCoreMigration, heldWorkspaceCoreTest]) {
+    for (const file of [heldWorkspaceCoreMigration, heldWorkspaceCoreTest, heldSourcePreparationMigration, heldSourcePreparationTest]) {
       if (existsSync(file)) assert(lstatSync(file).isFile());
     }
     assertLegacyWorkspaceCorePhase(legacyWorkspaceCoreUpgradePlan, workspaceCorePhase, actualManifest, {
       migration: existsSync(heldWorkspaceCoreMigration) ? sha(readFileSync(heldWorkspaceCoreMigration)) : null,
       test: existsSync(heldWorkspaceCoreTest) ? sha(readFileSync(heldWorkspaceCoreTest)) : null,
+      sourceMigration: existsSync(heldSourcePreparationMigration) ? sha(readFileSync(heldSourcePreparationMigration)) : null,
+      sourceTest: existsSync(heldSourcePreparationTest) ? sha(readFileSync(heldSourcePreparationTest)) : null,
     });
   }
 }
@@ -770,6 +775,8 @@ try {
         const moves = [
           [join(workdir, coreMigrationFile), heldWorkspaceCoreMigration, coreMigrationSha],
           [join(workdir, coreTestFile), heldWorkspaceCoreTest, coreTestSha],
+          [join(workdir, sourcePreparationMigrationFile), heldSourcePreparationMigration, sourcePreparationMigrationSha],
+          [join(workdir, sourcePreparationTestFile), heldSourcePreparationTest, sourcePreparationTestSha],
         ];
         // Validate both sides before either rename. A phase never changes an
         // input's bytes or silently admits additional SQL.
@@ -794,6 +801,7 @@ try {
         checkTarget();
         phaseLog.push({ phase: next, at: new Date().toISOString(),
           migrationSha: coreMigrationSha, testSha: coreTestSha,
+          sourceMigrationSha: sourcePreparationMigrationSha, sourceTestSha: sourcePreparationTestSha,
           copiedSqlCount: Object.keys(next === "full" ? plan.manifest : plan.prefixManifest).length });
         save("workspace-core-upgrade-phases.json", phaseLog);
       };

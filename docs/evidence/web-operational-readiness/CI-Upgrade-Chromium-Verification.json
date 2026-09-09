@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "job": "job-mtu1znof-ad5c631c",
+  "parentCommit": "5795d077d02c070303cb64ecd5012fc4471400d3",
+  "testedWorkingTreeOverlay": true,
+  "passed": true,
+  "runs": {
+    "upgrade": "db-20260909120706660-6f0101e9",
+    "browser": "db-20260909120943925-6ea10165",
+    "tedit": "tedit-browser-20260909120941709"
+  },
+  "sourceHashes": {
+    ".github/workflows/ci.yml": "4bc44902d82375b74328af440b1db2b91afdef8a02795785aa223844b77f90c9",
+    "docs/evidence/web-operational-readiness/legacy-workspace-core-upgrade-acceptance.mjs": "bf76043c09f9032e69ac34c5aa3a31503a81e0aff437d6e1a16ecf330138afec",
+    "docs/evidence/web-operational-readiness/legacy-workspace-core-upgrade-acceptance.test.mjs": "805a0969927cffcdb048f662d03d1ae3a354dc6cea4fdbf35053de6e8b4a9bbc",
+    "docs/evidence/web-operational-readiness/run-isolated-db-baseline.mjs": "2f7812e7342986cad875b3a422d56642bd17e6f9e8b18cc1d04e398cd3b75008"
+  },
+  "upgrade": {
+    "predecessor": "20260908150000",
+    "forward": "20260908160000",
+    "through": "20260909105519",
+    "publicCatalogExceptBodyPreserved": true,
+    "historicalRowsPreserved": true,
+    "oldReceiptReplayedBeforeCurrentRevisionValidation": true,
+    "explicitCoreReplaysSameReceipt": true,
+    "omittedSiblingAndHistoryPreserved": true,
+    "httpChecks": 23,
+    "directRoleDenials": [
+      {
+        "role": "authenticated",
+        "sqlstate": "42501"
+      },
+      {
+        "role": "anon",
+        "sqlstate": "42501"
+      },
+      {
+        "role": "service_role",
+        "sqlstate": "42501"
+      }
+    ]
+  },
+  "tedit": {
+    "passed": true,
+    "reports": [
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "passed": true,
+        "bounds": {
+          "x": 340,
+          "y": 16,
+          "width": 760,
+          "height": 968
+        },
+        "initialScroll": 700,
+        "nativeModal": true,
+        "keyboardContainment": true,
+        "keyboardReachedLastParagraph": true,
+        "pendingActionKeyboardContained": true,
+        "failedApplyRetained": true,
+        "retryVisible": true,
+        "discardRestoredFocus": true,
+        "failedDiscardRetained": true
+      },
+      {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "passed": true,
+        "bounds": {
+          "x": 19,
+          "y": 16,
+          "width": 352,
+          "height": 812
+        },
+        "initialScroll": 700,
+        "nativeModal": true,
+        "keyboardContainment": true,
+        "keyboardReachedLastParagraph": true,
+        "pendingActionKeyboardContained": true,
+        "failedApplyRetained": true,
+        "retryVisible": true,
+        "discardRestoredFocus": true,
+        "failedDiscardRetained": true
+      }
+    ],
+    "scope": "Actual shared component and CSS in Chromium with synthetic local actions; not app persistence, live provider, CI or production proof."
+  },
+  "chromium": {
+    "startTime": "2026-09-09T12:11:10.166Z",
+    "duration": 79579.712,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "originals": {
+    "passed": true,
+    "count": 16,
+    "dispatches": 0
+  },
+  "profile": {
+    "passed": true,
+    "owners": 2,
+    "scope": "Real local Profile access/details save/reload/new tab and initial-read recovery. Empty resume slots; no browser resume replacement/restore/download proof."
+  },
+  "fullWebGatePassed": true,
+  "disposableCleanupPassed": true,
+  "sourceUnchangedDuringRuns": true,
+  "ci": "Final revision pending",
+  "productionExercised": false,
+  "exportInspected": false,
+  "formatPreservingEditsProven": false
+}

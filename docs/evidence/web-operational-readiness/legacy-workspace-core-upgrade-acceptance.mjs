@@ -1,4 +1,4 @@
-// Exact 79→80 extraction acceptance inside the existing disposable runner.
+// Exact 79→81 upgrade acceptance inside the existing disposable runner.
 // The parent runner owns database identity, start, reset, migration and cleanup.
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -10,6 +10,10 @@ export const coreMigrationFile = "supabase/migrations/20260908160000_legacy_work
 export const coreMigrationSha = "2c1d3624c48f5f6c2abb7adc888515095cff44fb8b27e7b8b345e81db95576d6";
 export const coreTestFile = "supabase/tests/legacy_workspace_core.test.sql";
 export const coreTestSha = "25e4515639774158b963ea788d21afd22a489787686b6869dd9608f65198e982";
+export const sourcePreparationMigrationFile = "supabase/migrations/20260909105519_complete_upload_source_preparation.sql";
+export const sourcePreparationMigrationSha = "05a0fdc8690af10353b9fd8fbcb2e51e1d043fa505d8d4840d57c0b70fa3acc3";
+export const sourcePreparationTestFile = "supabase/tests/upload_source_preparation.test.sql";
+export const sourcePreparationTestSha = "e37d2c66aaf9a636ed38675c7762a4bb93a8304241b80643ff623dedd75a9d39";
 const baselineSha = "ef8bb13849ce210b98fb18b273f4560414880c7f156bc2ce0598152d7ba3a6a3";
 const sha = value => createHash("sha256").update(value).digest("hex");
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;
@@ -41,14 +45,15 @@ export function validateLegacyWorkspaceCoreUpgradePlan(manifest, currentSource, 
   const currentSql = Object.fromEntries(Object.entries(currentSource).filter(([file]) =>
     file.startsWith("supabase/migrations/") || file.startsWith("supabase/tests/")));
   assert.deepEqual(manifest, currentSql, "Workspace core upgrade must exercise all current SQL");
-  const expected = { ...baseline.manifest, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha };
+  const expected = { ...baseline.manifest, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha,
+    [sourcePreparationMigrationFile]: sourcePreparationMigrationSha, [sourcePreparationTestFile]: sourcePreparationTestSha };
   assert.deepEqual(manifest, expected, "Workspace core upgrade requires the exact reviewed SQL manifest");
   const versions = Object.keys(manifest).filter(file => file.startsWith("supabase/migrations/"))
     .map(file => file.split("/").at(-1).slice(0, 14)).sort();
-  assert.equal(versions.length, 80); assert.equal(new Set(versions).size, 80);
-  assert.deepEqual(versions.filter(version => version > baseline.predecessor), ["20260908160000"]);
+  assert.equal(versions.length, 81); assert.equal(new Set(versions).size, 81);
+  assert.deepEqual(versions.filter(version => version > baseline.predecessor), ["20260908160000", "20260909105519"]);
   assert.equal(Object.keys(baseline.manifest).length, 127);
-  return { predecessor: baseline.predecessor, forward: "20260908160000", versions,
+  return { predecessor: baseline.predecessor, forward: "20260908160000", through: "20260909105519", versions,
     prefixManifest: baseline.manifest, manifest: expected, baselineSha,
     migrationFile: coreMigrationFile, migrationSha: coreMigrationSha, testFile: coreTestFile, testSha: coreTestSha };
 }
@@ -57,8 +62,9 @@ export function assertLegacyWorkspaceCorePhase(plan, phase, actualManifest, held
   assert.ok(phase === "full" || phase === "predecessor", "Unknown workspace core SQL phase");
   assert.deepEqual(actualManifest, phase === "full" ? plan.manifest : plan.prefixManifest,
     "Copied SQL differs from the exact workspace core phase");
-  assert.deepEqual(heldSha, phase === "full" ? { migration: null, test: null } :
-    { migration: coreMigrationSha, test: coreTestSha }, "Held workspace core migration/test differs from the exact phase");
+  assert.deepEqual(heldSha, phase === "full" ? { migration: null, test: null, sourceMigration: null, sourceTest: null } :
+    { migration: coreMigrationSha, test: coreTestSha, sourceMigration: sourcePreparationMigrationSha,
+      sourceTest: sourcePreparationTestSha }, "Held workspace core/upload SQL differs from the exact phase");
 }
 
 export function assertWorkspacePublicProperties(before, after) {
@@ -349,7 +355,7 @@ export async function exerciseLegacyWorkspaceCoreUpgrade({ project, workdir, env
     assert.equal(row.accepted_revision, expected.accepted_document_revision); assert.equal(row.result_revision, expected.document_revision);
   }
   save("legacy-workspace-core-upgrade-summary.json", { contract_version: "legacy-workspace-core-upgrade-acceptance.1", project,
-    predecessor: "20260908150000", forward: "20260908160000", owners: users.map(user => user.id),
+    predecessor: "20260908150000", forward: "20260908160000", through: "20260909105519", owners: users.map(user => user.id),
     publicOidPreserved: beforeProperties.oid, publicCatalogExceptBodyPreserved: true, historicalRowsPreserved: true,
     oldReceiptReplayedBeforeCurrentRevisionValidation: true, explicitCoreReplaysSameReceipt: true,
     omittedSiblingAndHistoryPreserved: true, directRoleDenials: direct, independentReceiptRows: receiptRows,

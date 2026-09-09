@@ -1,22 +1,33 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { assertLegacyWorkspaceCorePhase, assertWorkspacePublicProperties, coreMigrationFile, coreMigrationSha,
-  coreTestFile, coreTestSha, validateLegacyWorkspaceCoreUpgradePlan } from "./legacy-workspace-core-upgrade-acceptance.mjs";
+  coreTestFile, coreTestSha, sourcePreparationMigrationFile, sourcePreparationMigrationSha,
+  sourcePreparationTestFile, sourcePreparationTestSha, validateLegacyWorkspaceCoreUpgradePlan } from "./legacy-workspace-core-upgrade-acceptance.mjs";
 
 const bytes = readFileSync(new URL("./legacy-workspace-core-upgrade-sql-baseline.json", import.meta.url));
 const prefix = JSON.parse(bytes).manifest;
-const manifest = { ...prefix, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha };
+const manifest = { ...prefix, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha,
+  [sourcePreparationMigrationFile]: sourcePreparationMigrationSha, [sourcePreparationTestFile]: sourcePreparationTestSha };
 const hash = value => createHash("sha256").update(value).digest("hex");
 
-test("accepts exactly the reviewed 79/48 predecessor and the single core migration/regression", () => {
+test("current release SQL is exercised by the historical workspace upgrade", () => {
+  const live = Object.fromEntries(["supabase/migrations", "supabase/tests"].flatMap(directory =>
+    readdirSync(new URL(`../../../${directory}/`, import.meta.url)).filter(name => name.endsWith(".sql"))
+      .map(name => [`${directory}/${name}`, hash(readFileSync(new URL(`../../../${directory}/${name}`, import.meta.url)))])));
+  const plan = validateLegacyWorkspaceCoreUpgradePlan(live, live);
+  assert.equal(plan.versions.length, 81);
+  assert.deepEqual(plan.manifest, live);
+});
+
+test("accepts exactly the reviewed 79/48 predecessor and the core/upload migration regressions", () => {
   const plan = validateLegacyWorkspaceCoreUpgradePlan(manifest, { ...manifest, "AGENTS.md": "a".repeat(64) });
   assert.equal(plan.predecessor, "20260908150000"); assert.equal(plan.forward, "20260908160000");
-  assert.equal(plan.versions.length, 80); assert.equal(Object.keys(plan.prefixManifest).length, 127);
+  assert.equal(plan.versions.length, 81); assert.equal(Object.keys(plan.prefixManifest).length, 127);
   assert.equal(Object.keys(plan.prefixManifest).filter(file => file.startsWith("supabase/migrations/")).length, 79);
   assert.equal(Object.keys(plan.prefixManifest).filter(file => file.startsWith("supabase/tests/")).length, 48);
-  assert.equal(Object.keys(plan.manifest).length, 129);
+  assert.equal(Object.keys(plan.manifest).length, 131);
   assert.deepEqual(plan.prefixManifest, prefix); assert.deepEqual(plan.manifest, manifest);
 });
 for (const [label, mutate] of [
@@ -31,6 +42,10 @@ for (const [label, mutate] of [
   ["changed forward migration", value => { value[coreMigrationFile] = "a".repeat(64); }],
   ["missing new regression", value => { delete value[coreTestFile]; }],
   ["changed new regression", value => { value[coreTestFile] = "a".repeat(64); }],
+  ["missing upload migration", value => { delete value[sourcePreparationMigrationFile]; }],
+  ["changed upload migration", value => { value[sourcePreparationMigrationFile] = "a".repeat(64); }],
+  ["missing upload regression", value => { delete value[sourcePreparationTestFile]; }],
+  ["changed upload regression", value => { value[sourcePreparationTestFile] = "a".repeat(64); }],
   ["duplicate forward version", value => { value["supabase/migrations/20260908160000_duplicate.sql"] = coreMigrationSha; }],
 ]) test(`rejects ${label} before services`, () => {
   const changed = structuredClone(manifest); mutate(changed);
@@ -44,27 +59,37 @@ test("requires all live SQL and the immutable baseline bytes", () => {
 test("forward migration and regression pins match the reviewed actual source", () => {
   assert.equal(hash(readFileSync(new URL(`../../../${coreMigrationFile}`, import.meta.url))), coreMigrationSha);
   assert.equal(hash(readFileSync(new URL(`../../../${coreTestFile}`, import.meta.url))), coreTestSha);
+  assert.equal(hash(readFileSync(new URL(`../../../${sourcePreparationMigrationFile}`, import.meta.url))), sourcePreparationMigrationSha);
+  assert.equal(hash(readFileSync(new URL(`../../../${sourcePreparationTestFile}`, import.meta.url))), sourcePreparationTestSha);
 });
-test("full phase has every file and neither held file", () => {
-  assertLegacyWorkspaceCorePhase(validateLegacyWorkspaceCoreUpgradePlan(manifest, manifest), "full", manifest, { migration: null, test: null });
+const heldFull = { migration: null, test: null, sourceMigration: null, sourceTest: null };
+const heldPrefix = { migration: coreMigrationSha, test: coreTestSha,
+  sourceMigration: sourcePreparationMigrationSha, sourceTest: sourcePreparationTestSha };
+test("full phase has every file and no held SQL", () => {
+  assertLegacyWorkspaceCorePhase(validateLegacyWorkspaceCoreUpgradePlan(manifest, manifest), "full", manifest, heldFull);
 });
-test("predecessor phase holds exactly the forward migration and its test", () => {
-  assertLegacyWorkspaceCorePhase(validateLegacyWorkspaceCoreUpgradePlan(manifest, manifest), "predecessor", prefix,
-    { migration: coreMigrationSha, test: coreTestSha });
+test("predecessor phase holds exactly both forward migrations and their tests", () => {
+  assertLegacyWorkspaceCorePhase(validateLegacyWorkspaceCoreUpgradePlan(manifest, manifest), "predecessor", prefix, heldPrefix);
 });
 for (const [label, phase, actual, held] of [
-  ["unknown phase", "unknown", manifest, { migration: null, test: null }],
-  ["missing full files", "full", prefix, { migration: null, test: null }],
-  ["extra predecessor files", "predecessor", manifest, { migration: coreMigrationSha, test: coreTestSha }],
-  ["missing held migration", "predecessor", prefix, { migration: null, test: coreTestSha }],
-  ["missing held test", "predecessor", prefix, { migration: coreMigrationSha, test: null }],
-  ["changed held migration", "predecessor", prefix, { migration: "a".repeat(64), test: coreTestSha }],
-  ["changed held test", "predecessor", prefix, { migration: coreMigrationSha, test: "a".repeat(64) }],
-  ["full held migration", "full", manifest, { migration: coreMigrationSha, test: null }],
-  ["full held test", "full", manifest, { migration: null, test: coreTestSha }],
-  ["unknown held file", "predecessor", prefix, { migration: coreMigrationSha, test: coreTestSha, extra: "a".repeat(64) }],
+  ["unknown phase", "unknown", manifest, heldFull],
+  ["missing full files", "full", prefix, heldFull],
+  ["extra predecessor files", "predecessor", manifest, heldPrefix],
+  ["missing held migration", "predecessor", prefix, { ...heldPrefix, migration: null }],
+  ["missing held test", "predecessor", prefix, { ...heldPrefix, test: null }],
+  ["changed held migration", "predecessor", prefix, { ...heldPrefix, migration: "a".repeat(64) }],
+  ["changed held test", "predecessor", prefix, { ...heldPrefix, test: "a".repeat(64) }],
+  ["missing held upload migration", "predecessor", prefix, { ...heldPrefix, sourceMigration: null }],
+  ["missing held upload regression", "predecessor", prefix, { ...heldPrefix, sourceTest: null }],
+  ["changed held upload migration", "predecessor", prefix, { ...heldPrefix, sourceMigration: "a".repeat(64) }],
+  ["changed held upload regression", "predecessor", prefix, { ...heldPrefix, sourceTest: "a".repeat(64) }],
+  ["full held migration", "full", manifest, { ...heldFull, migration: coreMigrationSha }],
+  ["full held test", "full", manifest, { ...heldFull, test: coreTestSha }],
+  ["full held upload migration", "full", manifest, { ...heldFull, sourceMigration: sourcePreparationMigrationSha }],
+  ["full held upload regression", "full", manifest, { ...heldFull, sourceTest: sourcePreparationTestSha }],
+  ["unknown held file", "predecessor", prefix, { ...heldPrefix, extra: "a".repeat(64) }],
   ["changed copied predecessor", "predecessor", { ...prefix, "supabase/tests/legacy_document_audit_binding.test.sql": "a".repeat(64) },
-    { migration: coreMigrationSha, test: coreTestSha }],
+    heldPrefix],
 ]) test(`phase guard rejects ${label}`, () => {
   assert.throws(() => assertLegacyWorkspaceCorePhase(validateLegacyWorkspaceCoreUpgradePlan(manifest, manifest), phase, actual, held));
 });
