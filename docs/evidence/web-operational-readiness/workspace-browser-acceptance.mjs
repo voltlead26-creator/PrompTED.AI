@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, lstatSync 
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
+import { resolveAcceptancePlaywright } from './acceptance-runtime.mjs';
 
 const webOrigin = 'http://127.0.0.1:58323';
 export async function exerciseWorkspaceBrowser({ root, project, workdir, env, evidence, checkTarget, save, anonKey, users, rows }) {
@@ -98,7 +99,7 @@ export async function exerciseWorkspaceBrowser({ root, project, workdir, env, ev
     }
     assert.ok(ready, 'Owned Next server did not become ready');
     assert.equal(serverError, undefined); assert.equal(server.exitCode, null); assert.equal(server.signalCode, null);
-    await command('workspace-browser-tests', 'pnpm', ['exec', 'playwright', 'test', '--config', 'playwright.config.ts'], {
+    await command('workspace-browser-tests', process.execPath, [resolveAcceptancePlaywright(root), 'test', '--config', 'playwright.config.ts'], {
       ...env, PROMPTED_E2E_FIXTURE: fixturePath, PLAYWRIGHT_BROWSERS_PATH: join(root, 'node_modules/.cache/playwright'),
     });
     assert.ok(!overflow); assert.equal(serverError, undefined); assert.equal(server.exitCode, null);

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
+import { createRequire } from "node:module";
+
+// Deno can replace node_modules/.bin/playwright with its own installation.
+// Resolve the CLI through the same root dependency as the browser test imports
+// so test registration and discovery share one Playwright runtime.
+export function resolveAcceptancePlaywright(sourceRoot) {
+  assert.ok(typeof sourceRoot === "string" && isAbsolute(sourceRoot), "Acceptance source root must be absolute");
+  return createRequire(join(sourceRoot, "package.json")).resolve("@playwright/test/cli");
+}
 
 // Runtime selection is separate from admission: the caller still verifies the
 // Git repository/revision, real paths, locked versions, socket and DB identity.

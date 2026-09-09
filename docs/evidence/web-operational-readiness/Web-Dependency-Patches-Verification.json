@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "parentCommit": "4b0238e3aa6fbca7d31b9c24be20fa7978b48ad6",
+  "testedWorkingTreeOverlay": true,
+  "job": "job-mtu1i53f-3bbead8e",
+  "run": "db-20260909115330354-4384f798",
+  "status": "passed",
+  "frozenInstall": true,
+  "productionAudit": "No known vulnerabilities found",
+  "sql": {
+    "files": 50,
+    "assertions": 2643,
+    "result": "PASS"
+  },
+  "web": {
+    "sharedTests": 423,
+    "webTests": 1035,
+    "lint": true,
+    "types": true,
+    "productionBuild": true,
+    "nextVersion": "15.5.24",
+    "pages": 29,
+    "bundleGate": true
+  },
+  "browser": {
+    "startTime": "2026-09-09T11:54:59.952Z",
+    "duration": 79947.20599999999,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "originals": {
+    "passed": true,
+    "count": 16,
+    "hashesIndependentlyChecked": true,
+    "dispatches": 0
+  },
+  "profile": {
+    "passed": true,
+    "owners": 2,
+    "scope": "Real local Profile access/details save/reload/new tab and initial-read recovery. Empty resume slots; no browser resume replacement/restore/download proof."
+  },
+  "runtime": {
+    "checksPassed": true,
+    "executionPassed": true,
+    "cleanupPassed": true
+  },
+  "sourceHashes": {
+    "apps/web/package.json": "c292f6dd70a85426fa9b1f34d5171236b03eef655af57e2767ceb7d63ee213bc",
+    "package.json": "3410d5d48e736cfc9a36f44d1a7aff9d1b104165cd47873c79662976aa4fa1b1",
+    "pnpm-lock.yaml": "6a82899eda3b2abd284e7e2a1a83fc93ceb868544ee3bcdf32e0b513eb628651",
+    "docs/evidence/web-operational-readiness/acceptance-runtime.mjs": "9d7531364e682eec20bae95537987855d0dd8782752a2bf890e08c18e9824ed3",
+    "docs/evidence/web-operational-readiness/acceptance-runtime.test.mjs": "d68e4d9081dcffed82c44676e5eec940cdab2848fed36a40f6a667c741ef44ae",
+    "docs/evidence/web-operational-readiness/workspace-browser-acceptance.mjs": "521b134e8ae7a927fe3491c108e4c3531100800c3e3e6d8ca3c92420193aa54a",
+    "docs/evidence/web-operational-readiness/workspace-upload-browser-acceptance.mjs": "7ae45690ea3266dec48b5ebe2a451b906c3ee726ad63aefdd61e66b3ccc16f3d"
+  },
+  "sourceUnchangedDuringRun": true,
+  "productionExercised": false,
+  "formatPreservingEditsProven": false,
+  "exportInspected": false,
+  "ci": "Final revision pending; 4b0238e historical upgrade preflight failed"
+}

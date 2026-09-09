@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readUploadProbeBody, uploadOrigins as origins, uploadProxyTarget } from './workspace-upload-transport.mjs';
 import { uploadRunDisposition } from './upload-run-disposition.mjs';
+import { resolveAcceptancePlaywright } from './acceptance-runtime.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const literal = text => `'${String(text).replaceAll("'", "''")}'`;
@@ -205,7 +206,7 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
     const web = start('new-upload-next', process.execPath, [join(root, 'apps/web/node_modules/next/dist/bin/next'),
       'start', '--hostname', '127.0.0.1', '--port', '58323'], webEnv, join(root, 'apps/web'));
     await ready(web, `${origins.web}/_next/static/${buildId}/_buildManifest.js`, 200);
-    await command('new-upload-playwright', 'pnpm', ['exec', 'playwright', 'test', '--config', 'tests/e2e/upload.playwright.config.ts'],
+    await command('new-upload-playwright', process.execPath, [resolveAcceptancePlaywright(root), 'test', '--config', 'tests/e2e/upload.playwright.config.ts'],
       { ...env, PROMPTED_UPLOAD_E2E_FIXTURE: privatePaths[1], PLAYWRIGHT_BROWSERS_PATH: join(root, 'node_modules/.cache/playwright') });
     const reports = [];
     const visit = path => { for (const name of readdirSync(path)) {

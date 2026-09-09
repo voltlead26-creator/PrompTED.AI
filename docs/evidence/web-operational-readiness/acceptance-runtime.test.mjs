@@ -1,6 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveAcceptanceRuntime } from "./acceptance-runtime.mjs";
+import { resolveAcceptanceRuntime, resolveAcceptancePlaywright } from "./acceptance-runtime.mjs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
+
+test("browser discovery uses its test package when another runtime replaces the bin launcher", () => {
+  const root = mkdtempSync(join(tmpdir(), "prompted-playwright-resolution-"));
+  try {
+    const dependency = dirname(createRequire(import.meta.url).resolve("@playwright/test/package.json"));
+    mkdirSync(join(root, "node_modules/@playwright"), { recursive: true });
+    mkdirSync(join(root, "node_modules/.bin"));
+    symlinkSync(dependency, join(root, "node_modules/@playwright/test"), "dir");
+    writeFileSync(join(root, "package.json"), '{"private":true}');
+    writeFileSync(join(root, "node_modules/.bin/playwright"), "throw new Error('foreign Playwright runtime');\n");
+    writeFileSync(join(root, "playwright.config.cjs"), "module.exports = { testDir: '.', testMatch: 'discovery.spec.cjs' };\n");
+    writeFileSync(join(root, "discovery.spec.cjs"), "require('@playwright/test').test('owned runtime discovery', () => {});\n");
+    const result = spawnSync(process.execPath, [resolveAcceptancePlaywright(root), "test", "--list",
+      "--config", "playwright.config.cjs"], {
+      cwd: root, encoding: "utf8", timeout: 15000, maxBuffer: 128 * 1024,
+      env: { PATH: dirname(process.execPath), CI: "true", NO_COLOR: "1" },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /owned runtime discovery/);
+    assert.match(result.stdout, /Total: 1 test in 1 file/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 const mac = { platform: "darwin", sourceRoot: "/Users/kaichurchw/PrompTED.AI",
   nodeExecutable: "/opt/homebrew/opt/node@22/bin/node", home: "/Users/kaichurchw",
