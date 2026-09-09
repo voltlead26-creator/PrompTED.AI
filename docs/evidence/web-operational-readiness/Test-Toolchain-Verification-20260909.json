@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "parentCommit": "6b24cecab79ddaf59f21818eb92af6c554b090ab",
+  "jobId": "job-mtu560oq-387137c2",
+  "startedAt": "2026-09-09T13:36:02.098Z",
+  "completedAt": "2026-09-09T13:40:11.151Z",
+  "exitCode": 0,
+  "command": "pnpm install --offline --frozen-lockfile && pnpm audit && pnpm audit --prod && pnpm verify:web && pnpm test:e2e:tedit && pnpm test:e2e:uploads",
+  "files": {
+    "package.json": "79e1f8a6172123a98e5819d7411c6ed55f816d1e67effefb6b45bf94b34b9c54",
+    "apps/web/package.json": "5f195b68097e32265ec0a78376c8908006e04f70a7f9b66caa7172afef6914f4",
+    "packages/shared/package.json": "6f033f0c0fe18ea6b4a7a210a77a404370451dca4acef5f4aead9315d5757496",
+    "pnpm-lock.yaml": "4c36d86cad508d4c5456f300b7d3bd1ede6abb7fd9b9384d4957d9ff330af2e1"
+  },
+  "checks": {
+    "frozenInstall": true,
+    "fullAudit": "no known vulnerabilities",
+    "productionAudit": "no known vulnerabilities",
+    "deploymentTests": 165,
+    "scriptTests": 223,
+    "sharedTests": 423,
+    "webTests": 1035,
+    "lint": true,
+    "sharedTypes": true,
+    "webTypes": true,
+    "build": true,
+    "progressiveBundle": true,
+    "playwright": {
+      "startTime": "2026-09-09T13:38:07.289Z",
+      "duration": 79454.2,
+      "expected": 2,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "uploadedOriginals": 16,
+    "markdownDocuments": 2,
+    "classificationDispatches": 0,
+    "profileIndependentProofs": 2,
+    "teditViewports": 2,
+    "sourcePathsCompared": 922,
+    "sourceDifferences": []
+  },
+  "receipts": [
+    "tedit-browser-20260909133637617/summary.json",
+    "db-20260909133639837-542998c7/summary.json",
+    "db-20260909133639837-542998c7/new-upload-independent-proofs.json",
+    "db-20260909133639837-542998c7/profile-browser-independent-proofs.json"
+  ],
+  "scope": "Local exact dependency overlay, actual web/Chromium, disposable Auth/RPC/Storage; no live-model, hosted, preserving edit or export proof.",
+  "ci": {
+    "parentRun": "https://github.com/voltlead26-creator/PrompTED.AI/actions/runs/34357359359",
+    "parentConclusion": "success",
+    "overlayConclusion": "pending publication"
+  }
+}
