@@ -30,6 +30,8 @@ const FORWARDED_RESPONSE_HEADERS = new Set([
   "content-language",
   "content-type",
   "retry-after",
+  "x-approved-sections",
+  "x-captured-export-id",
   "x-correlation-id",
   "x-request-id",
 ]);

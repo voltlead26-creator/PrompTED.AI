@@ -44,3 +44,6 @@ expo-env.d.ts
 # Supabase CLI local state and generated function-runtime material
 supabase/.branches/
 supabase/.temp/
+
+# Local Docker Desktop virtual disk; never application source or release input.
+/DockerDesktop/Docker.raw
