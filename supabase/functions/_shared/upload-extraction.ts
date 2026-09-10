@@ -18,7 +18,10 @@ import {
 import {
   applyWordXmlSourcePatches,
   captureWordXmlSourcePatches,
+  captureWordXmlSourceUnitValues,
+  deriveWordXmlUnitPatches,
   mapWordXmlSource,
+  mapWordXmlSourceUnits,
   WORD_XML_SOURCE_POLICY,
   type WordXmlSource,
   WordXmlSourceError,
@@ -33,6 +36,8 @@ import {
   type RtfSourceManifest,
   type SourceUploadExtractionResult,
   type SourceUploadExtractionResultV3,
+  WORD_XML_UNIT_POLICY,
+  type WordXmlSourceUnits,
 } from "./document-source-contract.ts";
 import { readRtfText, RtfSourceError } from "./rtf-source.ts";
 import { BoundedRtfError } from "./bounded-rtf.ts";
@@ -756,6 +761,132 @@ export interface DocxSourceCandidate {
   readonly originalArchiveSha256: string;
   readonly bytes: Uint8Array;
   readonly manifest: DocxSourceManifest;
+}
+
+export const DOCX_SOURCE_UNITS_VERSION = "docx-source-units.1" as const;
+
+/** Original source metadata only; current wording still belongs to sections. */
+export interface DocxSourceUnits {
+  readonly version: typeof DOCX_SOURCE_UNITS_VERSION;
+  readonly assessment: "source_only";
+  readonly blockers: readonly string[];
+  readonly manifest: DocxSourceManifest;
+  readonly mainPartUnits: WordXmlSourceUnits;
+}
+
+function sourceUnitDeadline(deadline: number): number {
+  if (!Number.isFinite(deadline)) throw new WordXmlSourceError("invalid_patch");
+  return Math.min(deadline, Date.now() + PARSER_DEADLINE_MS);
+}
+
+async function inspectOwnedDocxSourceUnits(
+  owned: Uint8Array,
+  signal: AbortSignal | undefined,
+  deadline: number,
+): Promise<{ projection: DocxSourceUnits; main: Uint8Array }> {
+  const resolved = await resolveOwnedUpload(
+    owned,
+    "source.docx",
+    "",
+    signal,
+    deadline,
+    true,
+  );
+  if (resolved.format !== "docx") {
+    throw new WordXmlSourceError("unsupported_edit");
+  }
+  const manifest = await assembleDocxSource(
+    owned,
+    resolved.archive,
+    signal,
+    deadline,
+  );
+  const main = resolved.archive.selectedContents.get("word/document.xml")!;
+  const mainPartUnits = await mapWordXmlSourceUnits(main, { signal, deadline });
+  assertParserWork(signal, deadline);
+  return {
+    main,
+    projection: Object.freeze({
+      version: DOCX_SOURCE_UNITS_VERSION,
+      assessment: "source_only",
+      blockers: docxSourceBlockers([], [
+        ...manifest.blockers,
+        ...mainPartUnits.blockers,
+      ]),
+      manifest,
+      mainPartUnits,
+    }),
+  };
+}
+
+/** Derive the archive identity and exact run/paragraph roster from one copy. */
+export async function inspectDocxSourceUnits(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+  deadline = Date.now() + PARSER_DEADLINE_MS,
+): Promise<DocxSourceUnits> {
+  const boundedDeadline = sourceUnitDeadline(deadline);
+  const owned = copyUploadBytes(bytes, signal, boundedDeadline);
+  const { projection } = await inspectOwnedDocxSourceUnits(
+    owned,
+    signal,
+    boundedDeadline,
+  );
+  assertParserWork(signal, boundedDeadline);
+  return projection;
+}
+
+/**
+ * Compile a COMPLETE current literal roster against the whole owned original.
+ * No caller XML, offsets, styles, extracted preview or patch plan is trusted.
+ * This remains source-only: it grants no save, approval or export authority.
+ */
+export async function compileDocxSourceUnitCandidate(
+  bytes: Uint8Array,
+  request: unknown,
+  signal?: AbortSignal,
+  deadline = Date.now() + PARSER_DEADLINE_MS,
+): Promise<DocxSourceCandidate> {
+  const boundedDeadline = sourceUnitDeadline(deadline);
+  const owned = copyUploadBytes(bytes, signal, boundedDeadline);
+  if (
+    request === null || typeof request !== "object" || Array.isArray(request) ||
+    Object.keys(request).length !== 3 ||
+    !Object.hasOwn(request, "version") ||
+    !Object.hasOwn(request, "archiveSha256") ||
+    !Object.hasOwn(request, "units") || !("version" in request) ||
+    request.version !== DOCX_SOURCE_UNITS_VERSION ||
+    !("archiveSha256" in request) ||
+    typeof request.archiveSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(request.archiveSha256) || !("units" in request)
+  ) throw new WordXmlSourceError("invalid_patch");
+  const archiveSha256 = request.archiveSha256;
+  const units = captureWordXmlSourceUnitValues(request.units);
+  const { projection, main } = await inspectOwnedDocxSourceUnits(
+    owned,
+    signal,
+    boundedDeadline,
+  );
+  if (projection.manifest.archiveSha256 !== archiveSha256) {
+    throw new WordXmlSourceError("identity_mismatch");
+  }
+  const plan = await deriveWordXmlUnitPatches(main, {
+    version: WORD_XML_UNIT_POLICY.version,
+    originalSha256: projection.mainPartUnits.source.originalSha256,
+    units,
+  }, { signal, deadline: boundedDeadline });
+  const candidate = await compileDocxSourceCandidate(
+    owned,
+    {
+      version: DOCX_SOURCE_CANDIDATE_VERSION,
+      archiveSha256,
+      patches: plan.patches,
+    },
+    signal,
+    boundedDeadline,
+  );
+  assertParserWork(signal, boundedDeadline);
+  return candidate;
 }
 
 /**

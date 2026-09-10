@@ -7,11 +7,14 @@ import {
 } from "jsr:@std/assert@1";
 import {
   compileDocxSourceCandidate,
+  compileDocxSourceUnitCandidate,
   DOCX_SOURCE_CANDIDATE_VERSION,
   DOCX_SOURCE_POLICY,
+  DOCX_SOURCE_UNITS_VERSION,
   extractBoundedUploadText,
   extractBoundedUploadWithSource,
   inspectDocxSource,
+  inspectDocxSourceUnits,
   MAX_TEXT_UPLOAD_BYTES,
   MAX_UPLOAD_BYTES,
   resolveUploadFormat,
@@ -319,6 +322,385 @@ Deno.test("DOCX current source unit roster retains an earlier edit when a second
     WordXmlSourceError,
     "IDENTITY_MISMATCH",
   );
+});
+
+Deno.test("DOCX archive source units are derived from the same owned package as their manifest", async () => {
+  assert(
+    "inspectDocxSourceUnits" in uploadExtraction &&
+      typeof uploadExtraction.inspectDocxSourceUnits === "function",
+    "The server needs a whole-DOCX source-unit projection; callers must not supply extracted XML or node mappings.",
+  );
+  const original = storedZip(sourceDocxEntries(
+    "First</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>Second",
+  ));
+  const result = await inspectDocxSourceUnits(original);
+  assertEquals(
+    result.manifest,
+    await inspectDocxSource(original, "source.docx", ""),
+  );
+  assertEquals(result.mainPartUnits.source, result.manifest.mainPart.source);
+  assertEquals(result.mainPartUnits.units.map((unit) => unit.content), [
+    "First",
+    "Second",
+  ]);
+  assertEquals(result.mainPartUnits.paragraphs, [{
+    id: "p:1",
+    unitIds: ["t:1", "t:2"],
+  }]);
+  assertEquals(result.version, DOCX_SOURCE_UNITS_VERSION);
+  assertEquals(result.assessment, "source_only");
+  assertEquals(result.blockers, result.manifest.blockers);
+  for (
+    const value of [
+      result,
+      result.blockers,
+      result.manifest,
+      result.mainPartUnits,
+      result.mainPartUnits.units,
+      ...result.mainPartUnits.units,
+    ]
+  ) {
+    assert(Object.isFrozen(value));
+  }
+});
+
+Deno.test("DOCX archive source units compile the complete current roster against the exact original", async () => {
+  assert(
+    "compileDocxSourceUnitCandidate" in uploadExtraction &&
+      typeof uploadExtraction.compileDocxSourceUnitCandidate === "function",
+    "The compiler needs the whole archive identity and complete current source-unit roster, not independently supplied XML patches.",
+  );
+  const original = storedZip(sourceDocxEntries(
+    "First</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>Second</w:t></w:r><w:r><w:t>Third",
+  ));
+  const result = await compileDocxSourceUnitCandidate(original, {
+    version: "docx-source-units.1",
+    archiveSha256: await sha256(original),
+    units: [
+      { nodeId: "t:1", content: "Previously saved first edit" },
+      { nodeId: "t:2", content: "New second edit" },
+      { nodeId: "t:3", content: "Third" },
+    ],
+  });
+  assertEquals(result.manifest.mainPart.source.nodes.map((node) => node.text), [
+    "Previously saved first edit",
+    "New second edit",
+    "Third",
+  ]);
+  assertEquals(result.originalArchiveSha256, await sha256(original));
+  assertEquals(result.manifest.assessment, "source_only");
+});
+
+async function sourceUnitRequest(bytes: Uint8Array) {
+  const original = await inspectDocxSourceUnits(bytes);
+  return {
+    version: DOCX_SOURCE_UNITS_VERSION,
+    archiveSha256: original.manifest.archiveSha256,
+    units: original.mainPartUnits.units.map(({ nodeId, content }) => ({
+      nodeId,
+      content,
+    })),
+  };
+}
+
+Deno.test("DOCX archive source units reject another archive with identical text but different styles", async () => {
+  const left = storedZip(
+    sourceDocxEntries("Same wording", [{
+      name: "word/styles.xml",
+      data: encoder.encode("<styles>left</styles>"),
+    }]),
+  );
+  const right = storedZip(
+    sourceDocxEntries("Same wording", [{
+      name: "word/styles.xml",
+      data: encoder.encode("<styles>right</styles>"),
+    }]),
+  );
+  const request = await sourceUnitRequest(left);
+  request.units[0]!.content = "Changed wording";
+  await assertRejects(
+    () => compileDocxSourceUnitCandidate(right, request),
+    WordXmlSourceError,
+    "IDENTITY_MISMATCH",
+  );
+  // A main XML hash is not the whole package identity.
+  const projection = await inspectDocxSourceUnits(left);
+  await assertRejects(
+    () =>
+      compileDocxSourceUnitCandidate(left, {
+        ...request,
+        archiveSha256: projection.manifest.mainPart.source.originalSha256,
+      }),
+    WordXmlSourceError,
+    "IDENTITY_MISMATCH",
+  );
+});
+
+Deno.test("DOCX archive source units reject partial, reordered, duplicate, unknown and caller-authored maps", async () => {
+  const original = storedZip(
+    sourceDocxEntries("First</w:t></w:r><w:r><w:t>Second"),
+  );
+  const request = await sourceUnitRequest(original);
+  for (
+    const units of [[], request.units.slice(1), [...request.units].reverse(), [{
+      nodeId: "t:3",
+      content: "Forged",
+    }, request.units[1]]]
+  ) {
+    await assertRejects(
+      () => compileDocxSourceUnitCandidate(original, { ...request, units }),
+      WordXmlSourceError,
+      "IDENTITY_MISMATCH",
+    );
+  }
+  for (
+    const value of [
+      null,
+      [],
+      {},
+      { ...request, version: "word-xml-units.1" },
+      { ...request, archiveSha256: "A".repeat(64) },
+      { ...request, units: null },
+      { ...request, units: [request.units[0], request.units[0]] },
+      { ...request, units: [{ ...request.units[0], paragraphId: "p:2" }] },
+      { ...request, units: [{ nodeId: "t:1", content: 42 }] },
+      { ...request, main: "caller XML" },
+      { ...request, patches: [] },
+    ]
+  ) {
+    await assertRejects(
+      () => compileDocxSourceUnitCandidate(original, value),
+      WordXmlSourceError,
+      "INVALID_PATCH",
+    );
+  }
+});
+
+Deno.test("DOCX archive source units preserve literal wording, exact no-op bytes and deterministic replay", async () => {
+  const entries = sourceDocxEntries("Original wording");
+  const main = entries[2]!;
+  const compressedData = await deflateRaw(main.data!);
+  const original = storedZip(
+    entries.map((entry) =>
+      entry === main ? { ...entry, method: 8, compressedData } : entry
+    ),
+  );
+  const request = await sourceUnitRequest(original);
+  const noOp = await compileDocxSourceUnitCandidate(original, request);
+  assertEquals(noOp.bytes, original);
+  const literal =
+    "<b>owner wording</b> & cafe\u0301 📝 [[TED:unchanged literal]]";
+  request.units[0]!.content = literal;
+  const changed = await compileDocxSourceUnitCandidate(original, request);
+  assertEquals(changed.manifest.mainPart.source.nodes[0]!.text, literal);
+  assertEquals(
+    (await compileDocxSourceUnitCandidate(original, request)).bytes,
+    changed.bytes,
+  );
+  assertEquals(changed.manifest.blockers, noOp.manifest.blockers);
+  for (const text of [" padded ", "line\nbreak", "null\0byte"]) {
+    await assertRejects(
+      () =>
+        compileDocxSourceUnitCandidate(original, {
+          ...request,
+          units: [{ nodeId: "t:1", content: text }],
+        }),
+      WordXmlSourceError,
+    );
+  }
+});
+
+Deno.test("DOCX archive source units capture source and current wording before asynchronous inspection", async () => {
+  const original = storedZip(sourceDocxEntries("Original wording"));
+  const immutable = Uint8Array.from(original);
+  const request = await sourceUnitRequest(original);
+  request.units[0]!.content = "Accepted wording";
+  const pending = compileDocxSourceUnitCandidate(original, request);
+  original.fill(0);
+  request.archiveSha256 = "0".repeat(64);
+  request.units[0]!.content = "Late replacement";
+  request.units.push({ nodeId: "t:2", content: "Late injection" });
+  const result = await pending;
+  assertEquals(result.originalArchiveSha256, await sha256(immutable));
+  assertEquals(result.manifest.mainPart.source.nodes.map((node) => node.text), [
+    "Accepted wording",
+  ]);
+  const readable = Uint8Array.from(immutable);
+  const projection = inspectDocxSourceUnits(readable);
+  readable.fill(0);
+  assertEquals(
+    (await projection).manifest.archiveSha256,
+    await sha256(immutable),
+  );
+  for (
+    const inspect of [
+      () => inspectDocxSourceUnits(new Uint8Array(new SharedArrayBuffer(8))),
+      () =>
+        compileDocxSourceUnitCandidate(
+          new Uint8Array(new SharedArrayBuffer(8)),
+          request,
+        ),
+    ]
+  ) {
+    await assertRejects(inspect, UploadExtractionError);
+  }
+});
+
+Deno.test("DOCX archive source units retain observed blockers and reject changed unmapped structure", async () => {
+  for (
+    const original of [
+      storedZip(sourceDocxEntries("Original</w:t><w:tab/><w:t>wording")),
+      storedZip(
+        sourceDocxEntries("Original wording", [{
+          name: "word/header1.xml",
+          data: encoder.encode("<header>retained</header>"),
+        }]),
+      ),
+    ]
+  ) {
+    const projection = await inspectDocxSourceUnits(original);
+    assert(
+      projection.blockers.some((blocker) =>
+        ["wording_controls_unmapped", "non_main_wording_unmapped"].includes(
+          blocker,
+        )
+      ),
+    );
+    const request = await sourceUnitRequest(original);
+    request.units[0]!.content = "Changed wording";
+    await assertRejects(
+      () => compileDocxSourceUnitCandidate(original, request),
+      WordXmlSourceError,
+      "UNSUPPORTED_EDIT",
+    );
+  }
+});
+
+Deno.test("DOCX archive source units enforce existing unit and aggregate content bounds", async () => {
+  const original = storedZip(sourceDocxEntries("Original wording"));
+  const request = await sourceUnitRequest(original);
+  for (
+    const units of [
+      [{ nodeId: "t:1", content: "x".repeat(20_001) }],
+      Array.from(
+        { length: 513 },
+        (_, index) => ({ nodeId: `t:${index + 1}`, content: "x" }),
+      ),
+      Array.from(
+        { length: 53 },
+        (_, index) => ({
+          nodeId: `t:${index + 1}`,
+          content: "x".repeat(20_000),
+        }),
+      ),
+    ]
+  ) {
+    await assertRejects(
+      () => compileDocxSourceUnitCandidate(original, { ...request, units }),
+      WordXmlSourceError,
+      "RESOURCE_LIMIT",
+    );
+  }
+});
+
+Deno.test("DOCX archive source units reject cancellation and invalid deadlines before publishing a candidate", async () => {
+  const original = storedZip(sourceDocxEntries("Original wording"));
+  const request = await sourceUnitRequest(original);
+  request.units[0]!.content = "Changed wording";
+  for (
+    const work of [
+      (signal?: AbortSignal, deadline?: number) =>
+        inspectDocxSourceUnits(original, signal, deadline),
+      (signal?: AbortSignal, deadline?: number) =>
+        compileDocxSourceUnitCandidate(original, request, signal, deadline),
+    ]
+  ) {
+    const pre = new AbortController();
+    pre.abort();
+    await assertRejects(
+      () => work(pre.signal),
+      UploadExtractionError,
+      "RESOURCE_UNAVAILABLE",
+    );
+    const mid = new AbortController();
+    const pending = work(mid.signal);
+    mid.abort();
+    await assertRejects(
+      () => pending,
+      UploadExtractionError,
+      "RESOURCE_UNAVAILABLE",
+    );
+    await assertRejects(
+      () => work(undefined, Date.now() - 1),
+      UploadExtractionError,
+      "RESOURCE_UNAVAILABLE",
+    );
+    for (const deadline of [NaN, Infinity, -Infinity]) {
+      await assertRejects(
+        () => work(undefined, deadline),
+        WordXmlSourceError,
+        "INVALID_PATCH",
+      );
+    }
+  }
+  assertEquals(
+    (await inspectDocxSourceUnits(original)).manifest.archiveSha256,
+    await sha256(original),
+  );
+});
+
+Deno.test("DOCX archive source units share one deadline and cancellation fence through final candidate inspection", async () => {
+  const original = storedZip(sourceDocxEntries("Original wording"));
+  const request = await sourceUnitRequest(original);
+  request.units[0]!.content = "Longer changed wording";
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  const descriptor = Object.getOwnPropertyDescriptor(crypto.subtle, "digest");
+  const now = Date.now;
+  try {
+    for (const failure of ["abort", "deadline"] as const) {
+      const controller = new AbortController();
+      const started = now();
+      let triggered = false;
+      Date.now = () => started;
+      Object.defineProperty(crypto.subtle, "digest", {
+        configurable: true,
+        value: async (algorithm: AlgorithmIdentifier, input: BufferSource) => {
+          const bytes = ArrayBuffer.isView(input)
+            ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+            : new Uint8Array(input);
+          const result = await digest(algorithm, input);
+          if (
+            bytes[0] === 0x50 && bytes[1] === 0x4b &&
+            bytes.length !== original.length
+          ) {
+            triggered = true;
+            if (failure === "abort") controller.abort();
+            else Date.now = () => started + 20_000;
+          }
+          return result;
+        },
+      });
+      await assertRejects(
+        () =>
+          compileDocxSourceUnitCandidate(
+            original,
+            request,
+            controller.signal,
+            started + 60_000,
+          ),
+        UploadExtractionError,
+        "RESOURCE_UNAVAILABLE",
+      );
+      assert(
+        triggered,
+        "Fault must occur while inspecting the generated archive, after projection and patch derivation.",
+      );
+    }
+  } finally {
+    Date.now = now;
+    if (descriptor) Object.defineProperty(crypto.subtle, "digest", descriptor);
+    else Reflect.deleteProperty(crypto.subtle, "digest");
+  }
 });
 
 Deno.test("DOCX candidate preserves exact ZIP records with compression, reversed directory, gaps, comments and main positions", async (test) => {

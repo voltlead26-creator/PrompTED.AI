@@ -465,27 +465,8 @@ export async function deriveWordXmlUnitPatches(
     !/^[a-f0-9]{64}$/.test(request.originalSha256) ||
     !Array.isArray(request.units)
   ) fail("invalid_patch");
-  if (request.units.length > WORD_XML_UNIT_POLICY.maxUnits) {
-    fail("resource_limit");
-  }
   const originalSha256 = request.originalSha256;
-  const seen = new Set<string>();
-  let total = 0;
-  const units = request.units.map((unit) => {
-    if (
-      !exactObject(unit, ["nodeId", "content"]) ||
-      typeof unit.nodeId !== "string" ||
-      !/^t:[1-9]\d{0,4}$/.test(unit.nodeId) ||
-      typeof unit.content !== "string" || seen.has(unit.nodeId)
-    ) fail("invalid_patch");
-    seen.add(unit.nodeId);
-    total += unit.content.length;
-    if (
-      unit.content.length > WORD_XML_UNIT_POLICY.maxContentChars ||
-      total > WORD_XML_UNIT_POLICY.maxTotalContentChars
-    ) fail("resource_limit");
-    return { nodeId: unit.nodeId, content: unit.content };
-  });
+  const units = captureWordXmlSourceUnitValues(request.units);
   const original = await mapWordXmlSourceUnits(owned, observation);
   checkActive(observation);
   if (
@@ -527,6 +508,33 @@ export async function deriveWordXmlUnitPatches(
   await applyWordXmlSourcePatches(owned, plan, observation);
   checkActive(observation);
   return plan;
+}
+
+/** Own the complete literal roster before an archive reader can yield. */
+export function captureWordXmlSourceUnitValues(
+  value: unknown,
+): readonly { readonly nodeId: string; readonly content: string }[] {
+  if (!Array.isArray(value)) fail("invalid_patch");
+  if (value.length > WORD_XML_UNIT_POLICY.maxUnits) {
+    fail("resource_limit");
+  }
+  const seen = new Set<string>();
+  let total = 0;
+  return Object.freeze(value.map((unit) => {
+    if (
+      !exactObject(unit, ["nodeId", "content"]) ||
+      typeof unit.nodeId !== "string" ||
+      !/^t:[1-9]\d{0,4}$/.test(unit.nodeId) ||
+      typeof unit.content !== "string" || seen.has(unit.nodeId)
+    ) fail("invalid_patch");
+    seen.add(unit.nodeId);
+    total += unit.content.length;
+    if (
+      unit.content.length > WORD_XML_UNIT_POLICY.maxContentChars ||
+      total > WORD_XML_UNIT_POLICY.maxTotalContentChars
+    ) fail("resource_limit");
+    return Object.freeze({ nodeId: unit.nodeId, content: unit.content });
+  }));
 }
 
 export interface WordXmlSourcePatch {
