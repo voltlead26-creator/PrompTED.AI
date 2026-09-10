@@ -108,6 +108,91 @@ describe("MasterWorkspaceImport", () => {
     expect(mocks.push).toHaveBeenCalledWith(expect.stringMatching(/^\/outcomes\//));
   });
 
+  it("resumes section review from an owned retained text upload without reuploading", async () => {
+    auth.loading = false; auth.user = { id: "user-1" }; recordBrowserPrincipal("user-1");
+    const uploadId = "95071240-0000-8000-8000-000000000011";
+    mocks.getWorkspaceUpload.mockResolvedValue({
+      upload_id: uploadId, file_name: "Saved.md", mime_type: "text/markdown",
+      status: "ready", ingest_status: "completed", format: "text",
+      original: { storage_path: `user-1/${uploadId}/Saved.md` }, imported_document: null,
+      preview: { text: "# Experience\n\nManaged daily workspace operations.", truncated: false },
+    });
+    render(<MasterWorkspaceImport initialUploadId={uploadId} />);
+    await screen.findByRole("region", { name: "Review imported document" });
+    expect(mocks.getWorkspaceUpload).toHaveBeenCalledWith(uploadId, expect.objectContaining({ expectedUserId: "user-1" }));
+    expect(mocks.prepareUploadSource).not.toHaveBeenCalled();
+    expect(mocks.classifiedIngest).not.toHaveBeenCalled();
+    expect(mocks.commitDocumentImport).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Create workspace" }));
+    await waitFor(() => expect(mocks.commitDocumentImport).toHaveBeenCalledTimes(1));
+    expect(mocks.commitDocumentImport.mock.calls[0]?.[0]).toMatchObject({ uploadId, title: "Saved" });
+    expect(mocks.push).toHaveBeenCalledWith(expect.stringMatching(/^\/outcomes\//));
+  });
+
+  it.each([
+    { format: "pdf" }, { format: "docx" }, { format: "rtf" }, { format: "xlsx" }, { format: null },
+    { ingest_status: "failed" }, { status: "processing" }, { original: null },
+    { preview: { text: "Partial source", truncated: true } },
+    { preview: { text: "Unknown completeness", truncated: null } },
+  ])("does not turn an ineligible retained source into editable sections: %j", async (override) => {
+    auth.loading = false; auth.user = { id: "user-1" }; recordBrowserPrincipal("user-1");
+    const uploadId = "95071240-0000-8000-8000-000000000011";
+    mocks.getWorkspaceUpload.mockResolvedValue({
+      upload_id: uploadId, file_name: "Saved.md", mime_type: "text/markdown",
+      status: "ready", ingest_status: "completed", format: "text",
+      original: { storage_path: "retained source" }, imported_document: null,
+      preview: { text: "Complete source wording", truncated: false }, ...override,
+    });
+    render(<MasterWorkspaceImport initialUploadId={uploadId} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("not available as complete text");
+    expect(screen.queryByRole("region", { name: "Review imported document" })).not.toBeInTheDocument();
+    expect(mocks.commitDocumentImport).not.toHaveBeenCalled();
+    expect(mocks.prepareUploadSource).not.toHaveBeenCalled();
+  });
+
+  it("recovers a saved-upload read failure and opens an already committed destination without creating another", async () => {
+    auth.loading = false; auth.user = { id: "user-1" }; recordBrowserPrincipal("user-1");
+    const uploadId = "95071240-0000-8000-8000-000000000011";
+    mocks.getWorkspaceUpload.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({
+      imported_document: { outcome_id: "saved-outcome", document_id: "saved-document" },
+    });
+    render(<MasterWorkspaceImport initialUploadId={uploadId} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("saved upload could not be loaded");
+    await userEvent.click(screen.getByRole("button", { name: "Retry saved upload" }));
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/outcomes/saved-outcome"));
+    expect(mocks.commitDocumentImport).not.toHaveBeenCalled();
+    expect(mocks.prepareUploadSource).not.toHaveBeenCalled();
+  });
+
+  it("discards a retained source that arrives after owner change", async () => {
+    auth.loading = false; auth.user = { id: "user-1" }; recordBrowserPrincipal("user-1");
+    let resolve!: (value: unknown) => void;
+    mocks.getWorkspaceUpload.mockReturnValueOnce(new Promise((done) => { resolve = done; })).mockResolvedValue(null);
+    const uploadId = "95071240-0000-8000-8000-000000000011";
+    const view = render(<MasterWorkspaceImport initialUploadId={uploadId} />);
+    auth.user = { id: "user-2" }; recordBrowserPrincipal("user-2");
+    view.rerender(<MasterWorkspaceImport initialUploadId={uploadId} />);
+    await screen.findByRole("alert");
+    await act(async () => resolve({ imported_document: { outcome_id: "old-owner-outcome" } }));
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "Review imported document" })).not.toBeInTheDocument();
+  });
+
+  it("bounds a saved-upload read and discards a late response after its timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      auth.loading = false; auth.user = { id: "user-1" }; recordBrowserPrincipal("user-1");
+      let resolve!: (value: unknown) => void;
+      mocks.getWorkspaceUpload.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+      render(<MasterWorkspaceImport initialUploadId="95071240-0000-8000-8000-000000000011" />);
+      await act(async () => vi.advanceTimersByTimeAsync(30_000));
+      expect(screen.getByRole("alert")).toHaveTextContent("took too long to load");
+      expect(screen.getByRole("button", { name: "Retry saved upload" })).toBeEnabled();
+      await act(async () => resolve({ imported_document: { outcome_id: "late-outcome" } }));
+      expect(mocks.push).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("prepares a source for owner review without depending on classified ingestion", async () => {
     auth.loading = false;
     auth.user = { id: "user-1" };

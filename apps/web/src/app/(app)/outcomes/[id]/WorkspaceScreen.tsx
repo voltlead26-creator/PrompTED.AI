@@ -31,6 +31,7 @@ import { ContextIssue } from "@/components/molecules/ContextIssue";
 import { MissingInfoIssue } from "@/components/molecules/MissingInfoIssue";
 import { OptionalPanelBoundary } from "@/components/molecules/OptionalPanelBoundary";
 import { WorkspacePane } from "@/components/organisms/WorkspacePane";
+import { WorkspaceRecoveryReview } from "@/components/organisms/WorkspaceRecoveryReview";
 import type { ProofreadPanelHandle } from "@/components/organisms/ProofreadPanel";
 import { DraftingIndicator } from "@/components/organisms/DraftingIndicator";
 import { WorkflowTruth } from "@/components/organisms/WorkflowTruth";
@@ -747,13 +748,19 @@ function WorkspaceLoaded({
                     ? "Saved in this tab; account save needs attention"
                     : "Keep this page open"
               }
-              message={
+              message={[
                 workspace.deviceSaveStatus === "quota_exceeded"
-                  ? `Browser storage is full. ${workspace.syncStatus === "saved" ? "This version is saved to your account." : "Keep this page open and try saving again."}`
+                  ? "Browser storage is full."
                   : workspace.deviceSaveStatus === "unavailable"
-                    ? `PrompTED could not create a browser recovery copy. ${workspace.syncStatus === "saved" ? "This version is saved to your account." : "Keep this page open and try saving again."}`
-                    : "PrompTED could not save the latest changes to your account. Try saving again."
-              }
+                    ? "PrompTED could not create a browser recovery copy."
+                    : null,
+                workspace.syncStatus === "saved"
+                  ? "This version is saved to your account."
+                  : workspace.syncStatus === "failed"
+                    ? "PrompTED could not confirm that the latest changes are saved to your account."
+                    : "The latest changes are not yet confirmed as saved to your account.",
+                workspace.syncStatus !== "saved" ? "Keep this page open and try saving again." : null,
+              ].filter(Boolean).join(" ")}
               actionLabel="Try saving again"
               onAction={workspace.retrySync}
             />
@@ -816,7 +823,15 @@ function WorkspaceLoaded({
         </div>
       </header>
 
-      {showTour ? (
+      {workspace.browserRecovery && <WorkspaceRecoveryReview
+        key={`${workspace.documentId}:${workspace.currentRevision}`}
+        review={workspace.browserRecovery}
+        onRestore={workspace.restoreBrowserRecovery}
+        onKeepSaved={workspace.discardBrowserRecovery}
+        onCancel={workspace.cancelBrowserRecovery}
+      />}
+
+      {showTour && !workspace.browserRecovery ? (
         <OptionalPanelBoundary label="Guided tour">
           <GuidedTour
             tourId="workspace-v2"

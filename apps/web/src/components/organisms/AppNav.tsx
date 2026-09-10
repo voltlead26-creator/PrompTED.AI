@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { Icon } from "@/components/atoms/Icon";
 import { PROTECTED_NAV_ITEMS, isProtectedNavItemActive } from "@/lib/app-navigation";
 import styles from "./AppNav.module.css";
@@ -19,6 +20,46 @@ interface AppNavProps {
 
 export function AppNav({ mobileOpen = false, onClose = () => undefined }: AppNavProps) {
   const pathname = usePathname();
+  const createMenuRef = useRef<HTMLDetailsElement>(null);
+
+  function closeCreate() {
+    if (createMenuRef.current) createMenuRef.current.open = false;
+  }
+
+  function closeNavigation() {
+    closeCreate();
+    onClose();
+  }
+
+  useEffect(() => {
+    closeCreate();
+  }, [pathname, mobileOpen]);
+
+  useEffect(() => {
+    const dismissOutside = (event: Event) => {
+      const menu = createMenuRef.current;
+      if (menu?.open && event.target instanceof Node && !menu.contains(event.target)) {
+        menu.open = false;
+      }
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      const menu = createMenuRef.current;
+      if (event.key !== "Escape" || !menu?.open) return;
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+      event.preventDefault();
+      // Let the first Escape dismiss Create before the enclosing mobile drawer.
+      event.stopPropagation();
+    };
+    document.addEventListener("pointerdown", dismissOutside, true);
+    document.addEventListener("focusin", dismissOutside, true);
+    document.addEventListener("keydown", dismissOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside, true);
+      document.removeEventListener("focusin", dismissOutside, true);
+      document.removeEventListener("keydown", dismissOnEscape);
+    };
+  }, []);
 
   return (
     <>
@@ -26,7 +67,7 @@ export function AppNav({ mobileOpen = false, onClose = () => undefined }: AppNav
         <button
           type="button"
           className={styles.backdrop}
-          onClick={onClose}
+          onClick={closeNavigation}
           aria-label="Close navigation"
           tabIndex={-1}
         />
@@ -41,7 +82,7 @@ export function AppNav({ mobileOpen = false, onClose = () => undefined }: AppNav
           <button
             type="button"
             className={styles.closeButton}
-            onClick={onClose}
+            onClick={closeNavigation}
             aria-label="Close navigation"
           >
             <Icon name="x" size={20} />
@@ -57,7 +98,7 @@ export function AppNav({ mobileOpen = false, onClose = () => undefined }: AppNav
                   href={item.href}
                   className={`${styles.link}${active ? ` ${styles.active}` : ""}`}
                   aria-current={active ? "page" : undefined}
-                  onClick={onClose}
+                  onClick={closeNavigation}
                   title={item.label}
                 >
                   <span className={styles.icon} aria-hidden="true">
@@ -71,7 +112,7 @@ export function AppNav({ mobileOpen = false, onClose = () => undefined }: AppNav
         </ul>
 
         <div className={styles.createArea}>
-          <details className={styles.createMenu}>
+          <details ref={createMenuRef} className={styles.createMenu}>
             <summary className={styles.createSummary}>
               <span className={styles.icon} aria-hidden="true">
                 <Icon name="plus" size={20} />
@@ -84,7 +125,7 @@ export function AppNav({ mobileOpen = false, onClose = () => undefined }: AppNav
                   key={`${href}-${label}`}
                   href={href}
                   className={styles.createLink}
-                  onClick={onClose}
+                  onClick={closeNavigation}
                 >
                   <Icon name={icon} size={18} />
                   <span>{label}</span>

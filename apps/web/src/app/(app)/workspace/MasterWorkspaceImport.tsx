@@ -17,6 +17,7 @@ import {
   UPLOAD_ACCEPT_ATTRIBUTE_V2 as ACCEPT_ATTRIBUTE,
   UPLOAD_REQUIREMENT_V2 as UPLOAD_REQUIREMENT,
   UPLOAD_RESOURCE_POLICY_VERSION_V2,
+  isWorkspaceUploadId,
 } from "@prompted/shared/ingest-upload";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -25,6 +26,7 @@ import { ensureApiConfigured } from "@/lib/api";
 import {
   captureOwnerDispatch,
   ownerDispatchIsCurrent,
+  withOwnerDispatchSignal,
   type OwnerDispatchLease,
 } from "@/lib/browser-principal-state";
 import { commitDocumentImport, getWorkspaceUpload, type CommitDocumentImportResult } from "@/lib/api/import-workspace";
@@ -32,6 +34,7 @@ import { savePendingOutcome, saveWorkspace, userWorkspaceCacheScope } from "@/li
 import { ImportReviewPanel } from "./ImportReviewPanel";
 import { assessImportFidelity, type ImportFidelityReport } from "./import-fidelity";
 import { splitImportedDocument } from "./import-structure";
+import { canReviewRetainedText } from "./retained-text-review";
 import styles from "./MasterWorkspaceImport.module.css";
 
 const SECTION_PREVIEW_COUNT = 3;
@@ -104,8 +107,21 @@ function importFailureMessage(code: ImportFailureCode): string {
   }
 }
 
-export function MasterWorkspaceImport() {
+function prepareImportReview(lease: OwnerDispatchLease, uploadId: string, fileName: string, mimeType: string, text: string): PendingImport {
+  const extracted = text.trim();
+  if (!extracted) throw new ImportFailure("empty_document");
+  const documentId = makeId("document");
+  const sections = splitImportedDocument({ extracted, documentId, userId: lease.expectedUserId, now: new Date().toISOString() });
+  return {
+    lease, uploadId, fileName, extracted, documentId, outcomeId: makeId("outcome"),
+    title: fileName.replace(/\.[^.]+$/, "") || "Imported document", sections,
+    fidelity: assessImportFidelity({ fileName, mimeType, extractedText: extracted, sections }),
+  };
+}
+
+export function MasterWorkspaceImport({ initialUploadId = null }: { initialUploadId?: string | null }) {
   const router = useRouter();
+  const navigate = router.push;
   const { user, loading: authLoading } = useAuth();
   const userId = user?.id;
   const fileRef = useRef<HTMLInputElement>(null);
@@ -116,6 +132,8 @@ export function MasterWorkspaceImport() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingImport | null>(null);
   const [sourceNotice, setSourceNotice] = useState<{ lease: OwnerDispatchLease; uploadId: string; available: boolean | null } | null>(null);
+  const [resumeAttempt, setResumeAttempt] = useState(0);
+  const resumedReview = useRef(false);
   const busy = activeRequest !== null && ownerDispatchIsCurrent(activeRequest);
   const visiblePending =
     pending &&
@@ -136,11 +154,63 @@ export function MasterWorkspaceImport() {
     setSourceNotice(null);
     setError(null);
     setDragOver(false);
+    resumedReview.current = false;
     return () => {
       controller.abort();
       if (lifetimeRef.current === controller) lifetimeRef.current = null;
     };
-  }, [userId]);
+  }, [userId, initialUploadId, resumeAttempt]);
+
+  useLayoutEffect(() => {
+    if (!initialUploadId || authLoading || !userId || resumedReview.current) return;
+    if (!isWorkspaceUploadId(initialUploadId)) { setError("This uploaded-file link is invalid."); return; }
+    const lifetime = lifetimeRef.current;
+    if (!lifetime || lifetime.signal.aborted) return;
+    let lease: OwnerDispatchLease;
+    try { lease = captureOwnerDispatch(userId, lifetime.signal); }
+    catch { setError("Your sign-in changed. Reconnect before reviewing this upload."); return; }
+    const readController = new AbortController();
+    const readLease = withOwnerDispatchSignal(lease, readController.signal);
+    requestRef.current = lease; setActiveRequest(lease); setError(null);
+    const timer = setTimeout(() => {
+      readController.abort();
+      if (ownerDispatchIsCurrent(lease) && requestRef.current === lease) {
+        requestRef.current = null; setActiveRequest(null);
+        setError("The saved upload took too long to load. Try loading it again.");
+      }
+    }, 30_000);
+    void (async () => {
+      try {
+        const source = await getWorkspaceUpload(initialUploadId, readLease);
+        readLease.assertCurrent();
+        if (!source) { setError("This uploaded file was not found in this account."); return; }
+        if (source?.imported_document) {
+          resumedReview.current = true;
+          navigate(`/outcomes/${source.imported_document.outcome_id}`);
+          return;
+        }
+        if (!canReviewRetainedText(source)) {
+          setError("This upload is not available as complete text for section review. Open its original-file view to check its status.");
+          return;
+        }
+        const review = prepareImportReview(lease, source.upload_id, source.file_name, source.mime_type, source.preview.text);
+        resumedReview.current = true;
+        setPending(review);
+      } catch {
+        if (ownerDispatchIsCurrent(lease) && !readController.signal.aborted) {
+          setError("The saved upload could not be loaded. Try loading it again to check its saved state.");
+        }
+      } finally {
+        clearTimeout(timer);
+        if (requestRef.current === lease) {
+          requestRef.current = null;
+          if (ownerDispatchIsCurrent(lease)) setActiveRequest(null);
+        }
+        readController.abort();
+      }
+    })();
+    return () => { clearTimeout(timer); readController.abort(); };
+  }, [authLoading, initialUploadId, resumeAttempt, navigate, userId]);
 
   const pickFile = useCallback(() => fileRef.current?.click(), []);
 
@@ -204,37 +274,7 @@ export function MasterWorkspaceImport() {
           if (!source) throw new ImportFailure("sync_failed");
           return;
         }
-        const extracted = result.extracted_text.trim();
-        if (!extracted) throw new ImportFailure("empty_document");
-
-        const outcomeId = makeId("outcome");
-        const documentId = makeId("document");
-        const now = new Date().toISOString();
-        const title = file.name.replace(/\.[^.]+$/, "") || "Imported document";
-        const sections = splitImportedDocument({
-          extracted,
-          documentId,
-          userId: requestContext.expectedUserId,
-          now,
-        });
-        const fidelity = assessImportFidelity({
-          fileName: file.name,
-          mimeType: file.type,
-          extractedText: extracted,
-          sections,
-        });
-
-        setPending({
-          lease: requestContext,
-          uploadId: result.upload_id,
-          fileName: file.name,
-          title,
-          extracted,
-          outcomeId,
-          documentId,
-          sections,
-          fidelity,
-        });
+        setPending(prepareImportReview(requestContext, result.upload_id, file.name, file.type, result.extracted_text));
       } catch (caught) {
         if (preparedUploadId && !readbackAttempted && ownerDispatchIsCurrent(requestContext)) {
           setSourceNotice({ lease: requestContext, uploadId: preparedUploadId, available: null });
@@ -549,6 +589,12 @@ export function MasterWorkspaceImport() {
       {visiblePending && error && (
         <p className={styles.error} role="alert">
           {error}
+        </p>
+      )}
+      {initialUploadId && isWorkspaceUploadId(initialUploadId) && !authLoading && userId && !visiblePending && !busy && error && (
+        <p>
+          <button type="button" onClick={() => setResumeAttempt((value) => value + 1)}>Retry saved upload</button>
+          {" "}<Link href={`/workspace?upload=${initialUploadId}`}>Open uploaded original</Link>
         </p>
       )}
     </section>

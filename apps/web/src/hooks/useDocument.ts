@@ -9,10 +9,13 @@ import type {
 } from "@prompted/shared/browser";
 import { isVisiblyEmpty } from "@prompted/shared/browser";
 import { ApiError } from "@prompted/shared/api-client";
+import { applyContentEdit } from "@prompted/shared/workspace-sections";
+import { reviewWorkspaceRecovery, type WorkspaceRecoveryReview } from "@/lib/workspace-recovery";
 import {
   currentWorkspaceCacheScope,
   loadPendingOutcome,
   loadWorkspace,
+  discardReviewedWorkspace,
   advanceCapturedExportIntentSequenceForNewExport,
   type PendingOutcome,
   resolveGenerationRequestIdentity,
@@ -48,6 +51,7 @@ import {
 import { fetchOutcome } from "@/lib/api/outcomes";
 import {
   fetchSections,
+  fetchWorkspaceSectionBody,
   type LegacySectionApplyResult,
   type LegacySectionMutationTruth,
   type PersistedSection,
@@ -71,6 +75,7 @@ import {
   WORKSPACE_SNAPSHOT_VERSION,
   isWorkspaceSectionContentLoaded,
   workspaceSectionMetadata,
+  materialiseWorkspaceSectionBody,
   type WorkspaceInitialState,
   type WorkspaceSectionBodyV1,
 } from "@/lib/workspace-initial-state";
@@ -87,6 +92,10 @@ export interface GenerationIssue {
 }
 
 export interface UseDocument {
+  browserRecovery: WorkspaceRecoveryReview | null;
+  restoreBrowserRecovery: () => Promise<boolean>;
+  discardBrowserRecovery: () => boolean;
+  cancelBrowserRecovery: () => void;
   state: DocumentState | null;
   loading: boolean;
   drafting: boolean;
@@ -672,6 +681,15 @@ export function useDocument(
   activeDocumentIdRef.current = state?.documentId ?? null;
   const activeStateRef = useRef(state);
   activeStateRef.current = state;
+  type RecoveryRecord = {
+    resource: typeof resource;
+    expectedJson: string;
+    snapshot: DocumentState;
+    review: WorkspaceRecoveryReview | null;
+    controller: AbortController | null;
+  };
+  const recoveryHoldRef = useRef<RecoveryRecord | null>(null);
+  const [recoveryRecord, setRecoveryRecord] = useState<RecoveryRecord | null>(null);
   const [deviceReceipt, setDeviceReceipt] = useState<{
     resource: typeof resource;
     snapshot: DocumentState;
@@ -833,7 +851,38 @@ export function useDocument(
   const cacheWorkspaceSnapshot = useCallback(
     (snapshot: DocumentState) => {
       if (!cacheScope || ownerMismatch || activeResourceRef.current !== resource) return;
-      const result = saveWorkspace(cacheScope, storedFromState(outcomeId, snapshot));
+      if (recoveryHoldRef.current?.resource === resource) {
+        // Preserve the exact copy still awaiting its owner's review.
+        setDeviceReceipt({ resource, snapshot, status: "unavailable" });
+        return;
+      }
+      let recoverySnapshot = snapshot;
+      const savedDocument = legacySavedDocumentRef.current;
+      if (
+        !captured && cacheScope.kind === "user" &&
+        savedDocument?.ownerUserId === cacheScope.userId &&
+        savedDocument.outcomeId === outcomeId && savedDocument.documentId === snapshot.documentId
+      ) {
+        // A read body is already retained in the authoritative save baseline.
+        // Include an exact matching sibling in the recovery copy without
+        // promoting that read into a canonical edit or another remote write.
+        const sections = snapshot.sections.map((section) => {
+          if (isWorkspaceSectionContentLoaded(section)) return section;
+          const metadata = workspaceSectionMetadata(section);
+          const saved = legacySavedSectionsRef.current.get(section.id);
+          if (
+            section.document_id !== snapshot.documentId || section.user_id !== cacheScope.userId ||
+            section.content !== "" || metadata?.ledgerBindingStatus !== "legacy_unversioned" ||
+            !saved?.contentLoaded || typeof saved.content !== "string" ||
+            saved.revision !== metadata.revision || saved.contentSha256 !== metadata.contentSha256 ||
+            saved.approvedRevision !== metadata.approvedRevision ||
+            new TextEncoder().encode(saved.content).length !== metadata.contentLength
+          ) return section;
+          return { ...section, content: saved.content, content_loaded: true };
+        });
+        recoverySnapshot = { ...snapshot, sections };
+      }
+      const result = saveWorkspace(cacheScope, storedFromState(outcomeId, recoverySnapshot));
       const status =
         result?.status === "saved"
           ? "saved"
@@ -842,7 +891,7 @@ export function useDocument(
             : "unavailable";
       setDeviceReceipt({ resource, snapshot, status });
     },
-    [cacheScope, outcomeId, ownerMismatch, resource],
+    [cacheScope, captured, outcomeId, ownerMismatch, resource],
   );
 
   const cachePendingOutcome = useCallback(
@@ -1798,6 +1847,45 @@ export function useDocument(
   );
 
   useEffect(() => {
+    if (
+      authLoading || ownerMismatch || captured || cacheScope?.kind !== "user" ||
+      initialState?.truth.snapshotVersion !== WORKSPACE_SNAPSHOT_VERSION ||
+      initialState.truth.persistence !== "persisted" || !initialState.workspace ||
+      !initialState.truth.currentRevision || resumesInitialLegacyGeneration
+    ) return;
+    const cached = loadWorkspace(cacheScope, outcomeId);
+    if (!cached) return;
+    const record: RecoveryRecord = {
+      resource, expectedJson: JSON.stringify(cached), snapshot: initialState.workspace,
+      review: null, controller: null,
+    };
+    recoveryHoldRef.current = record;
+    let disposed = false;
+    void reviewWorkspaceRecovery(
+      cached, record.snapshot, cacheScope.userId, outcomeId, initialState.truth.currentRevision,
+    ).then((review) => {
+      if (disposed || !resource.observing || activeResourceRef.current !== resource ||
+        recoveryHoldRef.current !== record) return;
+      if (!review) { recoveryHoldRef.current = null; return; }
+      record.review = review;
+      setRecoveryRecord(record);
+    }).catch(() => {
+      // An unreadable copy never replaces authoritative wording. Retain its bytes.
+      if (!disposed && recoveryHoldRef.current === record) {
+        setDeviceReceipt({ resource, snapshot: record.snapshot, status: "unavailable" });
+        record.review = { status: "unavailable", documentId: record.snapshot.documentId,
+          documentRevision: initialState.truth.currentRevision!, sections: [] };
+        setRecoveryRecord(record);
+      }
+    });
+    return () => {
+      disposed = true;
+      record.controller?.abort();
+      if (recoveryHoldRef.current === record) recoveryHoldRef.current = null;
+    };
+  }, [authLoading, cacheScope, captured, initialState, outcomeId, ownerMismatch, resource, resumesInitialLegacyGeneration]);
+
+  useEffect(() => {
     if (authLoading) return;
     if (ownerMismatch) {
       pendingRef.current = null;
@@ -2296,6 +2384,88 @@ export function useDocument(
     [captured, initialState?.truth.documentId, legacyDocumentRevision, outcomeId, state],
   );
 
+  const restoreBrowserRecovery = useCallback(async (): Promise<boolean> => {
+    const record = recoveryHoldRef.current;
+    const review = record?.review;
+    if (
+      !record || record !== recoveryRecord || record.resource !== resource ||
+      !review || review.status !== "ready" || !userId || ownerMismatch || captured ||
+      record.controller || !resource.observing || activeResourceRef.current !== resource ||
+      activeStateRef.current !== record.snapshot ||
+      legacySavedDocumentRef.current?.revision !== review.documentRevision
+    ) return false;
+    const controller = new AbortController();
+    record.controller = controller;
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    const mutationEpoch = localMutationEpochRef.current;
+    try {
+      const lease = captureOwnerDispatch(userId, controller.signal);
+      const replacements = new Map<string, Section>();
+      const changes = new Map(review.sections.map(section => [section.sectionId, section]));
+      for (const current of record.snapshot.sections) {
+        const change = changes.get(current.id);
+        if (!change && isWorkspaceSectionContentLoaded(current)) continue;
+        const metadata = workspaceSectionMetadata(current);
+        if (!metadata) return false;
+        const body = await fetchWorkspaceSectionBody({
+          outcomeId, sectionId: current.id,
+          expectedDocumentRevision: review.documentRevision,
+          expectedSectionRevision: metadata.revision,
+        }, lease);
+        if (
+          !ownerDispatchIsCurrent(lease) || controller.signal.aborted ||
+          !resource.observing || activeResourceRef.current !== resource ||
+          recoveryHoldRef.current !== record || activeStateRef.current !== record.snapshot ||
+          localMutationEpochRef.current !== mutationEpoch ||
+          legacySavedDocumentRef.current?.revision !== review.documentRevision ||
+          body.contentSha256 !== metadata.contentSha256
+        ) return false;
+        let baseline = current;
+        if (isWorkspaceSectionContentLoaded(current)) {
+          if (current.content !== body.content) return false;
+        } else {
+          if (!registerWorkspaceSectionBody(body)) return false;
+          baseline = materialiseWorkspaceSectionBody(current, body);
+        }
+        if (!change) continue;
+        const edited = applyContentEdit(baseline, change.content);
+        if (edited === baseline) return false;
+        replacements.set(change.sectionId, {
+          ...edited, version_history: [...baseline.version_history, {
+            content: baseline.content, saved_at: edited.updated_at,
+            label: "Before restoring your browser copy", origin: "user_edit",
+          }],
+        });
+      }
+      recoveryHoldRef.current = null;
+      setRecoveryRecord(null);
+      setSections(record.snapshot.sections.map(section => replacements.get(section.id) ?? section));
+      return true;
+    } catch {
+      // The foreground review keeps the wording and exposes an explicit retry.
+      return false;
+    } finally {
+      clearTimeout(timer);
+      if (record.controller === controller) record.controller = null;
+    }
+  }, [captured, outcomeId, ownerMismatch, recoveryRecord, registerWorkspaceSectionBody, resource, setSections, userId]);
+
+  const discardBrowserRecovery = useCallback((): boolean => {
+    const record = recoveryHoldRef.current;
+    if (!record || record !== recoveryRecord || record.resource !== resource ||
+      !resource.observing || activeResourceRef.current !== resource || ownerMismatch ||
+      cacheScope?.kind !== "user" || record.controller) return false;
+    try { captureOwnerDispatch(cacheScope.userId).assertCurrent(); } catch { return false; }
+    if (!discardReviewedWorkspace(cacheScope, outcomeId, record.expectedJson)) return false;
+    recoveryHoldRef.current = null;
+    setRecoveryRecord(null);
+    return true;
+  }, [cacheScope, outcomeId, ownerMismatch, recoveryRecord, resource]);
+
+  const cancelBrowserRecovery = useCallback(() => {
+    if (recoveryHoldRef.current?.resource === resource) recoveryHoldRef.current.controller?.abort();
+  }, [resource]);
+
   const markWorkspaceReadUnavailable = useCallback(() => {
     setDurableExportEligible(false);
     failedSnapshotRef.current = null;
@@ -2328,6 +2498,11 @@ export function useDocument(
   }, []);
 
   return {
+    browserRecovery: !ownerMismatch && recoveryRecord?.resource === resource
+      ? recoveryRecord.review : null,
+    restoreBrowserRecovery,
+    discardBrowserRecovery,
+    cancelBrowserRecovery,
     state: ownerMismatch ? null : state,
     loading: authLoading || ownerMismatch || loading,
     drafting,

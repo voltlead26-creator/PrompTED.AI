@@ -7,6 +7,7 @@ import { captureOwnerDispatch, ownerDispatchIsCurrent, type OwnerDispatchLease }
 import { downloadWorkspaceUpload, getWorkspaceUpload, listWorkspaceUploads } from "@/lib/api/import-workspace";
 import { isWorkspaceUploadId, type WorkspaceUploadDetail, type WorkspaceUploadPage } from "@prompted/shared/ingest-upload";
 import styles from "./RetainedWorkspaceUploads.module.css";
+import { canReviewRetainedText } from "./retained-text-review";
 
 type ReadState<T> = { lease: OwnerDispatchLease; resource?: string; value?: T; error?: string };
 
@@ -134,6 +135,7 @@ export function RetainedWorkspaceUploads({ selectedUploadId = null }: { selected
           {downloadMessage && <p role="status">{downloadMessage}</p>}
           <p>This view protects the uploaded file by keeping it unchanged. Formatting-preserving editing is not available in this view.</p>
           {source.imported_document && <p><Link href={`/outcomes/${source.imported_document.outcome_id}`}>Open saved workspace</Link> — saved wording may differ from the original file.</p>}
+          {canReviewRetainedText(source) && <p><Link href={`/workspace?upload=${source.upload_id}&review=text`}>Review text sections</Link> — check the retained wording before creating an editable workspace.</p>}
           {source.preview ? <>
             <h4>Extracted text preview</h4>
             <p>{source.preview.truncated === true ? "This preview is incomplete." : source.preview.truncated === null ? "Preview completeness has not been verified." : "Extraction recorded this preview as complete."} It does not reproduce the original layout.</p>

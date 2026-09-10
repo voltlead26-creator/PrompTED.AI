@@ -108,6 +108,33 @@ async function chooseClearer(): Promise<void> {
 }
 
 describe("SectionEditor revision-bound TED edits", () => {
+  it("preserves imported text paragraphs and line breaks through a local edit and saved echo", async () => {
+    const onEdit = vi.fn();
+    const original = section({ content: "First paragraph.\n\nSecond paragraph.\nA separate line." });
+    const view = render(<SectionEditor {...requiredProps} section={original} onEdit={onEdit} />);
+    const textbox = await screen.findByRole("textbox", { name: "Edit Introduction" });
+    await waitFor(() => expect(textbox.querySelectorAll("p")).toHaveLength(2));
+    expect(textbox.querySelectorAll("p")[1]?.innerHTML).toBe("Second paragraph.<br>A separate line.");
+    expect(onEdit).not.toHaveBeenCalled();
+
+    act(() => { observed.editor!.commands.insertContentAt(1, "Updated "); });
+    const expected = "<p>Updated First paragraph.</p><p>Second paragraph.<br>A separate line.</p>";
+    expect(onEdit).toHaveBeenLastCalledWith(original.id, expected, { recordHistory: true });
+    view.rerender(<SectionEditor {...requiredProps} section={section({ content: expected, revision: 4 })} onEdit={onEdit} />);
+    expect(observed.editor!.getHTML()).toBe(expected);
+    expect(onEdit).toHaveBeenCalledOnce();
+  });
+
+  it("preserves paragraph structure when switching from rich text to another plain text section", async () => {
+    const onEdit = vi.fn();
+    const view = render(<SectionEditor {...requiredProps} section={section({ content: "<p><strong>Saved rich text.</strong></p>" })} onEdit={onEdit} />);
+    await screen.findByRole("textbox", { name: "Edit Introduction" });
+    expect(observed.editor!.getHTML()).toBe("<p><strong>Saved rich text.</strong></p>");
+    view.rerender(<SectionEditor {...requiredProps} section={section({ id: "22222222-2222-4222-8222-222222222223", name: "Next steps", content: "- Keep the original.\n\n- Reopen the saved document." })} onEdit={onEdit} />);
+    await waitFor(() => expect(observed.editor!.getHTML()).toBe("<p>- Keep the original.</p><p>- Reopen the saved document.</p>"));
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
   it.each(["Apply", "Discard"] as const)("fences a held %s receipt from a replacement section and its new proposal", async (action) => {
     const identity = {
       operationId: "44444444-4444-4444-8444-444444444444", acceptedSectionRevision: 3,

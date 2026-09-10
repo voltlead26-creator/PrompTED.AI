@@ -66,6 +66,10 @@ function makeSection(content: string, id = "section-1", name = "Summary"): Secti
 function workspace(content: string): UseWorkspace {
   const current = makeSection(content);
   return {
+    browserRecovery: null,
+    restoreBrowserRecovery: vi.fn(),
+    discardBrowserRecovery: vi.fn(),
+    cancelBrowserRecovery: vi.fn(),
     loading: false,
     drafting: false,
     syncStatus: "saved",

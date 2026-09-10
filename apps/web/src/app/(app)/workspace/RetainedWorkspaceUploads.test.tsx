@@ -43,6 +43,20 @@ describe("retained workspace originals", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh files" }));
     expect(await screen.findByText("This file was not found in this account.")).toBeInTheDocument();
   });
+  it("offers section review for a complete retained text upload after reload", async () => {
+    mocks.detail.mockResolvedValue({ ...source(), file_name: "Saved.md", mime_type: "text/markdown",
+      status: "ready", ingest_status: "completed", format: "text", preview: { text: "# Saved\n\nSource wording", truncated: false } });
+    render(<RetainedWorkspaceUploads selectedUploadId={a} />);
+    expect(await screen.findByRole("link", { name: "Review text sections" })).toHaveAttribute("href", `/workspace?upload=${a}&review=text`);
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+  it.each(["pdf", "docx", "rtf", "xlsx", null])("does not offer text section review for %s source", async (format) => {
+    mocks.detail.mockResolvedValue({ ...source(), status: "ready", ingest_status: "completed", format,
+      preview: { text: "Complete extracted wording", truncated: false } });
+    render(<RetainedWorkspaceUploads selectedUploadId={a} />);
+    await screen.findByRole("button", { name: "Download original" });
+    expect(screen.queryByRole("link", { name: "Review text sections" })).not.toBeInTheDocument();
+  });
   it("does not dispatch an invalid deep-link identity", async () => {
     render(<RetainedWorkspaceUploads selectedUploadId="invalid" />);
     expect(await screen.findByRole("alert")).toHaveTextContent("link is invalid");

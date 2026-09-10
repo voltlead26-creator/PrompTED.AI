@@ -165,6 +165,28 @@ describe("WorkspaceScreen durable recovery", () => {
 
   afterEach(() => recordBrowserPrincipal(undefined));
 
+  it.each(["quota_exceeded", "unavailable"] as const)(
+    "keeps an uncertain account save explicit alongside %s browser recovery",
+    async (deviceSaveStatus) => {
+      const retry = vi.fn();
+      mocks.useWorkspace.mockReturnValue({
+        loading: false, title: "Synthetic document", sections: [], activeSectionId: null,
+        generationIssues: [], missingInfoQuestions: [], syncStatus: "failed", deviceSaveStatus,
+        currentRevision: 1, approvedRevision: null, drafting: false, captured: false,
+        retrySync: retry, isAllApproved: false, dirtySectionCount: 1,
+      });
+      render(<WorkspaceScreen outcomeId="22222222-2222-4222-8222-222222222222" />);
+      await userEvent.click(screen.getByRole("button", { name: /^Save problem:/ }));
+      const deviceMessage = deviceSaveStatus === "quota_exceeded"
+        ? "Browser storage is full."
+        : "PrompTED could not create a browser recovery copy.";
+      expect(screen.getByText(`${deviceMessage} PrompTED could not confirm that the latest changes are saved to your account. Keep this page open and try saving again.`)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Saved" })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Try saving again" }));
+      expect(retry).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each(["idle", "local_only", "failed"] as const)(
     "attempts saving from %s instead of fabricating a saved toast",
     async (syncStatus) => {

@@ -245,6 +245,22 @@ function validPendingOutcome(value: unknown): value is PendingOutcome {
   return typeof pending.situation === "string" && typeof pending.templateName === "string";
 }
 
+/** Discard only the exact copy the owner reviewed, preserving any later replacement. */
+export function discardReviewedWorkspace(
+  scope: WorkspaceCacheScope,
+  outcomeId: string,
+  expectedJson: string,
+): boolean {
+  try {
+    const current = readOwnerBound<StoredWorkspace>(scope, outcomeId, "workspace");
+    if (!current || JSON.stringify(current) !== expectedJson) return false;
+    sessionStorage.removeItem(cacheKey(scope, "workspace", outcomeId));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function hasUnavailableSectionBody(value: StoredWorkspace): boolean {
   return (
     Array.isArray(value.sections) &&

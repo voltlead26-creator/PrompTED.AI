@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { assertLegacyWorkspaceCorePhase, assertWorkspacePublicProperties, coreMigrationFile, coreMigrationSha,
@@ -12,13 +12,14 @@ const manifest = { ...prefix, [coreMigrationFile]: coreMigrationSha, [coreTestFi
   [sourcePreparationMigrationFile]: sourcePreparationMigrationSha, [sourcePreparationTestFile]: sourcePreparationTestSha };
 const hash = value => createHash("sha256").update(value).digest("hex");
 
-test("current release SQL is exercised by the historical workspace upgrade", () => {
-  const live = Object.fromEntries(["supabase/migrations", "supabase/tests"].flatMap(directory =>
-    readdirSync(new URL(`../../../${directory}/`, import.meta.url)).filter(name => name.endsWith(".sql"))
-      .map(name => [`${directory}/${name}`, hash(readFileSync(new URL(`../../../${directory}/${name}`, import.meta.url)))])));
-  const plan = validateLegacyWorkspaceCoreUpgradePlan(live, live);
+test("the historical workspace upgrade exercises its exact reviewed SQL bytes", () => {
+  // Do not relabel a completed 79→81 rehearsal when later SQL is introduced.
+  // Actual upgrade mode still validates the complete live manifest separately.
+  const reviewed = Object.fromEntries(Object.keys(manifest).map(file =>
+    [file, hash(readFileSync(new URL(`../../../${file}`, import.meta.url)))]));
+  const plan = validateLegacyWorkspaceCoreUpgradePlan(reviewed, reviewed);
   assert.equal(plan.versions.length, 81);
-  assert.deepEqual(plan.manifest, live);
+  assert.deepEqual(plan.manifest, reviewed);
 });
 
 test("accepts exactly the reviewed 79/48 predecessor and the core/upload migration regressions", () => {

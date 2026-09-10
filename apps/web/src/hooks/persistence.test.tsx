@@ -17,6 +17,8 @@ const mockUpsertDocument = vi.fn().mockResolvedValue(undefined);
 const mockUpsertSections = vi.fn().mockResolvedValue(undefined);
 const mockFetchDocumentByOutcomeId = vi.fn().mockResolvedValue(null);
 const mockFetchSections = vi.fn().mockResolvedValue([]);
+const mockFetchWorkspaceSectionBody = vi.fn();
+const mockDiscardReviewedWorkspace = vi.fn();
 const mockSaveLegacySection = vi.fn();
 const mockSaveLegacyWorkspaceV1 = vi.fn();
 const mockFetchOutcome = vi.fn().mockResolvedValue(null);
@@ -69,6 +71,7 @@ vi.mock("@/lib/api/sections", async () => {
   return {
     ...actual,
     fetchSections: (...args: unknown[]) => mockFetchSections(...args),
+    fetchWorkspaceSectionBody: (...args: unknown[]) => mockFetchWorkspaceSectionBody(...args),
     saveLegacySection: (...args: unknown[]) => mockSaveLegacySection(...args),
     upsertSections: (...args: unknown[]) => mockUpsertSections(...args),
     updateSectionContent: vi.fn().mockResolvedValue(undefined),
@@ -87,6 +90,7 @@ vi.mock("@/lib/workspace-store", () => ({
   currentWorkspaceCacheScope: (userId?: string | null) =>
     userId ? { kind: "user", userId } : { kind: "guest", guestId: "test-guest" },
   loadWorkspace: (...args: unknown[]) => mockLoadWorkspace(...args),
+  discardReviewedWorkspace: (...args: unknown[]) => mockDiscardReviewedWorkspace(...args),
   saveWorkspace: (...args: unknown[]) => mockSaveWorkspace(...args),
   loadPendingOutcome: (...args: unknown[]) => mockLoadPendingOutcome(...args),
   savePendingOutcome: (...args: unknown[]) => mockSavePendingOutcome(...args),
@@ -177,7 +181,7 @@ import {
   type SaveLegacyWorkspaceV1Input,
 } from "@/lib/api/documents";
 import { useDocument } from "./useDocument";
-import type { WorkspaceInitialState } from "@/lib/workspace-initial-state";
+import type { WorkspaceInitialState, WorkspaceSectionBodyV1 } from "@/lib/workspace-initial-state";
 
 const dbDocument = {
   id: "db-doc-id",
@@ -307,6 +311,49 @@ const progressiveInitialState: WorkspaceInitialState = {
     exportBlockingReasons: ["required_sections_not_approved"],
   },
 };
+
+async function progressiveRecoveryFixture() {
+  const content = "Unchanged second section text.";
+  const contentSha256 = await digestText(content);
+  const contentLength = new TextEncoder().encode(content).length;
+  const initial = structuredClone(progressiveInitialState);
+  Object.assign(initial.workspace!.sections[1]!, { content_sha256: contentSha256, content_length: contentLength });
+  const body: WorkspaceSectionBodyV1 = {
+    contractVersion: "workspace-section-body.v1", outcomeId: "outcome-1", documentId: "server-doc-id",
+    documentRevision: 4, sectionId: "server-section-2", sectionRevision: 4,
+    content, contentSha256, contentLength, status: "draft", approvedRevision: null,
+    ledgerBindingStatus: "legacy_unversioned", sectionKey: null, sectionState: null,
+    updatedAt: initial.workspace!.sections[1]!.updated_at,
+  };
+  return { initial, body };
+}
+
+async function reloadRecoveryFixture() {
+  const store = await vi.importActual<typeof import("@/lib/workspace-store")>("@/lib/workspace-store");
+  sessionStorage.clear();
+  mockLoadWorkspace.mockImplementation(store.loadWorkspace);
+  mockSaveWorkspace.mockImplementation(store.saveWorkspace);
+  mockDiscardReviewedWorkspace.mockImplementation(store.discardReviewedWorkspace);
+  vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+  const { initial, body: siblingBody } = await progressiveRecoveryFixture();
+  const content = initial.workspace!.sections[0]!.content;
+  const contentSha256 = await digestText(content);
+  Object.assign(initial.workspace!.sections[0]!, { content_sha256: contentSha256 });
+  const body: WorkspaceSectionBodyV1 = {
+    ...siblingBody, sectionId: "server-section", sectionRevision: 3,
+    content, contentSha256, contentLength: new TextEncoder().encode(content).length,
+  };
+  mockFetchWorkspaceSectionBody.mockImplementation(async (input: { sectionId: string }) =>
+    input.sectionId === body.sectionId ? body : siblingBody);
+  const cached = {
+    ...initial.workspace!, outcomeId: "outcome-1", templateId: undefined,
+    sections: initial.workspace!.sections.map((section, index) => ({
+      ...section, content_loaded: true, content: index === 0 ? "Unsaved owner edit" : siblingBody.content,
+    })),
+  };
+  expect(store.saveWorkspace({ kind: "user", userId: "user-1" }, cached)).toEqual({ status: "saved" });
+  return { initial, body, cached, store };
+}
 
 const capturedInitialState: WorkspaceInitialState = {
   intake: {
@@ -474,6 +521,8 @@ describe("useDocument — DB persistence wiring", () => {
     mockFetchDocumentByOutcomeId.mockResolvedValue(null);
     mockFetchSections.mockReset();
     mockFetchSections.mockResolvedValue([]);
+    mockFetchWorkspaceSectionBody.mockReset();
+    mockDiscardReviewedWorkspace.mockReset();
     mockFetchOutcome.mockReset();
     mockFetchOutcome.mockResolvedValue(null);
     mockLoadWorkspace.mockReset();
@@ -991,6 +1040,218 @@ describe("useDocument — DB persistence wiring", () => {
       capturedAutosaveCallback?.(result.current.state);
     });
     expect(mockSaveLegacyWorkspaceV1).not.toHaveBeenCalled();
+  });
+
+  it("offers unsaved cached wording for explicit review after an authenticated reload", async () => {
+    vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+    const { initial, body } = await progressiveRecoveryFixture();
+    Object.assign(initial.workspace!.sections[0]!, { content_sha256: await digestText("Server wording") });
+    mockLoadWorkspace.mockReturnValue({
+      ...initial.workspace, outcomeId: "outcome-1", templateId: undefined,
+      sections: initial.workspace!.sections.map((section, index) => ({
+        ...section, content_loaded: true,
+        content: index === 0 ? "Unsaved owner edit" : body.content,
+      })),
+    });
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    await waitFor(() => expect(result.current.browserRecovery).toMatchObject({
+      status: "ready", sections: [{ sectionId: "server-section", content: "Unsaved owner edit" }],
+    }));
+    expect(result.current.state?.sections[0]?.content).toBe("Server wording");
+    expect(mockSaveLegacyWorkspaceV1).not.toHaveBeenCalled();
+    expect(mockFetchSections).not.toHaveBeenCalled();
+  });
+
+  it("restores only reviewed wording through the existing atomic save after a fresh revision read", async () => {
+    const { initial } = await reloadRecoveryFixture();
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    await waitFor(() => expect(result.current.browserRecovery?.status).toBe("ready"));
+    expect(mockFetchWorkspaceSectionBody).not.toHaveBeenCalled();
+    await act(async () => expect(await result.current.restoreBrowserRecovery()).toBe(true));
+    expect(mockFetchWorkspaceSectionBody).toHaveBeenCalledWith({
+      outcomeId: "outcome-1", sectionId: "server-section", expectedDocumentRevision: 4, expectedSectionRevision: 3,
+    }, expect.any(Object));
+    expect(result.current.browserRecovery).toBeNull();
+    expect(result.current.state?.sections[0]).toMatchObject({
+      content: "Unsaved owner edit", status: "edited",
+      version_history: [expect.objectContaining({ content: "Server wording", origin: "user_edit" })],
+    });
+    expect(result.current.state?.sections[1]).toEqual(initial.workspace!.sections[1]);
+    await act(async () => { capturedAutosaveCallback?.(result.current.state); });
+    await waitFor(() => expect(result.current.syncStatus).toBe("saved"));
+    expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalledOnce();
+    const command = mockSaveLegacyWorkspaceV1.mock.calls[0]![0];
+    expect(command.expectedDocumentRevision).toBe(4);
+    expect(command.sections[0]).toMatchObject({ content: "Unsaved owner edit", expected: { revision: 3 } });
+    expect(command.sections[1].content).toBeUndefined();
+  });
+
+  it("does not offer a copy whose wording already matches the committed revision", async () => {
+    const { initial } = await reloadRecoveryFixture();
+    Object.assign(initial.workspace!.sections[0]!, {
+      content: "Unsaved owner edit", content_sha256: await digestText("Unsaved owner edit"),
+      content_length: new TextEncoder().encode("Unsaved owner edit").length, revision: 4,
+    });
+    initial.truth.currentRevision = 5;
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(result.current.browserRecovery).toBeNull();
+    expect(mockSaveLegacyWorkspaceV1).not.toHaveBeenCalled();
+  });
+
+  it("shows a conflicting older copy without allowing it to replace newer saved wording", async () => {
+    const { initial } = await reloadRecoveryFixture();
+    Object.assign(initial.workspace!.sections[0]!, {
+      content: "A newer account edit", content_sha256: await digestText("A newer account edit"),
+      content_length: new TextEncoder().encode("A newer account edit").length, revision: 4,
+    });
+    initial.truth.currentRevision = 5;
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    await waitFor(() => expect(result.current.browserRecovery?.status).toBe("conflict"));
+    await act(async () => expect(await result.current.restoreBrowserRecovery()).toBe(false));
+    expect(result.current.state?.sections[0]?.content).toBe("A newer account edit");
+    expect(mockFetchWorkspaceSectionBody).not.toHaveBeenCalled();
+    expect(mockSaveLegacyWorkspaceV1).not.toHaveBeenCalled();
+  });
+
+  it.each(["cancel", "owner", "local-edit", "unmount"] as const)("fences a late recovery read after %s", async (change) => {
+    const { initial, body } = await reloadRecoveryFixture();
+    const read = deferred<WorkspaceSectionBodyV1>();
+    mockFetchWorkspaceSectionBody.mockReturnValue(read.promise);
+    const { result, unmount } = renderHook(() => useDocument("outcome-1", initial));
+    await waitFor(() => expect(result.current.browserRecovery?.status).toBe("ready"));
+    let restoring!: Promise<boolean>;
+    act(() => { restoring = result.current.restoreBrowserRecovery(); });
+    await act(async () => expect(await result.current.restoreBrowserRecovery()).toBe(false));
+    expect(mockFetchWorkspaceSectionBody).toHaveBeenCalledOnce();
+    act(() => {
+      if (change === "cancel") result.current.cancelBrowserRecovery();
+      if (change === "owner") recordBrowserPrincipal("user-2");
+      if (change === "local-edit") result.current.setSections(sections => sections.map(section => ({ ...section, content: "New local edit" })));
+      if (change === "unmount") unmount();
+    });
+    await act(async () => { read.resolve(body); expect(await restoring).toBe(false); });
+    expect(mockSaveLegacyWorkspaceV1).not.toHaveBeenCalled();
+    if (change !== "unmount") expect(result.current.state?.sections[0]?.content).not.toBe("Unsaved owner edit");
+  });
+
+  it("preserves a review and its exact cache on read failure, then permits a bounded retry", async () => {
+    const { initial, cached, store } = await reloadRecoveryFixture();
+    mockFetchWorkspaceSectionBody.mockRejectedValueOnce(new Error("READ_UNAVAILABLE"));
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    await waitFor(() => expect(result.current.browserRecovery?.status).toBe("ready"));
+    await act(async () => expect(await result.current.restoreBrowserRecovery()).toBe(false));
+    expect(store.loadWorkspace({ kind: "user", userId: "user-1" }, "outcome-1")).toEqual(cached);
+    await act(async () => expect(await result.current.restoreBrowserRecovery()).toBe(true));
+    expect(mockFetchWorkspaceSectionBody).toHaveBeenCalledTimes(3);
+  });
+
+  it("discards only the exact owner-reviewed copy, never another owner or a replacement", async () => {
+    const { initial, cached, store } = await reloadRecoveryFixture();
+    const scope = { kind: "user" as const, userId: "user-1" };
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    await waitFor(() => expect(result.current.browserRecovery?.status).toBe("ready"));
+    const newer = { ...cached, title: "Another browser copy" };
+    store.saveWorkspace(scope, newer);
+    act(() => expect(result.current.discardBrowserRecovery()).toBe(false));
+    expect(store.loadWorkspace(scope, "outcome-1")).toEqual(newer);
+    store.saveWorkspace(scope, cached);
+    const other = { ...cached, sections: cached.sections.map(section => ({ ...section, user_id: "user-2" })) };
+    store.saveWorkspace({ kind: "user", userId: "user-2" }, other);
+    act(() => expect(result.current.discardBrowserRecovery()).toBe(true));
+    expect(store.loadWorkspace(scope, "outcome-1")).toBeNull();
+    expect(store.loadWorkspace({ kind: "user", userId: "user-2" }, "outcome-1")).toEqual(other);
+    expect(result.current.browserRecovery).toBeNull();
+    expect(result.current.state?.sections[0]?.content).toBe("Server wording");
+  });
+
+  it("keeps fetched unchanged siblings in a real browser recovery copy when cloud saving fails", async () => {
+    const store = await vi.importActual<typeof import("@/lib/workspace-store")>("@/lib/workspace-store");
+    sessionStorage.clear();
+    mockSaveWorkspace.mockImplementation(store.saveWorkspace);
+    mockSaveLegacyWorkspaceV1.mockRejectedValue(new Error("SAVE_ACKNOWLEDGEMENT_LOST"));
+    vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+    const { initial, body } = await progressiveRecoveryFixture();
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    expect(result.current.registerWorkspaceSectionBody(body)).toBe(true);
+    expect(mockSaveLegacyWorkspaceV1).not.toHaveBeenCalled();
+    act(() => result.current.setSections(sections => sections.map(section => section.id === "server-section"
+      ? { ...section, content: "Unsaved owner edit", status: "edited" } : section)));
+    await act(async () => { capturedAutosaveCallback?.(result.current.state); });
+    await waitFor(() => expect(result.current.syncStatus).toBe("failed"));
+    expect(result.current.deviceSaveStatus).toBe("saved");
+    expect(store.loadWorkspace({ kind: "user", userId: "user-1" }, "outcome-1")?.sections).toEqual([
+      expect.objectContaining({ id: "server-section", content: "Unsaved owner edit", status: "edited" }),
+      expect.objectContaining({ id: "server-section-2", content: body.content, content_loaded: true, revision: 4, content_sha256: body.contentSha256 }),
+    ]);
+    expect(store.loadWorkspace({ kind: "user", userId: "user-2" }, "outcome-1")).toBeNull();
+    // Recovery materialisation must not become a canonical edit or sibling write.
+    expect(result.current.state?.sections[1]).toMatchObject({ content: "", content_loaded: false });
+    expect(mockSaveLegacyWorkspaceV1.mock.calls[0]![0].sections[1].content).toBeUndefined();
+    sessionStorage.clear();
+  });
+
+  it.each([
+    ["revision", { revision: 5 }],
+    ["digest", { content_sha256: "c".repeat(64) }],
+    ["length", { content_length: 2 }],
+    ["approval", { approved_revision: 4 }],
+  ])("does not use a fetched sibling with mismatched %s for browser recovery", async (_name, changed) => {
+    const store = await vi.importActual<typeof import("@/lib/workspace-store")>("@/lib/workspace-store");
+    sessionStorage.clear();
+    mockSaveWorkspace.mockImplementation(store.saveWorkspace);
+    mockSaveLegacyWorkspaceV1.mockRejectedValue(new Error("CLOUD_UNAVAILABLE"));
+    vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+    const { initial, body } = await progressiveRecoveryFixture();
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    expect(result.current.registerWorkspaceSectionBody(body)).toBe(true);
+    act(() => result.current.setSections(sections => sections.map(section => section.id === body.sectionId
+      ? { ...section, ...changed } : { ...section, content: "Unsaved owner edit" })));
+    await act(async () => { capturedAutosaveCallback?.(result.current.state); });
+    expect(mockSaveWorkspace.mock.results[0]?.value).toEqual({ status: "unavailable", reason: "incomplete_workspace" });
+    expect(result.current.deviceSaveStatus).toBe("unavailable");
+    expect(store.loadWorkspace({ kind: "user", userId: "user-1" }, "outcome-1")).toBeNull();
+    sessionStorage.clear();
+  });
+
+  it("leaves the complete recovery copy intact when a needed sibling was never fetched", async () => {
+    const store = await vi.importActual<typeof import("@/lib/workspace-store")>("@/lib/workspace-store");
+    sessionStorage.clear();
+    mockSaveWorkspace.mockImplementation(store.saveWorkspace);
+    mockSaveLegacyWorkspaceV1.mockRejectedValue(new Error("CLOUD_UNAVAILABLE"));
+    vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+    const { initial, body } = await progressiveRecoveryFixture();
+    const oldCopy = { ...initial.workspace!, templateId: initial.workspace!.templateId ?? undefined, outcomeId: "outcome-1", sections: initial.workspace!.sections.map(section => section.id === body.sectionId
+      ? { ...section, content: body.content, content_loaded: true } : section) };
+    expect(store.saveWorkspace({ kind: "user", userId: "user-1" }, oldCopy)).toEqual({ status: "saved" });
+    const before = store.loadWorkspace({ kind: "user", userId: "user-1" }, "outcome-1");
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    act(() => result.current.setSections(sections => sections.map(section => section.id === "server-section"
+      ? { ...section, content: "Unsaved owner edit" } : section)));
+    await act(async () => { capturedAutosaveCallback?.(result.current.state); });
+    expect(result.current.deviceSaveStatus).toBe("unavailable");
+    expect(store.loadWorkspace({ kind: "user", userId: "user-1" }, "outcome-1")).toEqual(before);
+    sessionStorage.clear();
+  });
+
+  it("still reports an actual storage quota failure after assembling fetched siblings", async () => {
+    const store = await vi.importActual<typeof import("@/lib/workspace-store")>("@/lib/workspace-store");
+    sessionStorage.clear();
+    mockSaveWorkspace.mockImplementation(store.saveWorkspace);
+    mockSaveLegacyWorkspaceV1.mockRejectedValue(new Error("CLOUD_UNAVAILABLE"));
+    vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+    const { initial, body } = await progressiveRecoveryFixture();
+    const { result } = renderHook(() => useDocument("outcome-1", initial));
+    expect(result.current.registerWorkspaceSectionBody(body)).toBe(true);
+    act(() => result.current.setSections(sections => sections.map(section => section.id === "server-section"
+      ? { ...section, content: "Unsaved owner edit" } : section)));
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Full", "QuotaExceededError"); });
+    try {
+      await act(async () => { capturedAutosaveCallback?.(result.current.state); });
+      expect(result.current.deviceSaveStatus).toBe("quota_exceeded");
+      expect(result.current.syncStatus).toBe("failed");
+      expect(store.loadWorkspace({ kind: "user", userId: "user-1" }, "outcome-1")).toBeNull();
+    } finally { setItem.mockRestore(); sessionStorage.clear(); }
   });
 
   it("persists captured edits only through the revision-checked RPC", async () => {

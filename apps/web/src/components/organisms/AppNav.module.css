@@ -188,7 +188,8 @@
     width: min(20rem, 86vw);
   }
 
-  .mobileOpen {
+  .nav.mobileOpen,
+  .nav.mobileOpen:has(.createMenu[open]) {
     transform: translateX(0);
     visibility: visible;
     transition:

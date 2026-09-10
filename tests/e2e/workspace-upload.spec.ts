@@ -28,14 +28,20 @@ async function login(page: Page, slot: number) {
 test('real file chooser settles owned sources and reopens identical originals', async ({ page, context }, info) => {
   const errors: string[] = []; const external: string[] = [];
   const records: Array<{ name: string; uploadId: string; receipt: unknown; outcomeId: string | null;
-    importReceipt?: unknown; stages: string[] }> = [];
+    importReceipt?: unknown; editReceipt?: unknown; recoveryCopy?: unknown;
+    failedSaveRequest?: unknown; recoveredSaveRequest?: unknown; stages: string[] }> = [];
   const profileStages: string[] = [];
   const profileReadFaultAttempts: number[] = [];
+  let uploadRequests = 0;
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (request.method() === 'POST' && url.origin === fixture.webOrigin && url.pathname === '/api/ingest-upload') uploadRequests += 1;
+  });
   let complete = false; let failure: string | null = null;
   const persist = () => writeFileSync(info.outputPath('upload-browser-checks.json'), JSON.stringify({
     project: info.project.name, ownerId: fixture.users[info.project.name === 'desktop-chromium' ? 0 : 1]!.id,
     complete, failure, records, profileStages, profileReadFaultAttempts, errors, external,
-    scope: 'New chooser uploads and Profile access/detail save/reload, real Auth/RPC/Storage and production entrypoints, provider calls prohibited; no hosted/live-model/resume-lifecycle/format-preserving editing/export proof.',
+    scope: 'New chooser uploads, retained text review, text section editing/save recovery and Profile details, real Auth/RPC/Storage and production entrypoints, provider calls prohibited; no hosted/live-model/resume-lifecycle/binary format-preserving editing/export proof.',
   }, null, 2));
   const stage = (record: typeof records[number], name: string) => { record.stages.push(name); persist(); };
   page.on('pageerror', e => errors.push(e.message));
@@ -115,6 +121,17 @@ test('real file chooser settles owned sources and reopens identical originals', 
         await expect(review).toBeVisible();
         await expect(review.getByRole('textbox', { name: 'Content', exact: true })).not.toBeEmpty();
         if (file.importText) {
+          const uploadsBeforeResume = uploadRequests;
+          // A reload must recover review from the retained source, without a
+          // second upload/provider request or a browser-only pending document.
+          await page.goto(`/workspace?upload=${receipt.upload_id}`);
+          await page.reload();
+          await panel(page).getByRole('link', { name: 'Review text sections', exact: true }).click();
+          await expect(page).toHaveURL(`${fixture.webOrigin}/workspace?upload=${receipt.upload_id}&review=text`);
+          await page.reload();
+          await expect(review).toBeVisible();
+          expect(uploadRequests).toBe(uploadsBeforeResume);
+          stage(record, 'retained_text_review_resumed_after_reload');
           await expect(review.getByRole('textbox', { name: 'Section 1 name', exact: true })).toHaveValue('Overview');
           await expect(review.getByRole('textbox', { name: 'Content', exact: true })).toHaveValue('This is synthetic wording for the upload acceptance test.\n\nThe owner checks this paragraph before saving.');
           const pendingCommit = page.waitForResponse(response => {
@@ -131,14 +148,125 @@ test('real file chooser settles owned sources and reopens identical originals', 
           stage(record, 'import_receipt_received');
           await expect(page).toHaveURL(`${fixture.webOrigin}/outcomes/${importReceipt.outcome_id}`); outcomeId = importReceipt.outcome_id;
           record.outcomeId = outcomeId; stage(record, 'import_destination_opened');
+          await page.getByRole('dialog', { name: 'Quick tour', exact: true })
+            .getByRole('button', { name: 'Skip tour', exact: true }).click({ timeout: 15000 });
+          stage(record, 'first_visit_tour_dismissed');
           await page.reload();
           await expect(page.getByRole('article', { name: `Edit ${info.project.name}-${file.name.replace(/\.[^.]+$/, '')}`, exact: true })).toBeVisible();
           await expect(page.getByRole('textbox', { name: 'Edit Overview', exact: true })).toContainText('The owner checks this paragraph before saving.');
+          await expect(page.getByRole('textbox', { name: 'Edit Overview', exact: true }).locator('p')).toHaveCount(2);
           const sectionSelect = page.getByRole('combobox', { name: 'Choose a section', exact: true });
           await expect(sectionSelect.locator('option').nth(1)).toHaveText('2. Next steps');
           await sectionSelect.selectOption({ index: 1 });
           await expect(page.getByRole('textbox', { name: 'Edit Next steps', exact: true })).toContainText('Reopen the saved document.');
+          await expect(page.getByRole('textbox', { name: 'Edit Next steps', exact: true }).locator('p')).toHaveCount(2);
           stage(record, 'workspace_reloaded_and_both_sections_read');
+
+          // First reject delivery before any DB commit. Recover the exact
+          // browser wording after reload, then lose the committed acknowledgement.
+          await sectionSelect.selectOption({ index: 0 });
+          const overview = page.getByRole('textbox', { name: 'Edit Overview', exact: true });
+          const edited = '<p>Updated This is synthetic wording for the upload acceptance test.</p><p>The owner checks this paragraph before saving.</p>';
+          const savePath = `${fixture.supabaseOrigin}/rest/v1/rpc/save_own_legacy_workspace_v1`;
+          let interruptedSaves = 0;
+          await page.route(savePath, async route => {
+            expect(route.request().method()).toBe('POST');
+            const command = route.request().postDataJSON();
+            expect(command.p_document_id).toBe(importReceipt.document_id);
+            const changed = command.p_sections.filter((item: { content?: string }) => item.content !== undefined);
+            expect(changed).toHaveLength(1); expect(changed[0].content).toBe(edited);
+            interruptedSaves += 1;
+            if (interruptedSaves === 1) {
+              record.failedSaveRequest = command;
+              stage(record, 'edit_delivery_failed_before_commit');
+              await route.abort('failed');
+              return;
+            }
+            expect(command).toEqual(record.failedSaveRequest);
+            record.recoveredSaveRequest = command;
+            stage(record, 'same_edit_request_restored_after_reload');
+            const result = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: 30000 });
+            expect(result.status()).toBe(200);
+            const receipt = await result.json();
+            expect(receipt.state).toBe('saved'); expect(receipt.idempotent_replay).toBe(false);
+            expect(receipt.document_revision).toBe(command.p_expected_document_revision + 1);
+            record.editReceipt = receipt; stage(record, 'edited_section_committed_ack_discarded');
+            await route.abort('failed');
+          }, { times: 2 });
+          if (info.project.name === 'narrow-chromium') {
+            await page.getByRole('button', { name: 'Open this section in the focused mobile editor', exact: true }).click({ timeout: 15000 });
+            await expect(page.getByRole('button', { name: 'Close focused editor', exact: true })).toBeVisible();
+            stage(record, 'focused_editor_opened');
+          }
+          await overview.click({ timeout: 15000 });
+          // Select all then collapse left works on macOS and Linux; Meta+Home
+          // on macOS does not reliably move to the start of this editable body.
+          await overview.press('ControlOrMeta+a'); await overview.press('ArrowLeft');
+          await page.keyboard.insertText('Updated ');
+          await expect(overview.locator('p').first()).toHaveText('Updated This is synthetic wording for the upload acceptance test.');
+          if (info.project.name === 'narrow-chromium') {
+            await page.getByRole('button', { name: 'Close focused editor', exact: true }).click({ timeout: 15000 });
+            stage(record, 'focused_editor_closed');
+          }
+          // Let the real debounced save run once; an explicit early save could
+          // enqueue another save and hide the uncertain acknowledgement state.
+          await page.getByRole('button', { name: /^Save problem:/ }).click({ timeout: 15000 });
+          await expect(page.getByRole('button', { name: 'Try saving again', exact: true })).toBeVisible();
+          await expect(page.getByText('PrompTED could not confirm that the latest changes are saved to your account. Keep this page open and try saving again.', { exact: true })).toBeVisible();
+          await expect(page.getByRole('button', { name: 'Saved', exact: true })).toHaveCount(0);
+          stage(record, 'save_uncertainty_visible');
+          const recoveryCopy = await page.evaluate(({ ownerId, outcomeId }) => {
+            const key = `prompted:cache:v3:${encodeURIComponent(`user:${ownerId}`)}:workspace:${encodeURIComponent(outcomeId)}`;
+            const stored = sessionStorage.getItem(key);
+            return stored === null ? null : JSON.parse(stored);
+          }, { ownerId: fixture.users[slot]!.id, outcomeId: importReceipt.outcome_id });
+          expect(recoveryCopy).toMatchObject({ version: 3, owner: `user:${fixture.users[slot]!.id}`, outcomeId: importReceipt.outcome_id,
+            value: { documentId: importReceipt.document_id, sections: [
+              expect.objectContaining({ content: edited, content_loaded: true }),
+              expect.objectContaining({ content: '- Keep the original.\n\n- Reopen the saved document.', content_loaded: true }),
+            ] } });
+          record.recoveryCopy = recoveryCopy;
+          stage(record, 'complete_browser_recovery_copy_read_during_uncertainty');
+
+          await page.reload();
+          const recoveryReview = page.getByRole('dialog', { name: 'Review wording kept in this browser', exact: true });
+          await expect(recoveryReview).toBeVisible();
+          expect(await recoveryReview.evaluate(element => element.matches(':modal'))).toBe(true);
+          const bounds = await recoveryReview.boundingBox(); const viewport = page.viewportSize();
+          assert.ok(bounds && viewport); expect(bounds.y).toBeGreaterThanOrEqual(0);
+          expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
+          await expect(recoveryReview.getByText('Updated This is synthetic wording for the upload acceptance test.', { exact: true })).toBeVisible();
+          await expect(recoveryReview.getByRole('heading')).toBeFocused();
+          await page.screenshot({ path: info.outputPath('browser-copy-recovery-review.png') });
+          stage(record, 'browser_copy_review_visible_in_foreground_after_reload');
+          // Escape cancels observation only. It neither restores nor discards.
+          await page.keyboard.press('Escape');
+          await expect(recoveryReview).toHaveCount(0);
+          await expect(overview.locator('p').first()).toHaveText('This is synthetic wording for the upload acceptance test.');
+          expect(interruptedSaves).toBe(1);
+          await page.getByRole('button', { name: 'Review browser copy', exact: true }).click();
+          await expect(recoveryReview).toBeVisible();
+          await recoveryReview.getByRole('button', { name: 'Restore to editor', exact: true }).click();
+          await expect(recoveryReview).toHaveCount(0);
+          await expect(overview.locator('p').first()).toHaveText('Updated This is synthetic wording for the upload acceptance test.');
+          await page.getByRole('button', { name: /^Save problem:/ }).click({ timeout: 15000 });
+          await expect(page.getByText('PrompTED could not confirm that the latest changes are saved to your account. Keep this page open and try saving again.', { exact: true })).toBeVisible();
+          expect(interruptedSaves).toBe(2); expect(record.editReceipt).toBeTruthy();
+          stage(record, 'restored_wording_saved_with_acknowledgement_uncertainty');
+          const replayedSave = page.waitForResponse(response => response.url() === savePath && response.request().method() === 'POST');
+          await page.getByRole('button', { name: 'Try saving again', exact: true }).click();
+          const replayResponse = await replayedSave; expect(replayResponse.status()).toBe(200);
+          expect(await replayResponse.json()).toEqual({ ...(record.editReceipt as object), idempotent_replay: true });
+          await expect(page.getByRole('button', { name: 'Saved', exact: true })).toBeVisible();
+          stage(record, 'same_edit_receipt_recovered');
+          await page.reload();
+          await expect(overview.locator('p')).toHaveCount(2);
+          await expect(overview.locator('p').first()).toHaveText('Updated This is synthetic wording for the upload acceptance test.');
+          await expect(overview.locator('p').nth(1)).toHaveText('The owner checks this paragraph before saving.');
+          await sectionSelect.selectOption({ index: 1 });
+          const sibling = page.getByRole('textbox', { name: 'Edit Next steps', exact: true });
+          await expect(sibling.locator('p')).toHaveText(['- Keep the original.', '- Reopen the saved document.']);
+          stage(record, 'edited_paragraphs_reloaded_sibling_unchanged');
         }
       }
       await original(file, receipt.upload_id); stage(record, 'original_reloaded_and_download_verified');

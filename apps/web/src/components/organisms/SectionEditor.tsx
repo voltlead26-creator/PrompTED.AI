@@ -13,6 +13,7 @@ import {
 import type { Editor } from "@tiptap/react";
 import type { EditAction } from "@prompted/shared/api-client";
 import type { Section } from "@prompted/shared/browser";
+import { renderSectionHtml } from "@prompted/shared/export";
 import { isVisiblyEmpty } from "@prompted/shared/visible-content";
 import { Badge, type BadgeStatus } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
@@ -25,6 +26,13 @@ import { ExplainWithTED } from "./ExplainWithTED";
 import { EditWithTED } from "./EditWithTED";
 import { TedChangeReview } from "./TedChangeReview";
 import styles from "./SectionEditor.module.css";
+
+function renderSectionForEditor(content: string): string {
+  // Stored legacy/imported sections may be plain text. Use the same paragraph
+  // and line-break conversion as preview/export before Tiptap parses HTML.
+  // This is presentation only; opening a section must not publish a new edit.
+  return renderTedPlaceholdersForEditor(renderSectionHtml(content));
+}
 
 interface SectionEditorProps {
   section: Section | null;
@@ -211,7 +219,7 @@ export function SectionEditor({
 
   const editor = useEditor({
     extensions: [StarterKit, TedPlaceholderExtension],
-    content: renderTedPlaceholdersForEditor(section?.content ?? ""),
+    content: renderSectionForEditor(section?.content ?? ""),
     editable: true,
     immediatelyRender: false,
     editorProps: {
@@ -322,7 +330,7 @@ export function SectionEditor({
 
   useEffect(() => {
     if (!editor || !editorIdentity) return;
-    const incomingHtml = renderTedPlaceholdersForEditor(sectionContent || "<p></p>");
+    const incomingHtml = renderSectionForEditor(sectionContent || "<p></p>");
     const incoming = createNodeFromContent(incomingHtml, editor.schema, { slice: false });
     const sameIdentity = syncedIdentity.current === editorIdentity;
     syncedIdentity.current = editorIdentity;
@@ -571,7 +579,7 @@ export function SectionEditor({
         content: applied.section_content,
       });
       onPersistedLegacyApply?.(applied);
-      editor.commands.setContent(renderTedPlaceholdersForEditor(applied.section_content), {
+      editor.commands.setContent(renderSectionForEditor(applied.section_content), {
         emitUpdate: false,
       });
     } else {

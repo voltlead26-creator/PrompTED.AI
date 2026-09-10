@@ -31,6 +31,7 @@ import {
   type WorkspaceSectionBodyV1,
 } from "@/lib/workspace-initial-state";
 import type { WorkspaceDeviceSaveStatus } from "@/lib/workspace-store";
+import type { WorkspaceRecoveryReview } from "@/lib/workspace-recovery";
 import type { CapturedExportRequestResult } from "@/lib/api/captured-document-operations";
 import { fetchWorkspaceSectionBody, type LegacySectionApplyResult } from "@/lib/api/sections";
 import {
@@ -53,6 +54,10 @@ export interface MissingInfoQuestion {
 }
 
 export interface UseWorkspace {
+  browserRecovery: WorkspaceRecoveryReview | null;
+  restoreBrowserRecovery: () => Promise<boolean>;
+  discardBrowserRecovery: () => boolean;
+  cancelBrowserRecovery: () => void;
   loading: boolean;
   drafting: boolean;
   syncStatus: WorkspaceSyncStatus;
@@ -122,6 +127,10 @@ export function useWorkspace(
   const { user } = useAuth();
   const {
     state,
+    browserRecovery,
+    restoreBrowserRecovery,
+    discardBrowserRecovery,
+    cancelBrowserRecovery,
     loading,
     drafting,
     syncStatus,
@@ -555,6 +564,10 @@ export function useWorkspace(
 
   return {
     loading,
+    browserRecovery,
+    restoreBrowserRecovery,
+    discardBrowserRecovery,
+    cancelBrowserRecovery,
     drafting,
     syncStatus,
     deviceSaveStatus,

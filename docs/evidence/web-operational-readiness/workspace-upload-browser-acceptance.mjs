@@ -278,18 +278,51 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
         assert.ok(actual.equals(readFileSync(file.path))); assert.equal(sha(actual), file.sha256);
         if (file.importText) {
           const document = JSON.parse(sql('new-upload-document-proof-' + proofs.length, `select jsonb_build_object(
-            'title',d.title,'status',d.status,'owner',d.user_id,'outcome',d.outcome_id,'outcome_status',o.status,
+            'title',d.title,'status',d.status,'revision',d.current_revision,'approved_revision',d.approved_revision,'owner',d.user_id,'outcome',d.outcome_id,'outcome_status',o.status,
             'outcome_owner',o.user_id,'sections',(select jsonb_agg(jsonb_build_object('name',s.name,'content',s.content,
-              'order',s.order_index,'status',s.status,'owner',s.user_id) order by s.order_index) from public.sections s where s.document_id=d.id))
+              'order',s.order_index,'status',s.status,'owner',s.user_id,'id',s.id,'revision',s.revision,
+              'approved_revision',s.approved_revision) order by s.order_index) from public.sections s where s.document_id=d.id))
             from public.documents d join public.outcomes o on o.id=d.outcome_id where d.id=${literal(u.document_id)}::uuid;`));
           assert.equal(document.title, record.name.replace(/\.[^.]+$/, '')); assert.equal(document.status, 'draft');
           assert.equal(document.owner, user.id); assert.equal(document.outcome_owner, user.id);
           assert.equal(document.outcome, record.outcomeId); assert.equal(document.outcome_status, 'in_progress');
           assert.deepEqual(document.sections.map(section => section.order), [0, 1]);
           assert.deepEqual(document.sections.map(({ name, content, status, owner }) => ({ name, content, status, owner })), [
-            { name: 'Overview', content: 'This is synthetic wording for the upload acceptance test.\n\nThe owner checks this paragraph before saving.', status: 'draft', owner: user.id },
+            { name: 'Overview', content: '<p>Updated This is synthetic wording for the upload acceptance test.</p><p>The owner checks this paragraph before saving.</p>', status: 'edited', owner: user.id },
             { name: 'Next steps', content: '- Keep the original.\n\n- Reopen the saved document.', status: 'draft', owner: user.id },
           ]);
+          for (const stage of ['retained_text_review_resumed_after_reload', 'first_visit_tour_dismissed', 'edited_section_committed_ack_discarded',
+            'edit_delivery_failed_before_commit', 'browser_copy_review_visible_in_foreground_after_reload',
+            'same_edit_request_restored_after_reload', 'restored_wording_saved_with_acknowledgement_uncertainty',
+            'save_uncertainty_visible', 'complete_browser_recovery_copy_read_during_uncertainty', 'same_edit_receipt_recovered', 'edited_paragraphs_reloaded_sibling_unchanged']) {
+            assert.ok(record.stages.includes(stage), `Missing text edit stage: ${stage}`);
+          }
+          if (report.project === 'narrow-chromium') for (const stage of ['focused_editor_opened', 'focused_editor_closed']) {
+            assert.ok(record.stages.includes(stage), `Missing mobile editor stage: ${stage}`);
+          }
+          const receipt = record.editReceipt; assert.ok(receipt); assert.equal(receipt.idempotent_replay, false);
+          assert.ok(record.failedSaveRequest); assert.deepEqual(record.recoveredSaveRequest, record.failedSaveRequest);
+          assert.equal(record.failedSaveRequest.p_document_id, u.document_id);
+          assert.equal(record.failedSaveRequest.p_idempotency_key, receipt.idempotency_key);
+          assert.equal(record.failedSaveRequest.p_expected_document_revision, receipt.accepted_document_revision);
+          const recovery = record.recoveryCopy; assert.ok(recovery);
+          assert.equal(recovery.version, 3); assert.equal(recovery.owner, `user:${user.id}`);
+          assert.equal(recovery.outcomeId, u.outcome_id); assert.equal(recovery.value.documentId, u.document_id);
+          assert.deepEqual(recovery.value.sections.map(section => ({ id: section.id, content: section.content, owner: section.user_id, loaded: section.content_loaded })),
+            document.sections.map(section => ({ id: section.id, content: section.content, owner: section.owner, loaded: true })),
+            'Browser recovery copy must contain the same exact owned wording as the independently read saved sections');
+          assert.equal(receipt.document_id, u.document_id); assert.equal(receipt.outcome_id, u.outcome_id);
+          assert.equal(document.revision, receipt.document_revision); assert.equal(document.approved_revision, null);
+          assert.equal(receipt.document_revision, receipt.accepted_document_revision + 1);
+          for (const [index, section] of document.sections.entries()) {
+            const saved = receipt.sections[index]; assert.equal(saved.section_id, section.id);
+            assert.equal(saved.revision, section.revision); assert.equal(saved.status, section.status);
+            assert.equal(saved.content_sha256, sha(section.content)); assert.equal(section.approved_revision, null);
+          }
+          const receipts = JSON.parse(sql('new-upload-edit-receipt-proof-' + proofs.length,
+            `select coalesce(jsonb_agg(r.result),'[]'::jsonb) from private.legacy_workspace_save_receipts r
+              where r.user_id=${literal(user.id)}::uuid and r.document_id=${literal(u.document_id)}::uuid;`));
+          assert.deepEqual(receipts, [receipt], 'One immutable save receipt must survive the lost acknowledgement and replay');
         }
         proofs.push({ uploadId: u.id, ownerId: u.user_id, name: u.file_name, byteLength: actual.length, sha256: sha(actual),
           status: u.status, outcomeId: u.outcome_id, documentId: u.document_id, classificationStatus: 'not_requested' });
