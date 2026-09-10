@@ -112,6 +112,25 @@ display in the editor and dismiss the Create menu correctly. The reviewed
 DOCX helper changes are source-only adapters with no activated source-binding,
 editing, approval or export path. Their tests passed as described above.
 
+## Additional account-truth repair
+
+The signed-in production account was at its Free allowance (3/3). Its upgrade
+dialog claimed selecting a plan would initiate follow-up, but the account
+handler only closed the dialog and displayed a success toast. No request was
+sent. Source tracing also found `fetchUsageState` silently mapped failed reads
+to Free/zero and the page accepted a previous account's delayed result.
+
+Two page regressions and eight usage-boundary regressions reproduced those
+failures before repair. The existing owner-dispatch/Supabase client now binds
+the read to the initiating account and cancellation signal. Failed or malformed
+subscription/usage results are rejected; a confirmed absent subscription still
+maps to Free. The page fences delayed results, times out after 30 seconds,
+aborts on unmount/account change and provides an explicit retry. Checkout copy
+accurately states that no upgrade request is submitted and the plan is unchanged.
+No new billing state, entitlement write, request queue or checkout activation
+was added. Focused/adjacent account tests pass 44 assertions; owner-dispatch
+and owner-client suites pass alongside the new account/usage tests.
+
 These are release dependencies, not permission to bypass validation, fabricate
 attestations, rewrite applied migration history, delete functions, or activate
 an unverified feature. A deploy cannot be described as a fully functioning app

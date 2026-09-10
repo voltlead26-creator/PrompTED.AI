@@ -9,19 +9,70 @@ import { useAuth } from "@/components/providers";
 import { useToast } from "@/components/atoms/Toast";
 import { fetchUsageState } from "@/lib/usage";
 import type { UsageState } from "@prompted/shared";
+import {
+  captureOwnerDispatch,
+  ownerDispatchIsCurrent,
+  type OwnerDispatchLease,
+} from "@/lib/browser-principal-state";
 import styles from "../settings.module.css";
 
 export default function AccountPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const { showToast } = useToast();
-  const [usageState, setUsageState] = useState<UsageState | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [read, setRead] = useState<{
+    ownerId: string;
+    attempt: number;
+    lease: OwnerDispatchLease | null;
+    status: "loading" | "ready" | "error";
+    value?: UsageState;
+  } | null>(null);
   const [paywallOpen, setPaywallOpen] = useState(false);
+  const userId = user?.id;
+  const currentRead =
+    read &&
+    read.ownerId === userId &&
+    read.attempt === attempt &&
+    (!read.lease || ownerDispatchIsCurrent(read.lease))
+      ? read
+      : null;
+  const usageState = currentRead?.status === "ready" ? currentRead.value : null;
 
   useEffect(() => {
-    if (!user) return;
-    fetchUsageState(user.id).then(setUsageState);
-  }, [user]);
+    if (loading || !userId) return;
+    const controller = new AbortController();
+    let disposed = false;
+    let lease: OwnerDispatchLease;
+    try {
+      lease = captureOwnerDispatch(userId);
+    } catch {
+      setRead({ ownerId: userId, attempt, lease: null, status: "error" });
+      return;
+    }
+    const identity = { ownerId: userId, attempt, lease };
+    setRead({ ...identity, status: "loading" });
+    setPaywallOpen(false);
+    const current = () => !disposed && ownerDispatchIsCurrent(lease);
+    const timer = setTimeout(() => {
+      if (current()) setRead({ ...identity, status: "error" });
+      controller.abort();
+    }, 30_000);
+    void fetchUsageState(userId, controller.signal)
+      .then((value) => {
+        if (current() && !controller.signal.aborted)
+          setRead({ ...identity, status: "ready", value });
+      })
+      .catch(() => {
+        if (current() && !controller.signal.aborted) setRead({ ...identity, status: "error" });
+      })
+      .finally(() => clearTimeout(timer));
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [attempt, loading, userId]);
 
   if (loading) return null;
   if (!user) {
@@ -44,8 +95,17 @@ export default function AccountPage() {
           currentPeriodEnd={usageState.currentPeriodEnd}
           onUpgrade={() => setPaywallOpen(true)}
         />
+      ) : currentRead?.status === "error" ? (
+        <div role="alert">
+          <p>Your plan and usage could not be confirmed. Try loading them again.</p>
+          <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+            Retry plan details
+          </button>
+        </div>
       ) : (
-        <div aria-busy="true" aria-label="Loading plan details">Loading…</div>
+        <div aria-busy="true" aria-label="Loading plan details">
+          Loading…
+        </div>
       )}
 
       {usageState && (
@@ -57,8 +117,8 @@ export default function AccountPage() {
             setPaywallOpen(false);
             showToast({
               message:
-                "Thanks — TED's team will reach out about upgrading. Online checkout isn't live yet.",
-              tone: "success",
+                "Online checkout isn't available yet. No upgrade request was sent, and your plan is unchanged.",
+              tone: "info",
             });
           }}
         />

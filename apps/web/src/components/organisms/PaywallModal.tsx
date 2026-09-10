@@ -65,8 +65,8 @@ export function PaywallModal({
             : "You've reached the limit on your current plan. Upgrade to keep going."}
         </p>
         <p className={styles.notice} role="note">
-          Online checkout isn&apos;t available yet on the web. Choosing a plan below lets TED know
-          what you&apos;re after — we&apos;ll follow up rather than charge you automatically.
+          Online checkout isn&apos;t available yet on the web. You can compare plans here,
+          but selecting one does not send an upgrade request or change your current plan.
         </p>
 
         <div className={styles.plans} role="list">
