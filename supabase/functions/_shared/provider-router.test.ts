@@ -3366,3 +3366,29 @@ Deno.test("a resumed admitted fallback uses Ollama without an OpenAI key or redi
     },
   );
 });
+
+Deno.test("cumulative failure denial stops a new router invocation before provider or capacity work", async () => {
+  let reads = 0;
+  const admin = { rpc(name: string, args: Record<string, unknown>) {
+    assertEquals(name, "read_legacy_model_call_checkpoint");
+    assertEquals(args.p_allocate_attempt, false); reads += 1;
+    return Promise.resolve({ data: { state: "attempt_limit", provider_permitted: false,
+      reason: "operation_failure_budget_exhausted", error_code: "GENERATION_ATTEMPT_LIMIT_REACHED" }, error: null });
+  } } as unknown as SupabaseClient;
+  const controller = new AbortController();
+  bindModelCallContextImpl(controller.signal, { userId: AUDIT_OWNER, generationRequestId: "cumulative-budget", admin,
+    checkpoint: { scope: "generate-checklist", originReservationId: AUDIT_ORIGIN, executionClaimToken: AUDIT_CLAIM } });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = () => { fetches += 1; return Promise.reject(new Error("Unexpected provider fetch")); };
+  try {
+    for (let invocation = 0; invocation < 2; invocation += 1) {
+      const error = await assertRejects(() => routeRequest({ task: "checklist",
+        logicalStageKey: "generate-checklist.primary", systemPrompt: "system",
+        messages: [{ role: "user", content: "Synthetic budget test" }], signal: controller.signal }), OpenAIAdapterError);
+      assertEquals(error.code, "GENERATION_ATTEMPT_LIMIT_REACHED");
+      assertEquals(error.retryable, false);
+    }
+    assertEquals(reads, 2); assertEquals(fetches, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});

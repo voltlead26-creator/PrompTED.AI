@@ -18,6 +18,8 @@ import { bindModelCallContext } from "./model-call-context.ts";
 import { MAX_UPLOAD_BYTES } from "./upload-extraction-contract.ts";
 import { BRAND_LOGO_MAX_BYTES } from "../../../packages/shared/src/brand-kit-operation.ts";
 
+import { parseEffectiveProductAccess, type EffectiveProductAccess } from "../../../packages/shared/src/plans.ts";
+
 export type Plan = "free" | "pro" | "premium" | "business";
 
 export interface AuthContext {
@@ -27,7 +29,9 @@ export interface AuthContext {
   plan: Plan;
   /** Frozen plan ceiling passed to the atomic allowance reservation RPC. */
   monthlyDocumentCap: number;
-  /** Admin client for privileged reads (usage ledger, subscriptions). */
+  /** Owner-bound access projection; optional for older injected test contexts. */
+  access?: EffectiveProductAccess;
+  /** Admin client for privileged reads (usage ledger and effective access). */
   admin: SupabaseClient;
   /** Sanitised JSON request body. Multipart requests retain their original body. */
   body: Record<string, unknown> | null;
@@ -37,29 +41,29 @@ export interface AuthContext {
   generationRequestId?: string;
 }
 
-// ----- plan caps (documents per month) -----
-
-const PLAN_CAPS: Record<Plan, number> = {
-  free: 3,
-  pro: 20,
-  premium: 40,
-  // Keep one reviewed authority shared with the captured-operation database
-  // trigger. Environment overrides would admit different counts through the
-  // legacy and captured paths for the same user and billing period.
-  business: 1000,
-};
-
-export function planCap(plan: Plan): number {
-  return PLAN_CAPS[plan];
-}
-
 // ----- Supabase clients -----
 
 function adminClient(): SupabaseClient {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) throw new Error("Supabase env vars not configured");
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createClient(url, key, {
+    auth: { persistSession: false },
+    global: { fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (method.toUpperCase() === "HEAD" && path === "/rest/v1/usage_ledger" && response.ok) {
+        // PostgREST's client parses this with parseInt, which would silently
+        // truncate malformed fractional/trailing-text counts before our check.
+        const range = response.headers.get("content-range");
+        if (range !== null && !/^(?:\*|\d+-\d+)\/(?:0|[1-9]\d*)$/.test(range)) {
+          throw new Error("ACCOUNT_USAGE_RESPONSE_INVALID");
+        }
+      }
+      return response;
+    } },
+  });
 }
 
 function userClient(token: string): SupabaseClient {
@@ -72,50 +76,88 @@ function userClient(token: string): SupabaseClient {
   });
 }
 
-// ----- plan lookup -----
+// ----- authoritative account access and usage reads -----
 
-async function loadPlan(admin: SupabaseClient, userId: string): Promise<Plan> {
-  const { data } = await admin
-    .from("subscriptions")
-    .select("plan, status")
-    .eq("user_id", userId)
-    .in("status", ["active", "trialing"])
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .single();
+const ACCOUNT_READ_TIMEOUT_MS = 10_000;
 
-  if (!data) return "free";
-  const plan = String(data.plan ?? "free") as Plan;
-  return (["free", "pro", "premium", "business"] as Plan[]).includes(plan)
-    ? plan
-    : "free";
+function accountReadError(code: string): AuthError {
+  return new AuthError(503, code, { error: { code,
+    message: "Your account allowance could not be checked. Please retry.", retryable: true } });
 }
 
-// ----- usage check -----
+function cancelledRequest(): AuthError {
+  return new AuthError(400, "REQUEST_CANCELLED", { error: {
+    code: "REQUEST_CANCELLED", message: "The request was cancelled.", retryable: false } });
+}
 
-async function monthlyUsage(
-  admin: SupabaseClient,
-  userId: string,
-): Promise<number> {
-  const start = new Date();
-  start.setDate(1);
-  start.setHours(0, 0, 0, 0);
+/** Bound even a transport that ignores abort; late replies cannot admit work. */
+function boundedAccountRead<T>(
+  requestSignal: AbortSignal,
+  code: string,
+  read: (signal: AbortSignal) => PromiseLike<T>,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      requestSignal.removeEventListener("abort", cancel);
+    };
+    const fail = (error: AuthError) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+      controller.abort();
+    };
+    const cancel = () => fail(cancelledRequest());
+    const timer = setTimeout(() => fail(accountReadError(code)), ACCOUNT_READ_TIMEOUT_MS);
+    requestSignal.addEventListener("abort", cancel, { once: true });
+    if (requestSignal.aborted) { cancel(); return; }
+    Promise.resolve().then(() => {
+      if (settled) throw cancelledRequest();
+      return read(controller.signal);
+    }).then(value => {
+      if (settled) return;
+      if (requestSignal.aborted) { cancel(); return; }
+      settled = true;
+      cleanup();
+      resolve(value);
+    }, () => fail(accountReadError(code)));
+  });
+}
 
-  const { count } = await admin
+async function loadAccess(admin: SupabaseClient, userId: string, signal: AbortSignal): Promise<EffectiveProductAccess> {
+  const { data, error } = await boundedAccountRead(signal, "PRODUCT_ACCESS_UNAVAILABLE", abortSignal =>
+    admin.rpc("get_effective_product_access_v1", { p_user_id: userId }).abortSignal(abortSignal));
+  if (error) throw accountReadError("PRODUCT_ACCESS_UNAVAILABLE");
+  try {
+    return parseEffectiveProductAccess(data, userId);
+  } catch {
+    throw accountReadError("PRODUCT_ACCESS_INVALID");
+  }
+}
+
+async function monthlyUsage(admin: SupabaseClient, userId: string, signal: AbortSignal): Promise<number> {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const { count, error } = await boundedAccountRead(signal, "ACCOUNT_USAGE_UNAVAILABLE", abortSignal => admin
     .from("usage_ledger")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("event_type", "document_created")
-    .gte("created_at", start.toISOString());
-
-  return count ?? 0;
+    .gte("created_at", start.toISOString())
+    .abortSignal(abortSignal));
+  if (error) throw accountReadError("ACCOUNT_USAGE_UNAVAILABLE");
+  if (count === null || !Number.isSafeInteger(count) || count < 0) throw accountReadError("ACCOUNT_USAGE_INVALID");
+  return count;
 }
 
 // ----- public interface -----
 
 export class AuthError extends Error {
   constructor(
-    public readonly status: 400 | 401 | 402 | 413 | 429,
+    public readonly status: 400 | 401 | 402 | 413 | 429 | 503,
     public readonly code: string,
     public readonly payload: Record<string, unknown>,
   ) {
@@ -123,7 +165,14 @@ export class AuthError extends Error {
   }
 }
 
-export const PAYWALL_PAYLOAD = (plan: Plan) => ({
+export const PAYWALL_PAYLOAD = (plan: Plan, accessProfile: "subscription" | "owner" = "subscription") => accessProfile === "owner" ? ({
+  error: {
+    code: "DOCUMENT_LIMIT_REACHED",
+    message: "You have used your 1,000 documents for this month. New allowance becomes available next month.",
+    paywall_trigger: false,
+    current_plan: plan,
+  },
+}) : ({
   error: {
     code: "PAYWALL",
     message:
@@ -687,13 +736,14 @@ export async function guardRequest(
     throw rateError;
   }
 
-  const plan = await loadPlan(admin, user.id);
-  const monthlyDocumentCap = planCap(plan);
+  const access = await loadAccess(admin, user.id, req.signal);
+  const plan = access.effectivePlan;
+  const monthlyDocumentCap = access.monthlyDocumentCap;
 
   if (enforceCap) {
-    const used = await monthlyUsage(admin, user.id);
+    const used = await monthlyUsage(admin, user.id, req.signal);
     if (used >= monthlyDocumentCap) {
-      throw new AuthError(402, "over_cap", PAYWALL_PAYLOAD(plan));
+      throw new AuthError(402, "over_cap", PAYWALL_PAYLOAD(plan, access.accessProfile));
     }
   }
 
@@ -713,6 +763,7 @@ export async function guardRequest(
     });
   }
 
+  if (req.signal.aborted) throw cancelledRequest();
   bindModelCallContext(req.signal, {
     userId: user.id,
     admin,
@@ -725,6 +776,7 @@ export async function guardRequest(
     isAnonymous: false,
     plan,
     monthlyDocumentCap,
+    access,
     admin,
     body,
     multipartBody,

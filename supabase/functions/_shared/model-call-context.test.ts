@@ -15,6 +15,7 @@ import {
   completeUserProviderDispatch,
   inheritModelCallContext,
   markOpenAICapacityDispatched,
+  markLegacyModelAttemptDispatched,
   ModelCallContextError,
   ModelCapacityError,
   prepareLegacyModelAttempt,
@@ -620,3 +621,26 @@ Deno.test("metering persistence errors propagate fail closed", async () => {
       }),
   );
 });
+
+for (const [databaseCode, databaseMessage, expected, calls] of [
+  ["PGB01", "GENERATION_ATTEMPT_LIMIT_REACHED", "GENERATION_ATTEMPT_LIMIT_REACHED", 1],
+  ["PGB01", "different error", "MODEL_CALL_DISPATCH_ACK_UNRESOLVED", 2],
+  ["P0001", "GENERATION_ATTEMPT_LIMIT_REACHED", "MODEL_CALL_DISPATCH_ACK_UNRESOLVED", 2],
+] as const) {
+  Deno.test(`dispatch budget denial is exact and permanent: ${databaseCode}/${databaseMessage}`, async () => {
+    let count = 0;
+    const admin = { rpc(name: string) {
+      assertEquals(name, "mark_legacy_model_attempt_dispatched"); count += 1;
+      return Promise.resolve({ data: null, error: { code: databaseCode, message: databaseMessage } });
+    } } as never;
+    const signal = new AbortController().signal;
+    bindModelCallContext(signal, { userId: "94120000-0000-4000-8000-000000000001", admin,
+      generationRequestId: "budget-context", checkpoint: { scope: "generate-document",
+        originReservationId: "94120000-0000-4000-8000-000000000002",
+        executionClaimToken: "94120000-0000-4000-8000-000000000003" } });
+    const error = await assertRejects(() => markLegacyModelAttemptDispatched(signal, {
+      logicalStageKey: "generate-document.primary", requestSha256: "a".repeat(64), attemptNumber: 1,
+      durableAdmissionId: "94120000-0000-4000-8000-000000000004" }), ModelCallContextError);
+    assertEquals(error.code, expected); assertEquals(count, calls);
+  });
+}

@@ -423,8 +423,8 @@ async function reserveWithPolicy(
     if (databaseMessage(error).includes("ALLOWANCE_CAP_REACHED")) {
       throw new AllowanceReservationError(
         402,
-        "PAYWALL",
-        PAYWALL_PAYLOAD(params.plan),
+        params.accessProfile === "owner" ? "DOCUMENT_LIMIT_REACHED" : "PAYWALL",
+        PAYWALL_PAYLOAD(params.plan, params.accessProfile),
       );
     }
     policyRpcError(error);
@@ -519,6 +519,8 @@ export async function reserveDocumentAllowance(
     body: Record<string, unknown>;
     plan: Plan;
     monthlyCap: number;
+    /** Validated server projection used only for limit messaging, never allowance authority. */
+    accessProfile?: "subscription" | "owner";
     ttlSeconds?: number;
     executionPolicy?: AllowanceExecutionPolicy & { legacySha256?: string };
     signal?: AbortSignal;
@@ -560,8 +562,8 @@ export async function reserveDocumentAllowance(
     if (message.includes("ALLOWANCE_CAP_REACHED")) {
       throw new AllowanceReservationError(
         402,
-        "PAYWALL",
-        PAYWALL_PAYLOAD(params.plan),
+        params.accessProfile === "owner" ? "DOCUMENT_LIMIT_REACHED" : "PAYWALL",
+        PAYWALL_PAYLOAD(params.plan, params.accessProfile),
       );
     }
     if (message.includes("ALLOWANCE_REQUEST_REPLAY_CONFLICT")) {

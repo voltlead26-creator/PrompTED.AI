@@ -89,6 +89,8 @@ export interface LegacyProviderResultEnvelope {
 
 export interface LegacyModelCheckpoint {
   fallback_required?: boolean;
+  reason?: string;
+  error_code?: string;
   state:
     | "prepared"
     | "replay"

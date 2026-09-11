@@ -1,3 +1,4 @@
+import { withPaidPlanFixtures } from "./paid-plan-fixture-revisions.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -5,10 +6,10 @@ import test from "node:test";
 import { assertHistoricalRowsPreserved, assertHostedLedgerPhase, validateHostedLedgerUpgradePlan } from "./hosted-ledger-upgrade-acceptance.mjs";
 
 const bytes = readFileSync(new URL("./hosted-ledger-upgrade-baseline.json", import.meta.url));
-const manifest = JSON.parse(bytes).manifest;
+const manifest = withPaidPlanFixtures(JSON.parse(bytes).manifest);
 const hash = value => createHash("sha256").update(value).digest("hex");
 test("rehearses the exact recorded 68-version ledger and its reviewed 13 forward migrations", () => {
-  // Historical fixture tests retain their recorded inputs. The runner still
+  // Historical migration inputs retain their pins; paid fixtures have an explicit revision. The runner still
   // supplies ALL current SQL to the unchanged validator before an upgrade run.
   const reviewed = Object.fromEntries(Object.keys(manifest).map(file =>
     [file, hash(readFileSync(new URL(`../../../${file}`, import.meta.url)))]));

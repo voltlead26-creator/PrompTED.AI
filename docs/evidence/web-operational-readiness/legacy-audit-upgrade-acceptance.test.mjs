@@ -1,3 +1,4 @@
+import { withPaidPlanFixtures } from "./paid-plan-fixture-revisions.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -6,7 +7,7 @@ import { assertLegacyAuditPhase, legacyAuditFixture, legacyAuditMigrationFile, l
   legacyAuditTestFile, legacyAuditTestSha, validateLegacyAuditUpgradePlan } from "./legacy-audit-upgrade-acceptance.mjs";
 
 const bytes = readFileSync(new URL("./legacy-audit-upgrade-sql-baseline.json", import.meta.url));
-const prefix = JSON.parse(bytes).manifest;
+const prefix = withPaidPlanFixtures(JSON.parse(bytes).manifest);
 const manifest = { ...prefix, [legacyAuditMigrationFile]: legacyAuditMigrationSha, [legacyAuditTestFile]: legacyAuditTestSha };
 const hash = value => createHash("sha256").update(value).digest("hex");
 

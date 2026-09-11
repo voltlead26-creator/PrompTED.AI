@@ -12,15 +12,14 @@ import {
 import { CAPTURED_DOCUMENT_LEDGER } from "@prompted/shared/document-ledger";
 import type { FirstCapturedTemplateId } from "@prompted/shared/document-operation";
 import { ensureApiConfigured } from "@/lib/api";
-import {
-  captureOwnerDispatch,
-  ownerDispatchIsCurrent,
-} from "@/lib/browser-principal-state";
+import { captureOwnerDispatch, ownerDispatchIsCurrent } from "@/lib/browser-principal-state";
 import styles from "./CapturedAdmission.module.css";
 
 const PAGE_SIZE = 3;
 const RECONNECT_POLL_MS = 2_000;
 const RECONNECT_MAX_BACKOFF_MS = 30_000;
+const RECONNECT_MAX_FAILURES = 5;
+const RECONNECT_MAX_OBSERVATION_MS = 120_000;
 const RESUMABLE_OPERATION_STATUSES = [
   "accepted",
   "generating",
@@ -222,6 +221,8 @@ export function CapturedAdmission({
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [pausedOperationId, setPausedOperationId] = useState<string | null>(null);
+  const observedIdentityRef = useRef<string | null>(null);
   const [storedOperation, setOperation] = useState<CapturedDocumentOperationStatus | null>(
     initialOperation,
   );
@@ -263,7 +264,8 @@ export function CapturedAdmission({
     setOperation(initialOperation);
     operationRef.current = initialOperation;
     operationEpochRef.current += 1;
-    activeOperationIdRef.current = initialOperation?.operation_id ?? nextAdmission.operationId ?? null;
+    activeOperationIdRef.current =
+      initialOperation?.operation_id ?? nextAdmission.operationId ?? null;
   }, [componentIdentity, initialOperation, outcomeId, ownerUserId]);
 
   const persist = useCallback(
@@ -330,12 +332,16 @@ export function CapturedAdmission({
   );
 
   const durableOperationId = operation?.operation_id ?? admission.operationId;
+  const observationIdentity = `${ownerUserId}:${outcomeId}:${durableOperationId ?? ""}`;
 
-  const fetchOperation = useCallback(async (operationId: string, signal?: AbortSignal) => {
-    const requestContext = captureOwnerDispatch(ownerUserId, signal);
-    ensureApiConfigured();
-    return await getCapturedDocumentOperation(operationId, requestContext);
-  }, [ownerUserId]);
+  const fetchOperation = useCallback(
+    async (operationId: string, signal?: AbortSignal) => {
+      const requestContext = captureOwnerDispatch(ownerUserId, signal);
+      ensureApiConfigured();
+      return await getCapturedDocumentOperation(operationId, requestContext);
+    },
+    [ownerUserId],
+  );
 
   const applyReconnect = useCallback(
     (next: CapturedDocumentOperationStatus, expectedOperationId: string, expectedEpoch: number) => {
@@ -356,18 +362,50 @@ export function CapturedAdmission({
       if (!durableOperationId) return null;
       const expectedEpoch = operationEpochRef.current;
       const next = await fetchOperation(durableOperationId, signal);
+      if (signal?.aborted) return operationRef.current;
+      observedIdentityRef.current = observationIdentity;
       return applyReconnect(next, durableOperationId, expectedEpoch);
     },
-    [applyReconnect, durableOperationId, fetchOperation],
+    [applyReconnect, durableOperationId, fetchOperation, observationIdentity],
   );
 
+  const shouldObserve =
+    operation?.cancellation_requested !== true &&
+    ![
+      "ready_for_review",
+      "retryable_failure",
+      "terminal_failure",
+      "cancelled",
+      "awaiting_clarification",
+    ].includes(operation?.status ?? "");
+  const observationPaused = pausedOperationId === durableOperationId;
+
   useEffect(() => {
-    if (!durableOperationId) return;
+    setPausedOperationId(null);
+    // Keep the existing initial status read, including terminal snapshots, so
+    // reloads can discover a newer durable revision. Only active states poll.
+    if (
+      !durableOperationId ||
+      (!shouldObserve && observedIdentityRef.current === observationIdentity)
+    )
+      return;
     ensureApiConfigured();
     const controller = new AbortController();
     let stopped = false;
     let timer: number | undefined;
     let consecutiveFailures = 0;
+    let deadlineTimer: number | undefined;
+
+    const stop = (paused = false) => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      if (deadlineTimer !== undefined) window.clearTimeout(deadlineTimer);
+      controller.abort();
+      if (paused) setPausedOperationId(durableOperationId);
+    };
+    // This deadline belongs to the observation session, not an individual
+    // response. Successful reads must not extend it, and a hung read is aborted.
+    deadlineTimer = window.setTimeout(() => stop(true), RECONNECT_MAX_OBSERVATION_MS);
 
     const schedule = (delay: number) => {
       timer = window.setTimeout(() => {
@@ -382,6 +420,7 @@ export function CapturedAdmission({
         consecutiveFailures = 0;
         setError(null);
         if (
+          shouldObserve &&
           next &&
           ![
             "ready_for_review",
@@ -392,12 +431,19 @@ export function CapturedAdmission({
           ].includes(next.status)
         ) {
           schedule(RECONNECT_POLL_MS);
+        } else {
+          stop();
         }
       } catch (nextError) {
         const aborted = nextError instanceof DOMException && nextError.name === "AbortError";
         if (!stopped && !aborted) {
+          observedIdentityRef.current = observationIdentity;
           consecutiveFailures += 1;
           setError("TED could not reconnect yet. Your accepted operation is still recorded.");
+          if (!shouldObserve || consecutiveFailures >= RECONNECT_MAX_FAILURES) {
+            stop(true);
+            return;
+          }
           schedule(
             Math.min(RECONNECT_POLL_MS * 2 ** (consecutiveFailures - 1), RECONNECT_MAX_BACKOFF_MS),
           );
@@ -406,12 +452,8 @@ export function CapturedAdmission({
     };
 
     void poll();
-    return () => {
-      stopped = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [durableOperationId, reconnect]);
+    return () => stop();
+  }, [durableOperationId, observationIdentity, reconnect, shouldObserve]);
 
   const reconnectNow = useCallback(async () => {
     const expectedComponentIdentity = componentIdentity;
@@ -685,7 +727,13 @@ export function CapturedAdmission({
                   : "TED is waiting for the recorded capacity retry time. This document operation remains safely saved."}
             </p>
           ) : null}
-          {operation.lease_expires_at && !resumable && !terminal ? (
+          {observationPaused ? (
+            <p className={styles.note} role="status">
+              Automatic status checks are paused. The last confirmed status is shown. Use Check
+              latest status to refresh it, or cancel this operation if you no longer need it.
+            </p>
+          ) : null}
+          {operation.lease_expires_at && !resumable && !terminal && !observationPaused ? (
             <p className={styles.note}>
               TED will keep reconnecting. If its worker stops, this exact operation becomes safely
               resumable after the active lease ends.

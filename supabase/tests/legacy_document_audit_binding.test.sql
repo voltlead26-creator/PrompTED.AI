@@ -150,6 +150,10 @@ $f$;
 insert into auth.users(id,email,is_sso_user,is_anonymous,created_at,updated_at) values
  ('a8150000-0000-4000-8000-000000000001','audit-binding-owner@example.invalid',false,false,now(),now()),
  ('a8150000-0000-4000-8000-000000000002','audit-binding-other@example.invalid',false,false,now(),now());
+-- These audit cases request Business admission below. Supply its actual
+-- subscription now that reservation admission verifies server-owned access.
+insert into public.subscriptions(user_id,plan,status)
+values ('a8150000-0000-4000-8000-000000000001','business','active');
 select is((select count(*)::integer from auth.users where id in (
  'a8150000-0000-4000-8000-000000000001','a8150000-0000-4000-8000-000000000002')),2,
  'both synthetic owners positively exist');

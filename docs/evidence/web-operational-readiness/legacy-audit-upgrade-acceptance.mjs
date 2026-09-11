@@ -1,3 +1,4 @@
+import { withPaidPlanFixtures, paidPlanFixtureRevisions } from "./paid-plan-fixture-revisions.mjs";
 // Exact additive upgrade; reset, source attribution, target checks and cleanup
 // remain owned by run-isolated-db-baseline.mjs. Never use against hosted data.
 import assert from "node:assert/strict";
@@ -10,7 +11,7 @@ export const legacyAuditMigration = "20260908150000_legacy_document_audit_bindin
 export const legacyAuditMigrationFile = `supabase/migrations/${legacyAuditMigration}.sql`;
 export const legacyAuditMigrationSha = "c50026119bda6235692d13adfa78d857427eb544e8358685d8811914ce8ef32a";
 export const legacyAuditTestFile = "supabase/tests/legacy_document_audit_binding.test.sql";
-export const legacyAuditTestSha = "878ffb2325dd55e738f621d507200f4daa6861f6ad3e5d5a26d765e8f8361a15";
+export const legacyAuditTestSha = paidPlanFixtureRevisions[legacyAuditTestFile].after;
 const baselineSha = "169a29351621721b26af2451cbdfce69aa004e28b263286b495430a53ab7758b";
 const sha = value => createHash("sha256").update(value).digest("hex");
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;
@@ -30,7 +31,8 @@ export function validateLegacyAuditUpgradePlan(manifest, currentSource, baseline
   const currentSql = Object.fromEntries(Object.entries(currentSource).filter(([file]) =>
     file.startsWith("supabase/migrations/") || file.startsWith("supabase/tests/")));
   assert.deepEqual(manifest, currentSql, "Audit upgrade must exercise all current SQL");
-  const expected = { ...baseline.manifest, [legacyAuditMigrationFile]: legacyAuditMigrationSha,
+  const prefixManifest = withPaidPlanFixtures(baseline.manifest);
+  const expected = { ...prefixManifest, [legacyAuditMigrationFile]: legacyAuditMigrationSha,
     [legacyAuditTestFile]: legacyAuditTestSha };
   assert.deepEqual(manifest, expected, "Audit upgrade requires the exact reviewed SQL manifest");
   const versions = Object.keys(manifest).filter(file => file.startsWith("supabase/migrations/"))
@@ -39,7 +41,7 @@ export function validateLegacyAuditUpgradePlan(manifest, currentSource, baseline
   assert.deepEqual(versions.filter(version => version > baseline.predecessor), ["20260908150000"]);
   assert.equal(Object.keys(baseline.manifest).length, 125);
   return { predecessor: baseline.predecessor, forward: "20260908150000", versions,
-    prefixManifest: baseline.manifest, manifest: expected, baselineSha,
+    prefixManifest, manifest: expected, baselineSha,
     migrationFile: legacyAuditMigrationFile, migrationSha: legacyAuditMigrationSha,
     testFile: legacyAuditTestFile, testSha: legacyAuditTestSha };
 }

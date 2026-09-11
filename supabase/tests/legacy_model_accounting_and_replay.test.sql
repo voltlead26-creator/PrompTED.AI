@@ -711,6 +711,11 @@ create temp table replay_shape_state(
   response_payload jsonb not null
 );
 
+-- The following replay and provider cases explicitly request Pro/20 admission.
+-- Make that assumed entitlement real; no allowance or replay assertion changes.
+insert into public.subscriptions(user_id,plan,status)
+values ('e6000000-0000-4000-8000-000000000001','pro','active');
+
 do $function$
 declare
   v_route text;
@@ -923,6 +928,9 @@ values (
   'e6000000-0000-4000-8000-000000000003',
   'provider-checkpoint@example.test', false, false, now(), now()
 );
+-- This independent crash/reconciliation account also requests Pro/20 below.
+insert into public.subscriptions(user_id,plan,status)
+values ('e6000000-0000-4000-8000-000000000003','pro','active');
 create temp table provider_checkpoint_state(
   reservation_id uuid not null,
   execution_claim_token uuid not null,
@@ -1027,93 +1035,105 @@ select ok(
   'checkpoint request-hash drift fails closed before provider dispatch'
 );
 
+-- Retry exhaustion is its own operation. Later error/cancellation scenarios
+-- must not obtain new provider permission from an already exhausted operation.
+create temp table provider_retry_budget_state as
+with reserved as (
+  select public.reserve_document_allowance_with_result(
+    'e6000000-0000-4000-8000-000000000003',
+    'checkpoint-retry-budget', 'generate-document', repeat('8',64),
+    'pro', 20, 1800) as value
+)
+select (value->>'reservation_id')::uuid as reservation_id,
+  (value->>'execution_claim_token')::uuid as execution_claim_token from reserved;
+
 select is(
   public.read_legacy_model_call_checkpoint(
     'e6000000-0000-4000-8000-000000000003', 'generate-document',
-    (select reservation_id from provider_checkpoint_state),
-    'checkpoint-provider-result', 'generate-document.section:retry-budget',
+    (select reservation_id from provider_retry_budget_state),
+    'checkpoint-retry-budget', 'generate-document.section:retry-budget',
     repeat('a', 64), 2,
-    (select execution_claim_token from provider_checkpoint_state), true
+    (select execution_claim_token from provider_retry_budget_state), true
   )->>'attempt_number', '1',
   'retry budget allocates attempt one'
 );
 select public.mark_legacy_model_attempt_dispatched(
   'e6000000-0000-4000-8000-000000000003', 'generate-document',
-  (select reservation_id from provider_checkpoint_state),
-  'checkpoint-provider-result', 'generate-document.section:retry-budget',
+  (select reservation_id from provider_retry_budget_state),
+  'checkpoint-retry-budget', 'generate-document.section:retry-budget',
   repeat('a', 64), 1,
   (select id from private.legacy_model_attempt_admissions
-    where logical_request_id = 'checkpoint-provider-result'
+    where logical_request_id = 'checkpoint-retry-budget'
       and logical_stage_key = 'generate-document.section:retry-budget'
       and attempt_number = 1),
-  (select execution_claim_token from provider_checkpoint_state),
+  (select execution_claim_token from provider_retry_budget_state),
   '81000000-0000-4000-8000-000000000002'
 );
 select is(
   public.read_legacy_model_call_checkpoint(
     'e6000000-0000-4000-8000-000000000003', 'generate-document',
-    (select reservation_id from provider_checkpoint_state),
-    'checkpoint-provider-result', 'generate-document.section:retry-budget',
+    (select reservation_id from provider_retry_budget_state),
+    'checkpoint-retry-budget', 'generate-document.section:retry-budget',
     repeat('a', 64), 2,
-    (select execution_claim_token from provider_checkpoint_state), true
+    (select execution_claim_token from provider_retry_budget_state), true
   )->>'state', 'attempt_unresolved',
   'attempt two cannot be allocated while attempt one lacks a terminal accounting row'
 );
 select public.record_legacy_model_call_attempt(
-  'e6000000-0000-4000-8000-000000000003', 'checkpoint-provider-result',
+  'e6000000-0000-4000-8000-000000000003', 'checkpoint-retry-budget',
   'generate-document.section:retry-budget', repeat('a', 64),
   (select id::text from private.legacy_model_attempt_admissions
-    where logical_request_id = 'checkpoint-provider-result'
+    where logical_request_id = 'checkpoint-retry-budget'
       and logical_stage_key = 'generate-document.section:retry-budget'
       and attempt_number = 1),
   1, 'failed', '', 'http_429',
   'OPENAI_UPSTREAM_ERROR', 0, 0, now(), now(), 'gpt-5.6-sol',
   'routing.test.1', 'deep', 'medium', 'generate-document',
-  (select reservation_id from provider_checkpoint_state), null,
-  (select execution_claim_token from provider_checkpoint_state)
+  (select reservation_id from provider_retry_budget_state), null,
+  (select execution_claim_token from provider_retry_budget_state)
 );
 select is(
   public.read_legacy_model_call_checkpoint(
     'e6000000-0000-4000-8000-000000000003', 'generate-document',
-    (select reservation_id from provider_checkpoint_state),
-    'checkpoint-provider-result', 'generate-document.section:retry-budget',
+    (select reservation_id from provider_retry_budget_state),
+    'checkpoint-retry-budget', 'generate-document.section:retry-budget',
     repeat('a', 64), 2,
-    (select execution_claim_token from provider_checkpoint_state), true
+    (select execution_claim_token from provider_retry_budget_state), true
   )->>'attempt_number', '2',
   'attempt two is allocated only after attempt one is durably terminal'
 );
 select public.mark_legacy_model_attempt_dispatched(
   'e6000000-0000-4000-8000-000000000003', 'generate-document',
-  (select reservation_id from provider_checkpoint_state),
-  'checkpoint-provider-result', 'generate-document.section:retry-budget',
+  (select reservation_id from provider_retry_budget_state),
+  'checkpoint-retry-budget', 'generate-document.section:retry-budget',
   repeat('a', 64), 2,
   (select id from private.legacy_model_attempt_admissions
-    where logical_request_id = 'checkpoint-provider-result'
+    where logical_request_id = 'checkpoint-retry-budget'
       and logical_stage_key = 'generate-document.section:retry-budget'
       and attempt_number = 2),
-  (select execution_claim_token from provider_checkpoint_state),
+  (select execution_claim_token from provider_retry_budget_state),
   '81000000-0000-4000-8000-000000000003'
 );
 select public.record_legacy_model_call_attempt(
-  'e6000000-0000-4000-8000-000000000003', 'checkpoint-provider-result',
+  'e6000000-0000-4000-8000-000000000003', 'checkpoint-retry-budget',
   'generate-document.section:retry-budget', repeat('a', 64),
   (select id::text from private.legacy_model_attempt_admissions
-    where logical_request_id = 'checkpoint-provider-result'
+    where logical_request_id = 'checkpoint-retry-budget'
       and logical_stage_key = 'generate-document.section:retry-budget'
       and attempt_number = 2),
   2, 'failed', '', 'http_429',
   'OPENAI_UPSTREAM_ERROR', 0, 0, now(), now(), 'gpt-5.6-sol',
   'routing.test.1', 'deep', 'medium', 'generate-document',
-  (select reservation_id from provider_checkpoint_state), null,
-  (select execution_claim_token from provider_checkpoint_state)
+  (select reservation_id from provider_retry_budget_state), null,
+  (select execution_claim_token from provider_retry_budget_state)
 );
 select is(
   public.read_legacy_model_call_checkpoint(
     'e6000000-0000-4000-8000-000000000003', 'generate-document',
-    (select reservation_id from provider_checkpoint_state),
-    'checkpoint-provider-result', 'generate-document.section:retry-budget',
+    (select reservation_id from provider_retry_budget_state),
+    'checkpoint-retry-budget', 'generate-document.section:retry-budget',
     repeat('a', 64), 2,
-    (select execution_claim_token from provider_checkpoint_state), true
+    (select execution_claim_token from provider_retry_budget_state), true
   )->>'state', 'terminal_error',
   'an exhausted retryable attempt replays its durable terminal error'
 );
@@ -1685,7 +1705,9 @@ select extensions.dblink_exec(
     ) values (
       'e6000000-0000-4000-8000-000000000099',
       'legacy-attempt-concurrent@example.test', false, false, now(), now()
-    )
+    );
+    insert into public.subscriptions(user_id,plan,status)
+    values ('e6000000-0000-4000-8000-000000000099','pro','active');
   $sql$
 );
 select is(

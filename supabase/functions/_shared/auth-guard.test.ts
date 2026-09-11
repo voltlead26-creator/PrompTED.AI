@@ -1,6 +1,6 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { AuthError, guardRequest, planCap } from "./auth-guard.ts";
-import { prepareLegacyModelAttempt } from "./model-call-context.ts";
+import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
+import { AuthError, guardRequest } from "./auth-guard.ts";
+import { prepareLegacyModelAttempt, requireLegacyCheckpointContext, ModelCallContextError } from "./model-call-context.ts";
 
 type UserFixture = {
   id: string;
@@ -32,6 +32,7 @@ async function withUser<T>(
   run: () => Promise<T>,
   observeRateLimit?: (payload: Record<string, unknown>) => void,
   observeCheckpoint?: (payload: Record<string, unknown>) => void,
+  accessOptions: { access?: unknown; status?: number; usage?: number | null; usageStatus?: number; beforeAccess?: (signal: AbortSignal | null | undefined) => Promise<void> | void; observeAccess?: (payload: unknown) => void } = {},
 ): Promise<T> {
   const originalFetch = globalThis.fetch;
   const previous = {
@@ -51,11 +52,15 @@ async function withUser<T>(
         headers: { "content-type": "application/json" },
       });
     }
-    if (url.includes("/rest/v1/subscriptions")) {
-      return new Response("[]", {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+    if (url.includes("/rest/v1/rpc/get_effective_product_access_v1")) {
+      accessOptions.observeAccess?.(JSON.parse(String(init?.body)));
+      await accessOptions.beforeAccess?.(init?.signal);
+      return Response.json(accessOptions.access ?? accessFixture(user.id), { status: accessOptions.status ?? 200 });
+    }
+    if (url.includes("/rest/v1/usage_ledger")) {
+      const count = accessOptions.usage === undefined ? 0 : accessOptions.usage;
+      return new Response(null, { status: accessOptions.usageStatus ?? 200,
+        headers: count === null ? {} : { "content-range": `*/${count}` } });
     }
     if (url.includes("/rest/v1/rpc/consume_rate_limit")) {
       rateLimitCount += 1;
@@ -105,18 +110,132 @@ async function withUser<T>(
 }
 
 const verifiedUser: UserFixture = {
-  id: "verified-user",
+  id: "81000000-0000-4000-8000-000000000001",
   is_anonymous: false,
   email: "verified@example.test",
   email_confirmed_at: "2026-08-05T00:00:00Z",
   identities: [{ provider: "email" }],
 };
 
-Deno.test("legacy and captured plan caps share the reviewed mapping", () => {
-  assertEquals(planCap("free"), 3);
-  assertEquals(planCap("pro"), 20);
-  assertEquals(planCap("premium"), 40);
-  assertEquals(planCap("business"), 1000);
+function accessFixture(userId: string, owner = false) {
+  return { contract_version: "product-access.1", user_id: userId,
+    subscription_plan: "free", effective_plan: "free", subscription_status: null,
+    current_period_end: null, access_profile: owner ? "owner" : "subscription",
+    monthly_document_cap: owner ? 1000 : 3, ai_editing: owner, business_features: owner };
+}
+
+Deno.test("owner access admits creation after the Free cap using the exact account RPC", async () => {
+  let requested: unknown;
+  await withUser(verifiedUser, async () => {
+    const auth = await guardRequest(request({ prompt: "hello" }));
+    assertEquals(auth.plan, "free");
+    assertEquals(auth.monthlyDocumentCap, 1000);
+    assertEquals(requested, { p_user_id: verifiedUser.id });
+  }, undefined, undefined, { access: accessFixture(verifiedUser.id, true), usage: 3,
+    observeAccess: payload => { requested = payload; } });
+});
+
+Deno.test("access service failure rejects admission instead of inventing a Free plan", async () => {
+  await withUser(verifiedUser, async () => {
+    const error = await assertRejects(() => guardRequest(request({}), { enforceCap: false }), AuthError);
+    assertEquals(error.status, 503);
+    assertEquals(error.code, "PRODUCT_ACCESS_UNAVAILABLE");
+  }, undefined, undefined, { status: 503 });
+});
+
+for (const [label, change] of [
+  ["foreign account", { user_id: "81000000-0000-4000-8000-000000000099" }],
+  ["unlimited owner", { access_profile: "owner", monthly_document_cap: null, ai_editing: true, business_features: true }],
+  ["unversioned response", { contract_version: "unknown" }],
+  ["invented feature", { business_features: true }],
+] as const) {
+  Deno.test(`guard rejects ${label} access before model admission`, async () => {
+    await withUser(verifiedUser, async () => {
+      const error = await assertRejects(() => guardRequest(request({}), { enforceCap: false }), AuthError);
+      assertEquals(error.code, "PRODUCT_ACCESS_INVALID");
+      assertEquals(error.status, 503);
+    }, undefined, undefined, { access: { ...accessFixture(verifiedUser.id), ...change } });
+  });
+}
+
+Deno.test("owner cap is finite and does not advertise an upgrade", async () => {
+  await withUser(verifiedUser, async () => {
+    const error = await assertRejects(() => guardRequest(request({})), AuthError);
+    assertEquals(error.status, 402);
+    const detail = error.payload.error as Record<string, unknown>;
+    assertEquals(detail.code, "DOCUMENT_LIMIT_REACHED");
+    assertEquals(detail.paywall_trigger, false);
+    assertEquals(detail.plan_required, undefined);
+  }, undefined, undefined, { access: accessFixture(verifiedUser.id, true), usage: 1000 });
+});
+
+Deno.test("non-creation requests remain available at the owner cap", async () => {
+  await withUser(verifiedUser, async () => {
+    const auth = await guardRequest(request({}), { enforceCap: false });
+    assertEquals(auth.access?.accessProfile, "owner");
+  }, undefined, undefined, { access: accessFixture(verifiedUser.id, true), usageStatus: 503 });
+});
+
+Deno.test("ordinary admission enforces the returned cap instead of a copied plan table", async () => {
+  await withUser(verifiedUser, async () => {
+    const error = await assertRejects(() => guardRequest(request({})), AuthError);
+    assertEquals(error.status, 402);
+  }, undefined, undefined, { access: { ...accessFixture(verifiedUser.id), monthly_document_cap: 2 }, usage: 2 });
+});
+
+for (const fixture of [
+  { usageStatus: 503, expected: "ACCOUNT_USAGE_UNAVAILABLE" },
+  { usage: null, expected: "ACCOUNT_USAGE_INVALID" },
+  { usage: -1, expected: "ACCOUNT_USAGE_UNAVAILABLE" },
+  { usage: 1.5, expected: "ACCOUNT_USAGE_UNAVAILABLE" },
+]) {
+  Deno.test(`usage ${JSON.stringify(fixture)} cannot be treated as zero`, async () => {
+    await withUser(verifiedUser, async () => {
+      const error = await assertRejects(() => guardRequest(request({})), AuthError);
+      assertEquals(error.code, fixture.expected);
+      assertEquals(error.status, 503);
+    }, undefined, undefined, fixture);
+  });
+}
+
+Deno.test("cancellation rejects an access read that ignores abort and cannot publish its late reply", async () => {
+  const controller = new AbortController();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let transportSignal: AbortSignal | null | undefined;
+  await withUser(verifiedUser, async () => {
+    const req = new Request(request({}), { signal: controller.signal });
+    const error = await assertRejects(() => guardRequest(req, { enforceCap: false }), AuthError);
+    assertEquals(error.code, "REQUEST_CANCELLED");
+    assertEquals(transportSignal?.aborted, true);
+    release();
+    await held;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assertThrows(() => requireLegacyCheckpointContext(req.signal), ModelCallContextError);
+  }, undefined, undefined, { beforeAccess(signal) { transportSignal = signal; controller.abort(); return held; } });
+});
+
+Deno.test("hung access read has a deadline even when the transport ignores abort", async () => {
+  const originalTimer = globalThis.setTimeout;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    if (args[1] === 10_000) args[1] = 0;
+    return originalTimer(...args);
+  }) as typeof setTimeout;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let transportSignal: AbortSignal | null | undefined;
+  try {
+    await withUser(verifiedUser, async () => {
+      const req = request({});
+      const error = await assertRejects(() => guardRequest(req, { enforceCap: false }), AuthError);
+      assertEquals(error.code, "PRODUCT_ACCESS_UNAVAILABLE");
+      assertEquals(transportSignal?.aborted, true);
+      release();
+      await held;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      assertThrows(() => requireLegacyCheckpointContext(req.signal), ModelCallContextError);
+    }, undefined, undefined, { beforeAccess(signal) { transportSignal = signal; return held; } });
+  } finally { release(); globalThis.setTimeout = originalTimer; }
 });
 
 Deno.test("multipart guard parses once and hands the sanitised body to the route", async () => {
@@ -548,7 +667,7 @@ Deno.test("document context fields still reject payloads above 30,000 characters
 });
 
 Deno.test("authenticated bursts are limited per user", async () => {
-  await withUser({ ...verifiedUser, id: "burst-user" }, async () => {
+  await withUser({ ...verifiedUser, id: "81000000-0000-4000-8000-000000000002" }, async () => {
     for (let index = 0; index < 60; index += 1) {
       await guardRequest(request({ prompt: `request-${index}` }), {
         enforceCap: false,
@@ -567,7 +686,7 @@ Deno.test("authenticated bursts are limited per user", async () => {
 Deno.test("multiplexed routes can isolate status polling from mutation recovery buckets", async () => {
   const observed: Array<Record<string, unknown>> = [];
   await withUser(
-    { ...verifiedUser, id: "operation-bucket-user" },
+    { ...verifiedUser, id: "81000000-0000-4000-8000-000000000003" },
     async () => {
       await guardRequest(request({}), {
         enforceCap: false,
@@ -587,13 +706,13 @@ Deno.test("multiplexed routes can isolate status polling from mutation recovery 
 
   assertEquals(observed, [
     {
-      p_user_id: "operation-bucket-user",
+      p_user_id: "81000000-0000-4000-8000-000000000003",
       p_operation: "document-operation:status",
       p_limit: 120,
       p_window_seconds: 60,
     },
     {
-      p_user_id: "operation-bucket-user",
+      p_user_id: "81000000-0000-4000-8000-000000000003",
       p_operation: "document-operation:cancel",
       p_limit: 30,
       p_window_seconds: 60,
@@ -602,7 +721,7 @@ Deno.test("multiplexed routes can isolate status polling from mutation recovery 
 });
 
 Deno.test("guard returns the sanitised request body and caller identity", async () => {
-  const bodyUser = { ...verifiedUser, id: "body-user" };
+  const bodyUser = { ...verifiedUser, id: "81000000-0000-4000-8000-000000000004" };
   await withUser(bodyUser, async () => {
     const auth = await guardRequest(
       request({
@@ -623,7 +742,7 @@ Deno.test("guard returns the sanitised request body and caller identity", async 
 });
 
 Deno.test("guard derives one canonical compatibility identity for an exact old-client replay", async () => {
-  await withUser({ ...verifiedUser, id: "compat-user" }, async () => {
+  await withUser({ ...verifiedUser, id: "81000000-0000-4000-8000-000000000005" }, async () => {
     const first = await guardRequest(
       request({ nested: { beta: 2, alpha: 1 }, prompt: "same" }, {}, "clarify"),
       { enforceCap: false },
@@ -651,7 +770,7 @@ Deno.test("guard derives one canonical compatibility identity for an exact old-c
 });
 
 Deno.test("guard accepts one explicit idempotency header and rejects conflicting identities", async () => {
-  await withUser({ ...verifiedUser, id: "identity-user" }, async () => {
+  await withUser({ ...verifiedUser, id: "81000000-0000-4000-8000-000000000006" }, async () => {
     const explicit = await guardRequest(
       request(
         { prompt: "hello" },
@@ -696,7 +815,7 @@ Deno.test("guard accepts one explicit idempotency header and rejects conflicting
 });
 
 Deno.test("guard rejects malformed explicit request identities before model work", async () => {
-  await withUser({ ...verifiedUser, id: "invalid-identity-user" }, async () => {
+  await withUser({ ...verifiedUser, id: "81000000-0000-4000-8000-000000000007" }, async () => {
     const error = await assertRejects(
       () =>
         guardRequest(

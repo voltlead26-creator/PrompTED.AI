@@ -668,6 +668,79 @@ describe("CapturedAdmission", () => {
     expect(openPersistedWorkspace).toHaveBeenCalledOnce();
   });
 
+  it.each(["failures", "deadline", "hung read"])(
+    "stops automatic observation at its %s limit and allows a manual read",
+    async (limit) => {
+      vi.useFakeTimers();
+      try {
+        const initialOperation = {
+          operation_id: "55555555-5555-4555-8555-555555555555",
+          document_id: "33333333-3333-4333-8333-333333333333",
+          operation_revision: 7,
+          status: "generating",
+          retryable: false,
+        };
+        const delayed = deferred<typeof initialOperation>();
+        if (limit === "hung read") mocks.reconnect.mockReturnValue(delayed.promise);
+        else if (limit === "failures") mocks.reconnect.mockRejectedValue(new Error("offline"));
+        else mocks.reconnect.mockResolvedValue(initialOperation);
+        const view = render(
+          <CapturedAdmission
+            outcomeId="22222222-2222-4222-8222-222222222222"
+            templateId="resume"
+            title="Resume"
+            initialOperation={initialOperation}
+            onLegacyFallback={() => undefined}
+          />,
+        );
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(120_000);
+        });
+        const calls = mocks.reconnect.mock.calls.length;
+        if (limit === "failures") expect(calls).toBe(5);
+        expect(mocks.reconnect.mock.calls[0]?.[1].signal.aborted).toBe(true);
+        expect(screen.getByText(/Automatic status checks are paused/)).toBeInTheDocument();
+        expect(
+          screen.getByRole("heading", { name: "TED is drafting from your confirmed facts" }),
+        ).toBeInTheDocument();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(120_000);
+        });
+        expect(mocks.reconnect).toHaveBeenCalledTimes(calls);
+        if (limit === "hung read") {
+          await act(async () => {
+            delayed.resolve({
+              ...initialOperation,
+              operation_revision: 8,
+              status: "terminal_failure",
+            });
+          });
+          expect(
+            screen.getByRole("heading", { name: "TED is drafting from your confirmed facts" }),
+          ).toBeInTheDocument();
+        }
+        mocks.reconnect.mockResolvedValue({
+          ...initialOperation,
+          operation_revision: 8,
+          status: "terminal_failure",
+        });
+        await act(async () => {
+          screen.getByRole("button", { name: "Check latest status" }).click();
+        });
+        expect(mocks.reconnect).toHaveBeenCalledTimes(calls + 1);
+        expect(
+          screen.getByRole("heading", { name: "The operation could not be completed" }),
+        ).toBeInTheDocument();
+        expect(mocks.start).not.toHaveBeenCalled();
+        expect(mocks.resume).not.toHaveBeenCalled();
+        expect(mocks.cancel).not.toHaveBeenCalled();
+        view.unmount();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("retries transient reconnect failures with bounded backoff", async () => {
     vi.useFakeTimers();
     try {

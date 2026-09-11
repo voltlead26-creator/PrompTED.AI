@@ -98,9 +98,13 @@ async function withTransport<T>(options: FixtureOptions, run: (observed: Observa
           identities: [{ provider: "email", user_id: OWNER }],
         }));
     }
-    if (url.pathname === "/rest/v1/subscriptions") {
-      observed.calls.push("subscriptions");
-      return Promise.resolve(Response.json([]));
+    if (url.pathname === "/rest/v1/rpc/get_effective_product_access_v1") {
+      observed.calls.push("access");
+      assertEquals(JSON.parse(String(init?.body)), { p_user_id: OWNER });
+      return Promise.resolve(Response.json({ contract_version: "product-access.1", user_id: OWNER,
+        subscription_plan: "free", effective_plan: "free", subscription_status: null,
+        current_period_end: null, access_profile: "subscription", monthly_document_cap: 3,
+        ai_editing: false, business_features: false }));
     }
     const payload = typeof init?.body === "string" ? record(JSON.parse(init.body)) : {};
     if (url.pathname === "/rest/v1/rpc/consume_rate_limit") {
@@ -169,7 +173,7 @@ Deno.test("deadline separately admits and settles each exact year reached by hol
     assertEquals(response.status, 200);
     const body = record(await response.json());
     assertEquals(record(body.data).deadline, "2027-01-01");
-    assertEquals(observed.calls, ["auth", "rate", "subscriptions", "claim", "provider", "complete", "claim", "provider", "complete"]);
+    assertEquals(observed.calls, ["auth", "rate", "access", "claim", "provider", "complete", "claim", "provider", "complete"]);
     assertEquals(observed.claims.length, 2);
     const [first, second] = observed.claims;
     assert(first && second);
@@ -302,7 +306,7 @@ Deno.test("deadline verifies a confirmed owner and durable rate/egress admission
   await withTransport({}, async (observed) => {
     const response = await handleCalculateDeadlineRequest(request());
     assertEquals(response.status, 200);
-    assertEquals(observed.calls, ["auth", "rate", "subscriptions", "claim", "provider", "complete"]);
+    assertEquals(observed.calls, ["auth", "rate", "access", "claim", "provider", "complete"]);
     assertEquals(observed.rates, [{ p_user_id: OWNER, p_operation: "calculate-deadline", p_limit: 60, p_window_seconds: 60 }]);
     assertEquals(observed.claims.length, 1);
     const claim = observed.claims[0];

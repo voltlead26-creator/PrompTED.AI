@@ -79,6 +79,11 @@ insert into auth.users(id, email, is_sso_user, is_anonymous, created_at, updated
 values
   ('f4130000-0000-4000-8000-000000000001', 'policy-owner@example.invalid', false, false, now(), now()),
   ('f4130000-0000-4000-8000-000000000002', 'policy-other@example.invalid', false, false, now(), now());
+-- Policy fixtures call Business admission; a caller-supplied plan is not a
+-- subscription. Keep all existing policy/replay assertions and provide billing.
+insert into public.subscriptions(user_id,plan,status) values
+  ('f4130000-0000-4000-8000-000000000001','business','active'),
+  ('f4130000-0000-4000-8000-000000000002','business','active');
 select is((select count(*)::integer from auth.users where id in (
   'f4130000-0000-4000-8000-000000000001', 'f4130000-0000-4000-8000-000000000002'
 )), 2, 'both synthetic owners positively exist');

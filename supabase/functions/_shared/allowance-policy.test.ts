@@ -385,3 +385,12 @@ Deno.test("allowance policy reader cancels actual SDK transport and keeps the or
   assertEquals(error, reason);
   assertEquals(test.calls.length, 1);
 });
+
+Deno.test("policy reservation cap rejection preserves owner-specific limit messaging", async () => {
+  const test = fixture(() => Response.json({ message: "ALLOWANCE_CAP_REACHED", code: "P0001" }, { status: 400 }));
+  const error = await assertRejects(() => reserveDocumentAllowance(test.admin, { ...reserve(), accessProfile: "owner" }), AllowanceReservationError);
+  assertEquals(error.status, 402);
+  assertEquals(error.code, "DOCUMENT_LIMIT_REACHED");
+  assertEquals((error.payload.error as Record<string, unknown>).paywall_trigger, false);
+  assertEquals(test.calls.length, 1);
+});

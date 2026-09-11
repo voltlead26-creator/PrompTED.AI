@@ -706,7 +706,12 @@ function sameRouteSnapshot(
 function checkpointBlockError(checkpoint: LegacyModelCheckpoint): Error {
   switch (checkpoint.state) {
     case "attempt_limit":
-      return new OpenAIAdapterError("OPENAI_STAGE_ATTEMPT_LIMIT", 409, false);
+      return new OpenAIAdapterError(
+        checkpoint.reason === "operation_failure_budget_exhausted" &&
+            checkpoint.error_code === "GENERATION_ATTEMPT_LIMIT_REACHED"
+          ? "GENERATION_ATTEMPT_LIMIT_REACHED" : "OPENAI_STAGE_ATTEMPT_LIMIT",
+        409, false,
+      );
     case "attempt_unresolved":
       return new OpenAIAdapterError(
         "OPENAI_PROVIDER_RECONCILIATION_REQUIRED",
@@ -1480,7 +1485,8 @@ export async function routeRequest(
                     error.code.includes("ACK_UNRESOLVED")
                 ? "OPENAI_PROVIDER_DISPATCH_RECONCILIATION_REQUIRED"
                 : error.code.replace("MODEL_CALL_", "OPENAI_"),
-              error.code === "MODEL_CALL_ACCOUNT_DELETION_FENCED" ? 409 : 503,
+              error.code === "MODEL_CALL_ACCOUNT_DELETION_FENCED" ||
+                  error.code === "GENERATION_ATTEMPT_LIMIT_REACHED" ? 409 : 503,
               false,
             )
             : error instanceof OllamaError

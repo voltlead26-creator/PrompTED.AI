@@ -1,4 +1,4 @@
-import type { UsageState } from "@prompted/shared";
+import { parseEffectiveProductAccess, type UsageState } from "@prompted/shared/plans";
 import { captureOwnerDispatch } from "@/lib/browser-principal-state";
 import { withOwnerSupabase } from "@/lib/supabase/owner-client";
 
@@ -7,14 +7,10 @@ export async function fetchUsageState(userId: string, signal?: AbortSignal): Pro
   const lease = captureOwnerDispatch(userId, signal);
   return withOwnerSupabase(lease, async (supabase) => {
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
 
-    const [subResult, usageResult] = await Promise.all([
-      supabase
-        .from("subscriptions")
-        .select("plan, status, current_period_end")
-        .eq("user_id", userId)
-        .maybeSingle(),
+    const [accessResult, usageResult] = await Promise.all([
+      supabase.rpc("get_effective_product_access_v1"),
       supabase
         .from("usage_ledger")
         .select("id", { count: "exact", head: true })
@@ -23,7 +19,7 @@ export async function fetchUsageState(userId: string, signal?: AbortSignal): Pro
         .gte("created_at", monthStart),
     ]);
 
-    if (subResult.error || usageResult.error) throw new Error("ACCOUNT_USAGE_UNAVAILABLE");
+    if (accessResult.error || usageResult.error) throw new Error("ACCOUNT_USAGE_UNAVAILABLE");
     const documentsThisMonth = usageResult.count;
     if (
       typeof documentsThisMonth !== "number" ||
@@ -32,23 +28,14 @@ export async function fetchUsageState(userId: string, signal?: AbortSignal): Pro
     ) {
       throw new Error("ACCOUNT_USAGE_INVALID");
     }
-    const subscription = subResult.data;
-    const plan = subscription === null ? "free" : subscription?.plan;
-    const subscriptionStatus = subscription === null ? null : subscription?.status;
-    const currentPeriodEnd = subscription === null ? null : subscription?.current_period_end;
-    if (
-      (plan !== "free" && plan !== "pro" && plan !== "premium" && plan !== "business") ||
-      (subscriptionStatus !== null &&
-        subscriptionStatus !== "active" &&
-        subscriptionStatus !== "expired" &&
-        subscriptionStatus !== "cancelled" &&
-        subscriptionStatus !== "trialing") ||
-      (subscription !== null && subscriptionStatus === null) ||
-      (currentPeriodEnd !== null &&
-        (typeof currentPeriodEnd !== "string" || !Number.isFinite(Date.parse(currentPeriodEnd))))
-    )
+    let access;
+    try {
+      access = parseEffectiveProductAccess(accessResult.data, userId);
+    } catch {
       throw new Error("ACCOUNT_USAGE_INVALID");
+    }
+    return { plan: access.subscriptionPlan, access, documentsThisMonth,
+      subscriptionStatus: access.subscriptionStatus, currentPeriodEnd: access.currentPeriodEnd };
 
-    return { plan, documentsThisMonth, subscriptionStatus, currentPeriodEnd };
   });
 }

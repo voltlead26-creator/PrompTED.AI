@@ -1,3 +1,4 @@
+import { withPaidPlanFixtures } from "./paid-plan-fixture-revisions.mjs";
 // Rehearse the observed production migration ledger in the existing disposable
 // runner. This does not approve a hosted migration or relax release preflight.
 import assert from "node:assert/strict";
@@ -21,7 +22,7 @@ export function validateHostedLedgerUpgradePlan(manifest, source, bytes = readFi
   const current = Object.fromEntries(Object.entries(source).filter(([file]) =>
     file.startsWith("supabase/migrations/") || file.startsWith("supabase/tests/")));
   assert.deepEqual(manifest, current, "Rehearsal must exercise all current SQL");
-  assert.deepEqual(manifest, baseline.manifest, "Rehearsal requires the exact reviewed SQL manifest");
+  assert.deepEqual(manifest, withPaidPlanFixtures(baseline.manifest), "Rehearsal requires the exact reviewed SQL manifest");
   const migrations = Object.keys(manifest).filter(file => file.startsWith("supabase/migrations/")).sort();
   const versions = migrations.map(file => file.split("/").at(-1).slice(0, 14));
   assert.equal(versions.length, 81); assert.equal(new Set(versions).size, 81);

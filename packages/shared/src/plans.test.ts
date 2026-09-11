@@ -7,8 +7,45 @@ import {
   PLAN_ORDER,
   planDefinition,
   PLANS,
+  parseEffectiveProductAccess,
   summariseUsage,
 } from "./plans";
+
+const accessUser = "81001111-0000-4000-8000-000000000001";
+const ownerAccessResponse = {
+  contract_version: "product-access.1", user_id: accessUser,
+  subscription_plan: "free", effective_plan: "free", subscription_status: null,
+  current_period_end: null, access_profile: "owner", monthly_document_cap: 1000,
+  ai_editing: true, business_features: true,
+};
+describe("effective product access response boundary", () => {
+  it("keeps finite owner capabilities separate from real billing and drives the usage meter", () => {
+    const access = parseEffectiveProductAccess(ownerAccessResponse, accessUser);
+    expect(access).toMatchObject({ userId: accessUser, subscriptionPlan: "free", effectivePlan: "free",
+      accessProfile: "owner", monthlyDocumentCap: 1000, aiEditing: true, businessFeatures: true });
+    expect(summariseUsage({ plan: "free", documentsThisMonth: 999, access })).toMatchObject({ cap: 1000, remaining: 1, atCap: false });
+    expect(canCreateDocument({ plan: "free", documentsThisMonth: 1000, access })).toBe(false);
+  });
+  it.each([
+    { user_id: "81001111-0000-4000-8000-000000000002" }, { contract_version: "product-access.2" },
+    { monthly_document_cap: null }, { monthly_document_cap: 1001 }, { monthly_document_cap: "1000" },
+    { monthly_document_cap: -1 }, { monthly_document_cap: 1.5 }, { access_profile: "owner_unlimited" },
+    { effective_plan: "business" }, { ai_editing: false }, { business_features: false },
+    { subscription_status: "unknown" }, { current_period_end: "2026" }, { unrelated_metadata: "private" },
+    { subscription_plan: "pro" }, { current_period_end: "2026-10-01T00:00:00Z" },
+  ])("rejects conflicting or malformed access %j", (change) => {
+    expect(() => parseEffectiveProductAccess({ ...ownerAccessResponse, ...change }, accessUser)).toThrow("PRODUCT_ACCESS_INVALID");
+  });
+  it.each([null, [], "owner", {}])("rejects a missing response %j", (value) => {
+    expect(() => parseEffectiveProductAccess(value, accessUser)).toThrow("PRODUCT_ACCESS_INVALID");
+  });
+  it("resolves cancelled paid billing to ordinary free product access", () => {
+    expect(parseEffectiveProductAccess({ ...ownerAccessResponse, subscription_plan: "pro",
+      subscription_status: "cancelled", access_profile: "subscription", monthly_document_cap: 3,
+      ai_editing: false, business_features: false }, accessUser)).toMatchObject({
+      subscriptionPlan: "pro", effectivePlan: "free", accessProfile: "subscription", monthlyDocumentCap: 3 });
+  });
+});
 
 describe("PLANS definitions", () => {
   it("has all four plans", () => {

@@ -1,3 +1,4 @@
+import { withPaidPlanFixtures } from "./paid-plan-fixture-revisions.mjs";
 // Exact 79→81 upgrade acceptance inside the existing disposable runner.
 // The parent runner owns database identity, start, reset, migration and cleanup.
 import assert from "node:assert/strict";
@@ -45,7 +46,8 @@ export function validateLegacyWorkspaceCoreUpgradePlan(manifest, currentSource, 
   const currentSql = Object.fromEntries(Object.entries(currentSource).filter(([file]) =>
     file.startsWith("supabase/migrations/") || file.startsWith("supabase/tests/")));
   assert.deepEqual(manifest, currentSql, "Workspace core upgrade must exercise all current SQL");
-  const expected = { ...baseline.manifest, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha,
+  const prefixManifest = withPaidPlanFixtures(baseline.manifest);
+  const expected = { ...prefixManifest, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha,
     [sourcePreparationMigrationFile]: sourcePreparationMigrationSha, [sourcePreparationTestFile]: sourcePreparationTestSha };
   assert.deepEqual(manifest, expected, "Workspace core upgrade requires the exact reviewed SQL manifest");
   const versions = Object.keys(manifest).filter(file => file.startsWith("supabase/migrations/"))
@@ -54,7 +56,7 @@ export function validateLegacyWorkspaceCoreUpgradePlan(manifest, currentSource, 
   assert.deepEqual(versions.filter(version => version > baseline.predecessor), ["20260908160000", "20260909105519"]);
   assert.equal(Object.keys(baseline.manifest).length, 127);
   return { predecessor: baseline.predecessor, forward: "20260908160000", through: "20260909105519", versions,
-    prefixManifest: baseline.manifest, manifest: expected, baselineSha,
+    prefixManifest, manifest: expected, baselineSha,
     migrationFile: coreMigrationFile, migrationSha: coreMigrationSha, testFile: coreTestFile, testSha: coreTestSha };
 }
 

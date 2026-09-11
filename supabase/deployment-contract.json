@@ -129,6 +129,7 @@
     "commit_document_import": "uuid, uuid, uuid, text, text, jsonb, jsonb",
     "get_own_workspace_upload_v1": "uuid",
     "list_own_workspace_uploads_v1": "timestamp with time zone, uuid",
+    "get_effective_product_access_v1": "uuid",
     "commit_guest_workspace_import": "text, uuid, uuid, text, text, jsonb, uuid, text, jsonb",
     "commit_own_home_upload_intake_v1": "uuid, integer, text, jsonb",
     "complete_brand_logo_operation": "uuid, uuid, uuid, text",
@@ -225,6 +226,8 @@
     "$comment": "Every function with usesSharedRequestGuard=true enters the protected shared runtime. This union covers its rate limit, entitlement, usage telemetry, user-memory, and upload-context Data API closures. Requirements are merged by the static checker and role-aware live probe instead of being copied across every function.",
     "requiredMigrations": [
       "20260819000000_add_durable_rate_limits",
+      "20260911130803_effective_owner_product_access",
+      "20260911143000_legacy_generation_failure_budget",
       "20260901040000_protected_compute_privileges",
       "20260901060000_legacy_model_accounting_and_replay",
       "20260901091000_ingest_upload_exact_replay",
@@ -234,6 +237,7 @@
     ],
     "requiredRpcs": [
       "consume_rate_limit",
+      "get_effective_product_access_v1",
       "claim_openai_capacity_lease",
       "claim_user_external_egress",
       "complete_user_external_egress",
@@ -303,7 +307,8 @@
       "20260907124000_workspace_upload_reads",
       "20260908140000_complete_catalogue_persistence_seeds",
       "20260908160000_legacy_workspace_save_core",
-      "20260909105519_complete_upload_source_preparation"
+      "20260909105519_complete_upload_source_preparation",
+      "20260911130803_effective_owner_product_access"
     ],
     "requiredRpcs": [
       "get_latest_captured_document_operation",
@@ -313,6 +318,7 @@
       "commit_document_import",
       "get_own_workspace_upload_v1",
       "list_own_workspace_uploads_v1",
+      "get_effective_product_access_v1",
       "commit_guest_workspace_import",
       "upsert_own_outcome",
       "upsert_own_outcome_with_upload",

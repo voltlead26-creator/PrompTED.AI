@@ -132,6 +132,7 @@ Deno.serve(async (req) => {
       body: auth.body ?? {},
       plan: auth.plan,
       monthlyCap: auth.monthlyDocumentCap,
+      accessProfile: auth.access?.accessProfile,
       ttlSeconds: 7200,
     });
   } catch (error) {

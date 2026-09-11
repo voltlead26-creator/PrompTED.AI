@@ -1,11 +1,12 @@
 "use client";
 
 import type { Plan, SubscriptionStatus } from "@prompted/shared/browser";
-import { PLANS, summariseUsage } from "@prompted/shared/plans";
+import { PLANS, summariseUsage, type EffectiveProductAccess } from "@prompted/shared/plans";
 import styles from "./SubscriptionPlan.module.css";
 
 interface SubscriptionPlanProps {
   plan: Plan;
+  access?: EffectiveProductAccess;
   documentsThisMonth: number;
   subscriptionStatus?: SubscriptionStatus | null;
   currentPeriodEnd?: string | null;
@@ -34,13 +35,20 @@ function statusLine(
  */
 export function SubscriptionPlan({
   plan,
+  access,
   documentsThisMonth,
   subscriptionStatus,
   currentPeriodEnd,
   onUpgrade,
 }: SubscriptionPlanProps) {
   const def = PLANS[plan];
-  const usage = summariseUsage({ plan, documentsThisMonth });
+  const usage = summariseUsage({ plan, documentsThisMonth, access });
+  const isOwner = access?.accessProfile === "owner";
+  const featurePlan = PLANS[access?.effectivePlan ?? plan];
+  const allowanceLabel = usage.cap === null ? "Unlimited documents" : `${usage.cap.toLocaleString("en-AU")} documents per month`;
+  const features = [allowanceLabel, ...(isOwner
+    ? ["AI editing", "Business features, including branding"]
+    : featurePlan.features.slice(1))];
   const isUnlimited = usage.cap === null;
   const renewal = statusLine(plan, subscriptionStatus, currentPeriodEnd);
 
@@ -49,10 +57,11 @@ export function SubscriptionPlan({
       <div className={styles.header}>
         <div>
           <span className={styles.planLabel}>Current plan</span>
-          <h2 className={styles.planName}>{def.name}</h2>
+          <h2 className={styles.planName}>{isOwner ? "Owner access" : def.name}</h2>
+          {isOwner && <p className={styles.renewal}>Subscription: {def.name}</p>}
           {renewal && <p className={styles.renewal}>{renewal}</p>}
         </div>
-        {plan !== "business" && onUpgrade && (
+        {!isOwner && plan !== "business" && onUpgrade && (
           <button type="button" className={styles.upgradeBtn} onClick={onUpgrade}>
             Upgrade
           </button>
@@ -88,13 +97,14 @@ export function SubscriptionPlan({
         )}
         {usage.atCap && (
           <p className={styles.capWarning} role="alert">
-            You&apos;ve reached your monthly limit. Upgrade to create more documents.
+            {isOwner ? "You've reached your monthly limit. New allowance becomes available next month."
+              : "You've reached your monthly limit. Upgrade to create more documents."}
           </p>
         )}
       </div>
 
-      <ul className={styles.features} aria-label={`${def.name} plan features`}>
-        {def.features.map((f) => (
+      <ul className={styles.features} aria-label={isOwner ? "Owner access features" : `${def.name} plan features`}>
+        {features.map((f) => (
           <li key={f} className={styles.featureItem}>
             <span className={styles.check} aria-hidden="true">✓</span>
             {f}

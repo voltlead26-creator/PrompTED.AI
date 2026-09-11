@@ -90,6 +90,7 @@ export default function AccountPage() {
       {usageState ? (
         <SubscriptionPlan
           plan={usageState.plan}
+          access={usageState.access}
           documentsThisMonth={usageState.documentsThisMonth}
           subscriptionStatus={usageState.subscriptionStatus}
           currentPeriodEnd={usageState.currentPeriodEnd}

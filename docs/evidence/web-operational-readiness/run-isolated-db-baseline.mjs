@@ -90,6 +90,8 @@ const uploadSourceAcceptance = process.argv.includes("--upload-source-acceptance
 const uploadSourceV3Acceptance = process.argv.includes("--upload-source-v3-acceptance");
 const uploadRtfAliasAcceptance = process.argv.includes("--upload-rtf-alias-acceptance");
 const v3Inputs = [
+  ["./paid-plan-fixture-revisions.mjs", "paid-plan-fixture-revisions.mjs"],
+  ["./paid-plan-fixture-revisions.test.mjs", "paid-plan-fixture-revisions.test.mjs"],
   ["./hosted-ledger-upgrade-acceptance.mjs", "hosted-ledger-upgrade-acceptance.mjs"],
   ["./hosted-ledger-upgrade-acceptance.test.mjs", "hosted-ledger-upgrade-acceptance.test.mjs"],
   ["./hosted-ledger-upgrade-baseline.json", "hosted-ledger-upgrade-baseline.json"],
@@ -546,7 +548,7 @@ try {
     "docs/evidence/web-operational-readiness/catalogue-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/legacy-audit-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/legacy-workspace-core-upgrade-acceptance.test.mjs",
-    "docs/evidence/web-operational-readiness/hosted-ledger-upgrade-acceptance.test.mjs",
+    "docs/evidence/web-operational-readiness/paid-plan-fixture-revisions.test.mjs", "docs/evidence/web-operational-readiness/hosted-ledger-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/disposable-database-reset.test.mjs",
     "docs/evidence/web-operational-readiness/upload-source-sql-scope.test.mjs",
     "docs/evidence/web-operational-readiness/upload-source-v3-upgrade-acceptance.test.mjs",

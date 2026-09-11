@@ -423,3 +423,12 @@ Deno.test("legacy generation routes derive missing identities and expose output 
     true,
   );
 });
+
+Deno.test("owner reservation contention reports the finite limit without an upgrade", async () => {
+  const admin = fakeAdmin(() => ({ data: null, error: { message: "ALLOWANCE_CAP_REACHED" } }));
+  const input = { ...base, monthlyCap: 1000, accessProfile: "owner" as const };
+  const error = await assertRejects(() => reserveDocumentAllowance(admin, input), AllowanceReservationError);
+  assertEquals(error.status, 402);
+  assertEquals(error.code, "DOCUMENT_LIMIT_REACHED");
+  assertEquals((error.payload.error as Record<string, unknown>).paywall_trigger, false);
+});

@@ -482,6 +482,7 @@ export async function handleGenerateDocument(
       body: auth.body ?? {},
       plan: auth.plan,
       monthlyCap: auth.monthlyDocumentCap,
+      accessProfile: auth.access?.accessProfile,
       ttlSeconds: 7200,
       executionPolicy: {
         version: LEGACY_TEMPLATE_POLICY_VERSION,

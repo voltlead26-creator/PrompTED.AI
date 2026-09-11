@@ -347,13 +347,19 @@ export async function markLegacyModelAttemptDispatched(
         "mark_legacy_model_attempt_dispatched",
         args,
       );
+      if (error?.code === "PGB01" && error.message === "GENERATION_ATTEMPT_LIMIT_REACHED") {
+        throw new ModelCallContextError("GENERATION_ATTEMPT_LIMIT_REACHED");
+      }
       const receipt = data as Record<string, unknown> | null;
       if (
         !error && receipt?.state === "dispatched" &&
         receipt.attempt_admission_id === input.durableAdmissionId &&
         receipt.provider_attempt_id === input.durableAdmissionId
       ) return;
-    } catch {
+    } catch (error) {
+      if (error instanceof ModelCallContextError && error.code === "GENERATION_ATTEMPT_LIMIT_REACHED") {
+        throw error;
+      }
       // An acknowledgement may be lost after commit. The exact dispatch token
       // makes one bounded retry idempotent without permitting a second caller.
     }

@@ -1,3 +1,4 @@
+import { withPaidPlanFixtures } from "./paid-plan-fixture-revisions.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -7,13 +8,13 @@ import { assertLegacyWorkspaceCorePhase, assertWorkspacePublicProperties, coreMi
   sourcePreparationTestFile, sourcePreparationTestSha, validateLegacyWorkspaceCoreUpgradePlan } from "./legacy-workspace-core-upgrade-acceptance.mjs";
 
 const bytes = readFileSync(new URL("./legacy-workspace-core-upgrade-sql-baseline.json", import.meta.url));
-const prefix = JSON.parse(bytes).manifest;
+const prefix = withPaidPlanFixtures(JSON.parse(bytes).manifest);
 const manifest = { ...prefix, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha,
   [sourcePreparationMigrationFile]: sourcePreparationMigrationSha, [sourcePreparationTestFile]: sourcePreparationTestSha };
 const hash = value => createHash("sha256").update(value).digest("hex");
 
 test("the historical workspace upgrade exercises its exact reviewed SQL bytes", () => {
-  // Do not relabel a completed 79→81 rehearsal when later SQL is introduced.
+  // The explicit paid fixture revision needs new execution evidence; preserve the 79→81 migration pins.
   // Actual upgrade mode still validates the complete live manifest separately.
   const reviewed = Object.fromEntries(Object.keys(manifest).map(file =>
     [file, hash(readFileSync(new URL(`../../../${file}`, import.meta.url)))]));
