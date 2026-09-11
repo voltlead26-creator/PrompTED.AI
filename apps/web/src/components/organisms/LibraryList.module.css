@@ -1,4 +1,5 @@
 .section {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -7,6 +8,8 @@
 /* ---- Tabs ---- */
 
 .tabs {
+  max-width: 100%;
+  overflow-x: auto;
   display: flex;
   border-bottom: 1.5px solid var(--border-default);
   gap: 0;
@@ -101,6 +104,7 @@
 }
 
 .cardMeta {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -119,8 +123,8 @@
   padding: var(--space-1);
   border-radius: var(--radius-sm);
   flex-shrink: 0;
-  min-width: 2rem;
-  min-height: 2rem;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -137,6 +141,11 @@
   outline-offset: 2px;
 }
 
+.saveBtn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 /* ---- Sub-documents ---- */
 
 .docList {
@@ -150,11 +159,17 @@
 }
 
 .docItem {
+  min-width: 0;
+  overflow-wrap: anywhere;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--text-body-sm);
   color: var(--text-secondary);
+}
+
+.docItem svg {
+  flex-shrink: 0;
 }
 
 .docMore {
@@ -229,4 +244,11 @@
 
 .loadMoreBtn:disabled {
   opacity: 0.5;
+}
+
+@media (max-width: 400px) {
+  .tab {
+    padding-inline: var(--space-3);
+    font-size: var(--text-body-sm);
+  }
 }

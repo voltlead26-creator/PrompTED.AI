@@ -10,6 +10,8 @@ export interface IconProps {
 
 const VISIBLE_SYMBOLS: Record<string, string> = { x: "×", plus: "+", minus: "−" };
 const P: Record<string, string[]> = {
+  bookmark: ["M6 3h12v18l-6-4-6 4Z"],
+  "bookmark-filled": ["M6 3h12v18l-6-4-6 4Z"],
   home: ["M3 11.5 12 4l9 7.5", "M5.5 10v10h13V10", "M9 20v-6h6v6"],
   "file-pencil": ["M6 3h8l4 4v6", "M14 3v5h5", "M5 21l1-4 10-10 3 3-10 10-4 1Z"],
   folders: ["M3 7h7l2 2h9v11H3Z", "M3 7V5h7l2 2"],
@@ -127,7 +129,7 @@ export function Icon({ name, label, size = 20, color, className }: IconProps) {
       className={className}
       style={style}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={name === "bookmark-filled" ? "currentColor" : "none"}
       stroke="currentColor"
       strokeWidth="1.8"
       strokeLinecap="round"

@@ -94,8 +94,8 @@ jobs:
       - name: Install the reviewed lockfile
         run: pnpm install --frozen-lockfile
 
-      - name: Install the pinned Chromium browser and Linux dependencies
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Install the pinned Chromium, Firefox and WebKit browsers and Linux dependencies
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/node_modules/.cache/playwright
 
@@ -108,6 +108,9 @@ jobs:
 
       - name: Exercise tEdit in the current viewport with keyboard recovery
         run: pnpm test:e2e:tedit
+
+      - name: Exercise library requests, recovery and responsive tabs in three browser engines
+        run: node scripts/verify-library-browser.mjs
 
       - name: Exercise uploads and Profile against an attested disposable database
         # The runner creates its own unique project, attests SQL/network/volume
@@ -133,6 +136,8 @@ jobs:
           # Deliberately omit scratch fixtures, Auth/status response dumps,
           # private environment files, browser traces and generated bundles.
           path: |
+            docs/evidence/frontend-library-20260911/browser/summary.json
+            docs/evidence/frontend-library-20260911/browser/*.png
             docs/evidence/web-operational-readiness/tedit-browser-*/summary.json
             docs/evidence/web-operational-readiness/tedit-browser-*/dialog-*.png
             docs/evidence/web-operational-readiness/tedit-browser-*/failure-*.png

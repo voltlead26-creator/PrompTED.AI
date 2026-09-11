@@ -1,17 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import type { BadgeStatus } from "@/components/atoms/Badge";
 import { useLibrary } from "@/hooks/useLibrary";
-import type { LibraryTab } from "@/hooks/useLibrary";
-import type { Outcome, Document } from "@prompted/shared";
+import type { LibraryTab, LibraryOutcome, LibraryDocument } from "@/hooks/useLibrary";
 import styles from "./LibraryList.module.css";
 
-function outcomeStatus(outcome: Outcome, docs: Document[]): BadgeStatus {
+function outcomeStatus(outcome: LibraryOutcome, docs: LibraryDocument[]): BadgeStatus {
   if (outcome.status === "completed") return "done";
   const anyApproved = docs.some((d) => d.status === "approved" || d.status === "exported");
   if (anyApproved) return "approved";
@@ -35,12 +34,14 @@ function formatRelativeDate(iso: string): string {
 }
 
 interface DocumentCardProps {
-  outcome: Outcome;
-  documents: Document[];
+  outcome: LibraryOutcome;
+  documents: LibraryDocument[];
   onToggleSaved: () => void;
+  saving: boolean;
+  disabled: boolean;
 }
 
-function DocumentCard({ outcome, documents, onToggleSaved }: DocumentCardProps) {
+function DocumentCard({ outcome, documents, onToggleSaved, saving, disabled }: DocumentCardProps) {
   const status = outcomeStatus(outcome, documents);
   const primaryDoc = documents[0];
   const title = primaryDoc?.title ?? outcome.situation_text.slice(0, 60);
@@ -66,11 +67,10 @@ function DocumentCard({ outcome, documents, onToggleSaved }: DocumentCardProps) 
           onClick={onToggleSaved}
           aria-label={outcome.is_saved ? "Remove from saved" : "Save to library"}
           aria-pressed={outcome.is_saved}
+          aria-busy={saving}
+          disabled={disabled}
         >
-          <Icon
-            name={outcome.is_saved ? "bookmark-filled" : "bookmark"}
-            size={18}
-          />
+          <Icon name={outcome.is_saved ? "bookmark-filled" : "bookmark"} size={18} />
         </button>
       </div>
 
@@ -82,9 +82,7 @@ function DocumentCard({ outcome, documents, onToggleSaved }: DocumentCardProps) 
               <span>{doc.title}</span>
             </li>
           ))}
-          {documents.length > 3 && (
-            <li className={styles.docMore}>+{documents.length - 3} more</li>
-          )}
+          {documents.length > 3 && <li className={styles.docMore}>+{documents.length - 3} more</li>}
         </ul>
       )}
     </article>
@@ -102,47 +100,97 @@ const TAB_LABELS: Record<LibraryTab, string> = {
 };
 
 export function LibraryList({ userId }: LibraryListProps) {
+  return <LibraryContent key={userId} />;
+}
+
+function LibraryContent() {
   const [activeTab, setActiveTab] = useState<LibraryTab>("recents");
-  const { items, loading, error, hasMore, load, toggleSaved } = useLibrary(activeTab);
+  const { items, loading, error, hasMore, load, toggleSaved, saveError, savingIds } =
+    useLibrary(activeTab);
+  const id = useId();
+  const tabButtons = useRef<Partial<Record<LibraryTab, HTMLButtonElement | null>>>({});
+  const tabs = Object.keys(TAB_LABELS) as LibraryTab[];
 
   useEffect(() => {
-    load(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, userId]);
+    void load(true);
+  }, [load]);
 
   return (
     <section className={styles.section} aria-label="Your documents">
       <div className={styles.tabs} role="tablist" aria-label="Library tabs">
-        {(Object.keys(TAB_LABELS) as LibraryTab[]).map((tab) => (
+        {tabs.map((tab, index) => (
           <button
             key={tab}
             role="tab"
             type="button"
             aria-selected={activeTab === tab}
+            id={`${id}-${tab}`}
+            aria-controls={`${id}-panel`}
+            tabIndex={activeTab === tab ? 0 : -1}
+            ref={(element) => {
+              tabButtons.current[tab] = element;
+            }}
             className={styles.tab}
             data-active={activeTab === tab || undefined}
             onClick={() => setActiveTab(tab)}
+            onKeyDown={(event) => {
+              const next =
+                event.key === "ArrowRight"
+                  ? (index + 1) % tabs.length
+                  : event.key === "ArrowLeft"
+                    ? (index + tabs.length - 1) % tabs.length
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? tabs.length - 1
+                        : null;
+              if (next === null) return;
+              const nextTab = tabs[next];
+              if (!nextTab) return;
+              event.preventDefault();
+              setActiveTab(nextTab);
+              tabButtons.current[nextTab]?.focus();
+            }}
           >
             {TAB_LABELS[tab]}
           </button>
         ))}
       </div>
 
-      <div role="tabpanel" aria-label={TAB_LABELS[activeTab]}>
+      <div
+        role="tabpanel"
+        id={`${id}-panel`}
+        aria-labelledby={`${id}-${activeTab}`}
+        tabIndex={0}
+        aria-busy={loading}
+      >
+        {(error || saveError) && (
+          <div className={styles.error}>
+            <p role="alert">{error || saveError}</p>
+            <button
+              type="button"
+              className={styles.loadMoreBtn}
+              disabled={loading}
+              onClick={() => {
+                void load(true);
+              }}
+            >
+              Refresh library
+            </button>
+          </div>
+        )}
         {loading && items.length === 0 ? (
           <div className={styles.loading}>
             <Spinner label="Loading your documents…" />
           </div>
-        ) : error ? (
-          <p className={styles.error} role="alert">{error}</p>
-        ) : items.length === 0 ? (
+        ) : items.length === 0 && !error ? (
           <div className={styles.empty}>
             <p>
               {activeTab === "saved"
                 ? "No saved documents yet. Tap the bookmark on any document to save it."
                 : activeTab === "templates"
-                ? "No custom templates yet."
-                : "No documents yet. Head to Home to get started."}
+                  ? "No custom templates yet."
+                  : "No documents yet. Head to Home to get started."}
             </p>
             {activeTab === "recents" && (
               <Link href="/home" className={styles.emptyAction}>
@@ -158,18 +206,26 @@ export function LibraryList({ userId }: LibraryListProps) {
                   <DocumentCard
                     outcome={outcome}
                     documents={documents}
-                    onToggleSaved={() => toggleSaved(outcome.id, outcome.is_saved)}
+                    onToggleSaved={() => {
+                      void toggleSaved(outcome.id, outcome.is_saved);
+                    }}
+                    saving={savingIds.includes(outcome.id)}
+                    disabled={
+                      loading || Boolean(error || saveError) || savingIds.includes(outcome.id)
+                    }
                   />
                 </li>
               ))}
             </ul>
 
-            {hasMore && (
+            {hasMore && !error && (
               <div className={styles.loadMore}>
                 <button
                   type="button"
                   className={styles.loadMoreBtn}
-                  onClick={() => load(false)}
+                  onClick={() => {
+                    void load(false);
+                  }}
                   disabled={loading}
                 >
                   {loading ? "Loading…" : "Load more"}
