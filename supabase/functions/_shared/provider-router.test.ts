@@ -3392,3 +3392,38 @@ Deno.test("cumulative failure denial stops a new router invocation before provid
     assertEquals(reads, 2); assertEquals(fetches, 0);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+for (const providerStatus of ["rejected_before_provider", "ambiguous", "completed"] as const) {
+  Deno.test(`retained repair denial requires exact non-dispatch evidence: ${providerStatus}`, async () => {
+    let reads = 0;
+    const admin = { rpc(name: string, args: Record<string, unknown>) {
+      assertEquals(name, "read_legacy_model_call_checkpoint");
+      assertEquals(args.p_allocate_attempt, false); reads += 1;
+      return Promise.resolve({ data: { state: "terminal_error", provider_permitted: false,
+        attempt_number: 1, usage: { attempt_status: "failed", provider_status: providerStatus,
+          error_code: "GENERATION_REPAIR_LIMIT_REACHED" } }, error: null });
+    } } as unknown as SupabaseClient;
+    const originalFetch = globalThis.fetch;
+    let fetches = 0;
+    globalThis.fetch = () => { fetches += 1; return Promise.reject(new Error("Unexpected provider fetch")); };
+    try {
+      // Each invocation has a fresh worker context; the only retained authority
+      // is the existing database checkpoint returned above.
+      for (let worker = 0; worker < 2; worker += 1) {
+        const signal = new AbortController().signal;
+        bindModelCallContextImpl(signal, { userId: AUDIT_OWNER,
+          generationRequestId: "retained-repair-budget", admin,
+          checkpoint: { scope: "generate-document", originReservationId: AUDIT_ORIGIN,
+            executionClaimToken: AUDIT_CLAIM } });
+        const error = await assertRejects(() => routeRequest({ task: "document",
+          logicalStageKey: "generate-document.section:issue:repair-2", systemPrompt: "Synthetic",
+          messages: [{ role: "user", content: "Synthetic repair test" }], signal }), OpenAIAdapterError);
+        assertEquals(error.code, providerStatus === "rejected_before_provider"
+          ? "GENERATION_REPAIR_LIMIT_REACHED" : "OPENAI_UNKNOWN_ERROR");
+        assertEquals(error.retryable, false);
+        if (providerStatus === "rejected_before_provider") assertEquals(error.status, 409);
+      }
+      assertEquals(reads, 2); assertEquals(fetches, 0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+}

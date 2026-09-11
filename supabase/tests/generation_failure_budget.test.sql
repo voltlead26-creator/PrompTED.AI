@@ -103,5 +103,129 @@ select is((select result->>'error_code' from failure_budget_state), 'GENERATION_
   'the caller receives an explicit permanent failure-budget code');
 reset role;
 
+-- Separate logical result budget: successful planned stages are not failures,
+-- but a different repair phase may not reopen an already dispatched repair.
+-- Keep this on the existing admission/dispatch authority, including a repair
+-- prepared before the first repair dispatch and exact-token acknowledgement.
+create temp table repair_budget_state(reservation_id uuid, claim_token uuid,
+  first_admission uuid, later_admission uuid, sibling_admission uuid);
+grant select, update, insert on repair_budget_state to service_role;
+set local role service_role;
+with reserved as (
+  select public.reserve_document_allowance_with_result(
+    '94120000-0000-4000-8000-000000000001', 'repair-budget-operation',
+    'generate-document', repeat('a',64), 'free', 3, 1800) as value
+)
+insert into repair_budget_state(reservation_id,claim_token)
+select (value->>'reservation_id')::uuid, (value->>'execution_claim_token')::uuid from reserved;
+
+update repair_budget_state set first_admission =
+  (public.read_legacy_model_call_checkpoint(
+    '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+    'repair-budget-operation', 'generate-document.section:issue:draft-weak-repair',
+    repeat('b',64), 2, claim_token, true)->>'attempt_admission_id')::uuid;
+update repair_budget_state set later_admission =
+  (public.read_legacy_model_call_checkpoint(
+    '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+    'repair-budget-operation', 'generate-document.section:issue:repair-1',
+    repeat('c',64), 2, claim_token, true)->>'attempt_admission_id')::uuid;
+update repair_budget_state set sibling_admission =
+  (public.read_legacy_model_call_checkpoint(
+    '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+    'repair-budget-operation', 'generate-document.section:request:repair-1',
+    repeat('d',64), 2, claim_token, true)->>'attempt_admission_id')::uuid;
+
+select lives_ok(format(
+  'select public.mark_legacy_model_attempt_dispatched(%L::uuid,%L,%L::uuid,%L,%L,%L,1,%L::uuid,%L::uuid,%L::uuid)',
+  '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+  'repair-budget-operation', 'generate-document.section:issue:draft-weak-repair', repeat('b',64),
+  first_admission, claim_token, '94120000-0000-4000-8000-000000000011'),
+  'the first repair may dispatch without consuming another section repair allowance')
+from repair_budget_state;
+select throws_ok(format(
+  'select public.mark_legacy_model_attempt_dispatched(%L::uuid,%L,%L::uuid,%L,%L,%L,1,%L::uuid,%L::uuid,%L::uuid)',
+  '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+  'repair-budget-operation', 'generate-document.section:issue:repair-1', repeat('c',64),
+  later_admission, claim_token, '94120000-0000-4000-8000-000000000012'),
+  'PGB02', 'GENERATION_REPAIR_LIMIT_REACHED',
+  'an audit repair cannot follow an already dispatched weak repair of the same section')
+from repair_budget_state;
+select lives_ok(format(
+  'select public.mark_legacy_model_attempt_dispatched(%L::uuid,%L,%L::uuid,%L,%L,%L,1,%L::uuid,%L::uuid,%L::uuid)',
+  '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+  'repair-budget-operation', 'generate-document.section:request:repair-1', repeat('d',64),
+  sibling_admission, claim_token, '94120000-0000-4000-8000-000000000013'),
+  'a separate section retains its own single repair allowance')
+from repair_budget_state;
+select lives_ok(format(
+  'select public.mark_legacy_model_attempt_dispatched(%L::uuid,%L,%L::uuid,%L,%L,%L,1,%L::uuid,%L::uuid,%L::uuid)',
+  '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+  'repair-budget-operation', 'generate-document.section:issue:draft-weak-repair', repeat('b',64),
+  first_admission, claim_token, '94120000-0000-4000-8000-000000000011'),
+  'an exact existing dispatch acknowledgement remains replayable')
+from repair_budget_state;
+reset role;
+select ok((select a.dispatched_at is null from private.legacy_model_attempt_admissions a
+  join repair_budget_state s on a.id = s.later_admission),
+  'a competing repair prepared earlier remains undispatched after the section budget is spent');
+select is((select count(*)::integer from public.usage_ledger
+  where user_id = '94120000-0000-4000-8000-000000000001'
+    and logical_request_id = 'repair-budget-operation' and model_call_status = 'failed'),
+  0, 'repair protection does not depend on a provider failure or create fabricated failure usage');
+
+set local role service_role;
+do $fixture$
+declare s repair_budget_state%rowtype;
+begin
+  select * into strict s from repair_budget_state;
+  perform public.record_legacy_model_call_attempt(
+    '94120000-0000-4000-8000-000000000001', 'repair-budget-operation',
+    'generate-document.section:issue:repair-1', repeat('c',64),
+    s.later_admission::text, 1, 'failed', '', 'rejected_before_provider',
+    'GENERATION_REPAIR_LIMIT_REACHED', 0, 0, now(), now(), 'gpt-5.6-sol',
+    'routing.test.1', 'deep', 'medium', 'generate-document', s.reservation_id, null, s.claim_token);
+end;
+$fixture$;
+select is(public.read_legacy_model_call_checkpoint(
+  '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+  'repair-budget-operation', 'generate-document.section:issue:repair-1', repeat('c',64),
+  2, claim_token, false)->>'state', 'terminal_error',
+  'the repair denial is durable in the existing checkpoint after worker restart')
+from repair_budget_state;
+select is(public.read_legacy_model_call_checkpoint(
+  '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+  'repair-budget-operation', 'generate-document.section:issue:repair-1', repeat('c',64),
+  2, claim_token, false)->'usage'->>'error_code', 'GENERATION_REPAIR_LIMIT_REACHED',
+  'retained denial preserves the exact recovery code')
+from repair_budget_state;
+
+-- One classified transient retry is still the same logical repair, not a new
+-- validation repair. The separate two-provider-failure ceiling still applies.
+do $fixture$
+declare s repair_budget_state%rowtype;
+begin
+  select * into strict s from repair_budget_state;
+  perform public.record_legacy_model_call_attempt(
+    '94120000-0000-4000-8000-000000000001', 'repair-budget-operation',
+    'generate-document.section:issue:draft-weak-repair', repeat('b',64),
+    s.first_admission::text, 1, 'failed', '', 'http_429',
+    'OPENAI_UPSTREAM_ERROR', 0, 0, now(), now(), 'gpt-5.6-sol',
+    'routing.test.1', 'deep', 'medium', 'generate-document', s.reservation_id, null, s.claim_token);
+end;
+$fixture$;
+update repair_budget_state set first_admission =
+  (public.read_legacy_model_call_checkpoint(
+    '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+    'repair-budget-operation', 'generate-document.section:issue:draft-weak-repair',
+    repeat('b',64), 2, claim_token, true)->>'attempt_admission_id')::uuid;
+select lives_ok(format(
+  'select public.mark_legacy_model_attempt_dispatched(%L::uuid,%L,%L::uuid,%L,%L,%L,2,%L::uuid,%L::uuid,%L::uuid)',
+  '94120000-0000-4000-8000-000000000001', 'generate-document', reservation_id,
+  'repair-budget-operation', 'generate-document.section:issue:draft-weak-repair', repeat('b',64),
+  first_admission, claim_token, '94120000-0000-4000-8000-000000000014'),
+  'a classified transient retry retains the same single logical repair')
+from repair_budget_state;
+reset role;
+
 select * from finish();
 rollback;

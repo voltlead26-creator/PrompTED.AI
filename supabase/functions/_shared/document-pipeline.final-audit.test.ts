@@ -40,6 +40,7 @@ type Options = {
   abortOnFinalReceipt?: boolean;
   onProviderRequest?: (schema: string | undefined) => void;
   auditBindingResponse?: "missing" | "malformed" | "changed";
+  deniedRepair?: { stage: string; code: string; message: string };
   assessmentPolicy?: {
     version: "legacy-wording-assessment.1";
     executionPolicySha256: string;
@@ -147,6 +148,11 @@ async function withPipeline(
           }
           case "mark_legacy_model_attempt_dispatched":
             assertEquals(args.p_attempt_admission_id, admissions.get(String(args.p_logical_stage_key)));
+            if (options.deniedRepair && args.p_logical_stage_key === options.deniedRepair.stage) {
+              return Promise.resolve({ data: null, error: {
+                code: options.deniedRepair.code, message: options.deniedRepair.message,
+              } });
+            }
             data = { state: "dispatched", attempt_admission_id: args.p_attempt_admission_id,
               provider_attempt_id: args.p_attempt_admission_id };
             break;
@@ -452,6 +458,40 @@ Deno.test("unchanged audited wording does not dispatch another audit or repair",
     assertEquals(fixture.groundingDrafts.length, 1);
     assertEquals(fixture.qualityDrafts.length, 1);
     assertEquals(fixture.writes.length, 2);
+  });
+});
+
+Deno.test("durable repair denial isolates only the affected section and retains the final audit", async () => {
+  await withPipeline({ initial: inventedWording, replacement: inventedWording,
+    unsupportedText: inventedWording, assessmentPolicy,
+    deniedRepair: { stage: "generate-document.section:issue:repair-2",
+      code: "PGB02", message: "GENERATION_REPAIR_LIMIT_REACHED" },
+  }, async (fixture) => {
+    const result = await fixture.run();
+    assertEquals(result.sections[1].content, siblingWording);
+    assert(!result.sections[0].content.includes(inventedWording));
+    assertEquals(result.unresolvedPlaceholders.map(item => item.sectionKey), ["issue"]);
+    assertEquals(fixture.writes.length, 3, "Two initial sections and only one issue repair may reach the provider");
+    assertEquals(JSON.parse(fixture.qualityDrafts.at(-1)!), result.sections);
+    const denied = fixture.persistedCalls.filter(call =>
+      call.arguments.p_logical_stage_key === "generate-document.section:issue:repair-2");
+    assertEquals(denied.length, 1);
+    assertEquals(denied[0].arguments.p_provider_status, "rejected_before_provider");
+    assertEquals(denied[0].arguments.p_error_code, "GENERATION_REPAIR_LIMIT_REACHED");
+    assertEquals(denied[0].arguments.p_input_tokens, 0);
+    assertEquals(denied[0].arguments.p_output_tokens, 0);
+  });
+});
+
+Deno.test("an ambiguous repair dispatch is never downgraded to a needs-input section", async () => {
+  await withPipeline({ initial: inventedWording, replacement: inventedWording,
+    unsupportedText: inventedWording, assessmentPolicy,
+    deniedRepair: { stage: "generate-document.section:issue:repair-2",
+      code: "P0001", message: "GENERATION_REPAIR_LIMIT_REACHED" },
+  }, async (fixture) => {
+    const error = await assertRejects(fixture.run);
+    assert(isProviderReconciliationRequired(error));
+    assertEquals(fixture.writes.length, 3);
   });
 });
 

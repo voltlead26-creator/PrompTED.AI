@@ -701,11 +701,12 @@ Effective owner access now uses one database response across account UI and Edge
 admission, with the corrected finite 1,000 monthly allowance and unchanged real
 billing. Legacy admission and dispatch enforce two durable failures across stages;
 captured preparation/dispatch now checks failed attempts bound to exact dispatch
-receipts. Historical captured failures without those receipts and the separate
-validation-repair budget still require acceptance work. Current combined evidence
-passes 54 SQL files / 2,752 assertions, 1,609 Edge tests, 445 shared tests, 1,163
-web tests, repository lint/types and the production build. Both 79-to-86 and
-68-to-86 upgrade rehearsals preserve synthetic historical content and receipts.
+receipts. A separate section-repair guard now uses the same locked legacy dispatch
+authority, preserving transient retry, exact replay and passing siblings. Historical
+captured failures without dispatch receipts still require acceptance work. Current
+combined evidence passes 54 SQL files / 2,761 assertions, 1,617 Edge tests, 445 shared tests, 1,163
+web tests, repository lint/types and the production build. Both 79-to-87 and
+68-to-87 upgrade rehearsals preserve synthetic historical content and receipts.
 Source hashes were unchanged; schema lint reports zero errors and 23 older warnings.
 
 The owner's 11 September 23:15 AEST instruction separately authorises necessary

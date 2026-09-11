@@ -1,4 +1,4 @@
-import { type ProviderResponse, routeRequest } from "./provider-router.ts";
+import { OpenAIAdapterError, type ProviderResponse, routeRequest } from "./provider-router.ts";
 import type { TerminalModelAttemptReceipt } from "./cost-tracker.ts";
 import {
   LEGACY_AUDIT_DIGEST_VERSION,
@@ -959,16 +959,30 @@ async function writeSection(
     "Return only ready-to-use markdown for this section. Do not return instructions, criteria, an outline, code-like text, scaffold text, commentary, or a description of what should be written.",
   ].filter(Boolean).join("\n\n");
 
-  const result = await routeRequest({
-    task: "document",
-    logicalStageKey: `generate-document.section:${
-      stageSegment(section.key)
-    }:${phase}`,
-    systemPrompt: input.systemPrompt,
-    messages: [{ role: "user", content }],
-    maxTokens: 2600,
-    signal: input.signal,
-  });
+  let result: ProviderResponse;
+  try {
+    result = await routeRequest({
+      task: "document",
+      logicalStageKey: `generate-document.section:${
+        stageSegment(section.key)
+      }:${phase}`,
+      systemPrompt: input.systemPrompt,
+      messages: [{ role: "user", content }],
+      maxTokens: 2600,
+      signal: input.signal,
+    });
+  } catch (error) {
+    input.signal?.throwIfAborted();
+    if (phase !== "draft" && error instanceof OpenAIAdapterError &&
+      error.code === "GENERATION_REPAIR_LIMIT_REACHED" &&
+      error.status === 409 && error.retryable === false) {
+      // The database owns the budget. Preserve passing siblings and expose the
+      // existing explicit needs-input section; never salvage unaudited wording
+      // or suppress ambiguous, accounting, cancellation or provider failures.
+      return sectionFallbackPlaceholder(brief, profile, section, readiness).section;
+    }
+    throw error;
+  }
 
   const written = result.text.trim();
   if (isWeakOrInstructionalContent(written, section)) {
@@ -1551,10 +1565,11 @@ export async function runDocumentPipeline(
   );
   let audit = await auditDocument(input, brief, draft, profile, 0, sources);
 
-  // Give the original section writers two bounded, targeted opportunities to
-  // address the independent audit. A single repair pass was too brittle: one
-  // remaining low-severity wording preference discarded every otherwise safe
-  // section and surfaced an entirely blank document to the user.
+  // Retain the historical audit/checkpoint round identities. A later round can
+  // identify a different affected section, but the database permits only one
+  // logical repair per section across weak-output, audit and final-cleanup
+  // phases. Exhausted sections become explicit needs-input slots; passing
+  // siblings and completed checkpoint replay remain intact.
   for (
     let repairRound = 0;
     repairRound < 2 &&

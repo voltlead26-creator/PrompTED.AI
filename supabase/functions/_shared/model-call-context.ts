@@ -350,6 +350,9 @@ export async function markLegacyModelAttemptDispatched(
       if (error?.code === "PGB01" && error.message === "GENERATION_ATTEMPT_LIMIT_REACHED") {
         throw new ModelCallContextError("GENERATION_ATTEMPT_LIMIT_REACHED");
       }
+      if (error?.code === "PGB02" && error.message === "GENERATION_REPAIR_LIMIT_REACHED") {
+        throw new ModelCallContextError("GENERATION_REPAIR_LIMIT_REACHED");
+      }
       const receipt = data as Record<string, unknown> | null;
       if (
         !error && receipt?.state === "dispatched" &&
@@ -357,7 +360,9 @@ export async function markLegacyModelAttemptDispatched(
         receipt.provider_attempt_id === input.durableAdmissionId
       ) return;
     } catch (error) {
-      if (error instanceof ModelCallContextError && error.code === "GENERATION_ATTEMPT_LIMIT_REACHED") {
+      if (error instanceof ModelCallContextError &&
+        (error.code === "GENERATION_ATTEMPT_LIMIT_REACHED" ||
+          error.code === "GENERATION_REPAIR_LIMIT_REACHED")) {
         throw error;
       }
       // An acknowledgement may be lost after commit. The exact dispatch token

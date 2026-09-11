@@ -67,7 +67,7 @@ add('G1','generation','Bound automatic browser observation','Locally verified','
     'Exercise timeout, hung reads, cancellation, terminal state, reload and manual GET-only recovery; no poll should restart provider work.',
     'apps/web/src/components/organisms/CapturedAdmission.tsx')
 add('G2','generation','Persist operation-wide failure budgets','In progress','P0','',
-    'Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,752 assertions and 1,609 Edge tests. Historical captured failures without dispatch evidence and the separate one-repair allowance still need acceptance work.',
+    'Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,761 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.',
     'Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.',
     'docs/plans/2026-09-06-owner-access-and-generation-retry-protection.md')
 add('G3','generation','Configure real model routing and capacity','Pending','P0','C1 B2',
@@ -80,11 +80,11 @@ add('G4','generation','Prove recovery and exactly-once usage','Unverified','P0',
     'scripts/verify-live-document-generation.mjs')
 
 add('B1','backend','Reconcile hosted schema and inventory','Confirmed gap','P0','',
-    'Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 86 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.',
+    'Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 87 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.',
     'Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.',
     'supabase/deployment-contract.json')
 add('B2','backend','Rehearse and apply compatible upgrade','In progress','P0','B1 P1 A3 G2 Q1',
-    'Both 79-to-86 workspace and 68-to-86 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.',
+    'Both 79-to-87 workspace and 68-to-87 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.',
     'Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.',
     'docs/evidence/web-operational-readiness/run-isolated-db-baseline.mjs')
 add('B3','backend','Deploy required Edge Functions','Confirmed gap','P0','B2 G3 C1',
@@ -110,7 +110,7 @@ add('C3','config','Stabilise Docker and local verification','Partially verified'
     'docs/evidence/unfinished-production-20260911/Work-plan.md')
 
 add('Q1','quality','Pass the complete integrated source gate','In progress','P0','P1 P4 A3 G1 G2',
-    'Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Captured retry work, 84-migration upgrade/schema lint and integrated browser acceptance remain; three pre-existing extra Edge lint diagnostics are recorded.',
+    'Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 87-migration upgrades pass locally. CI 34617376047 passes for c329e58; the new repair slice still needs publication and CI; three pre-existing extra Edge lint diagnostics are recorded.',
     'Run focused/adjacent tests, all SQL, migration upgrades/lint, all Edge tests/types, web/shared/root tests, lint, types, build and bundle budgets; review final diff and source integrity.',
     'scripts/verify-web-release.mjs')
 add('Q2','quality','Exercise desktop/mobile browser failures','Pending','P0','Q1',
@@ -136,7 +136,7 @@ add('F3','performance','Verify production capacity and limits','Unverified','P1'
     'supabase/deployment-contract.json')
 
 add('R1','release','Commit reviewed source and verify exact CI','In progress','P0','Q1 Q2 Q3',
-    'Local/GitHub match c1cabb6 after reviewed source publication. CI 34613219486 passed Edge, fresh SQL and web gates; its browser job failed at the historical 79-to-81 upgrade preflight, before browser execution. The captured-budget repair is a new uncommitted slice.',
+    'Local/GitHub match c329e58. All four jobs in CI 34617376047 passed, including real local upload/Profile/tEdit browser acceptance. The section-repair guard is a new uncommitted slice and has no CI or production acceptance yet.',
     'Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.',
     '.github/workflows/ci.yml')
 add('R2','release','Deploy compatible frontend after backend','Confirmed gap','P0','R1 B3 B4 C2',
@@ -181,7 +181,7 @@ add('O3','operations','Finish folder organisation and handoff','Partially verifi
 data = {
     'title': 'PrompTED.AI · Production completion map',
     'snapshot': '12 September 2026 · integrated local gate update; 11 September commercial requirements retained',
-    'sourceHead': 'c1cabb63885086de63a1e48873032bd55d91fa6b',
+    'sourceHead': 'c329e58f8b8d03ff93ceb0577cb11e784b885f69',
     'branch': 'Thought-Enhanced-Document',
     'productionHead': 'e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b',
     'productionDeploy': '6a9fc526610f2efb8c05454f',
@@ -216,7 +216,7 @@ md = ['# '+data['title'], '', data['snapshot'], '',
       '- Repository/branch: `voltlead26-creator/PrompTED.AI` / `'+data['branch']+'`.',
       '- Local and GitHub HEAD freshly matched: `'+data['sourceHead']+'`; uncommitted overlay remains.',
       '- Netlify production re-read: `'+data['productionHead']+'`, locked deploy `'+data['productionDeploy']+'`.',
-      '- Supabase migration list refreshed on 12 September: the exact 68 recorded versions still match. Prior function inventory: 25 functions. Local has 86 migration files.',
+      '- Supabase migration list refreshed on 12 September: the exact 68 recorded versions still match. Prior function inventory: 25 functions. Local has 87 migration files; the latest repair migration is locally verified and not deployed.',
       '- Reference atlas: supplied `PrompTED-audited-atlas-bundle`, pinned to `0b9dbc1a`; retained as historical source guidance.', '',
       '## Current product decision', '', data['commercialDecision'], '',
       '## Execution order', '',

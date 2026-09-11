@@ -14,19 +14,19 @@ const manifest = Object.fromEntries(["supabase/migrations/", "supabase/tests/"].
     return [file, createHash("sha256").update(readFileSync(new URL(file, root))).digest("hex")];
   })));
 
-test("current workspace upgrade binds all 86 migrations and all 54 SQL regressions", () => {
+test("current workspace upgrade binds all 87 migrations and all 54 SQL regressions", () => {
   const plan = validateLegacyWorkspaceCoreUpgradePlan(manifest, manifest);
-  assert.equal(plan.versions.length, 86);
-  assert.equal(Object.keys(plan.manifest).length, 140);
+  assert.equal(plan.versions.length, 87);
+  assert.equal(Object.keys(plan.manifest).length, 141);
   assert.equal(Object.keys(plan.prefixManifest).length, 127);
-  assert.equal(Object.keys(plan.additionalHeldSql).length, 9);
+  assert.equal(Object.keys(plan.additionalHeldSql).length, 10);
 });
 
-test("current hosted-ledger rehearsal retains the observed 68 versions and applies 18 exact forward files", () => {
+test("current hosted-ledger rehearsal retains the observed 68 versions and applies 19 exact forward files", () => {
   const plan = validateHostedLedgerUpgradePlan(manifest, manifest);
-  assert.equal(plan.versions.length, 86);
+  assert.equal(plan.versions.length, 87);
   assert.equal(plan.hostedVersions.length, 68);
-  assert.equal(plan.pendingFiles.length, 18);
+  assert.equal(plan.pendingFiles.length, 19);
   assert.deepEqual(plan.manifest, manifest);
 });
 

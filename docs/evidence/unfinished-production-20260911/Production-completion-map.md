@@ -11,9 +11,9 @@ Open [the interactive brain map](production-completion-map.html). Its filters an
 Owner authorises required local/GitHub/Netlify/Supabase/Docker configuration and release work. Preserve user data and verify exact outcomes.
 
 - Repository/branch: `voltlead26-creator/PrompTED.AI` / `Thought-Enhanced-Document`.
-- Local and GitHub HEAD freshly matched: `c1cabb63885086de63a1e48873032bd55d91fa6b`; uncommitted overlay remains.
+- Local and GitHub HEAD freshly matched: `c329e58f8b8d03ff93ceb0577cb11e784b885f69`; uncommitted overlay remains.
 - Netlify production re-read: `e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b`, locked deploy `6a9fc526610f2efb8c05454f`.
-- Supabase migration list refreshed on 12 September: the exact 68 recorded versions still match. Prior function inventory: 25 functions. Local has 86 migration files.
+- Supabase migration list refreshed on 12 September: the exact 68 recorded versions still match. Prior function inventory: 25 functions. Local has 87 migration files; the latest repair migration is locally verified and not deployed.
 - Reference atlas: supplied `PrompTED-audited-atlas-bundle`, pinned to `0b9dbc1a`; retained as historical source guidance.
 
 ## Current product decision
@@ -136,7 +136,7 @@ Configuration authority is now supplied; the exact confirmed owner UUID must sti
 
 **In progress · P0** · Depends on: none
 
-Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,752 assertions and 1,609 Edge tests. Historical captured failures without dispatch evidence and the separate one-repair allowance still need acceptance work.
+Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,761 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.
 
 **Complete when:** Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.
 
@@ -168,7 +168,7 @@ A provider response or HTTP 200 does not prove persisted generation. Interruptio
 
 **Confirmed gap · P0** · Depends on: none
 
-Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 86 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.
+Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 87 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.
 
 **Complete when:** Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.
 
@@ -178,7 +178,7 @@ Live migration refresh on 12 September matches the exact recorded 68 versions. L
 
 **In progress · P0** · Depends on: B1, P1, A3, G2, Q1
 
-Both 79-to-86 workspace and 68-to-86 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.
+Both 79-to-87 workspace and 68-to-87 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.
 
 **Complete when:** Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.
 
@@ -242,7 +242,7 @@ Earlier CPJ failures were caused by host sleep during local Supabase startup/res
 
 **In progress · P0** · Depends on: P1, P4, A3, G1, G2
 
-Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Captured retry work, 84-migration upgrade/schema lint and integrated browser acceptance remain; three pre-existing extra Edge lint diagnostics are recorded.
+Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 87-migration upgrades pass locally. CI 34617376047 passes for c329e58; the new repair slice still needs publication and CI; three pre-existing extra Edge lint diagnostics are recorded.
 
 **Complete when:** Run focused/adjacent tests, all SQL, migration upgrades/lint, all Edge tests/types, web/shared/root tests, lint, types, build and bundle budgets; review final diff and source integrity.
 
@@ -306,7 +306,7 @@ No current throughput or concurrent-owner performance acceptance is recorded.
 
 **In progress · P0** · Depends on: Q1, Q2, Q3
 
-Local/GitHub match c1cabb6 after reviewed source publication. CI 34613219486 passed Edge, fresh SQL and web gates; its browser job failed at the historical 79-to-81 upgrade preflight, before browser execution. The captured-budget repair is a new uncommitted slice.
+Local/GitHub match c329e58. All four jobs in CI 34617376047 passed, including real local upload/Profile/tEdit browser acceptance. The section-repair guard is a new uncommitted slice and has no CI or production acceptance yet.
 
 **Complete when:** Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.
 

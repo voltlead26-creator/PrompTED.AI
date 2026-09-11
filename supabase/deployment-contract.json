@@ -229,6 +229,7 @@
       "20260911130803_effective_owner_product_access",
       "20260911143000_legacy_generation_failure_budget",
       "20260911151000_captured_generation_failure_budget",
+      "20260911155000_legacy_section_repair_budget",
       "20260901040000_protected_compute_privileges",
       "20260901060000_legacy_model_accounting_and_replay",
       "20260901091000_ingest_upload_exact_replay",

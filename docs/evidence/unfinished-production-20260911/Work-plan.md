@@ -3,26 +3,69 @@
 ## Latest verified state — 12 September 2026
 
 The chronological entries below retain failures and corrections as historical
-evidence. Current local acceptance includes 54 SQL files / 2,752 assertions,
-1,609 Edge tests (220 steps), 445 shared tests and 1,163 web tests, repository
-lint/types, production build and bundle budgets. Both the 79-to-86 workspace
-upgrade and recorded production 68-to-86 upgrade passed with exact historical
+evidence. Current local acceptance includes 54 SQL files / 2,761 assertions,
+1,617 Edge tests (220 steps), 445 shared tests and 1,163 web tests, repository
+lint/types, production build and bundle budgets. Both the 79-to-87 workspace
+upgrade and recorded production 68-to-87 upgrade passed with exact historical
 wording/receipt preservation. Schema lint reports zero errors and 23 retained
 warnings in older functions; the new-source warnings were corrected. Cleanup
 and source hashes passed. Evidence runs and limitations are recorded below.
 
 This covers dormant DOCX source binding, finite owner access across database,
 Edge and account UI, bounded browser observation, and legacy/captured cumulative
-guards. Historical captured failures without dispatch evidence and the separate
-validation-repair budget still require acceptance work. Real browser acceptance
-and production deployment remain outstanding. Three additional pre-existing
+guards, including the section-repair budget. Historical captured failures without
+dispatch evidence remain under review. Repair-specific browser acceptance and
+production deployment remain outstanding. Three additional pre-existing
 Edge lint diagnostics remain recorded. The exact Pro/Premium document caps are
 still the pending commercial decision; no numeric policy is inferred from price.
 
-Local and remote branch HEAD match published `c1cabb6`, with the next reviewed
-slice uncommitted. Its prior CI passed web/Edge/fresh SQL but stopped before
-browser execution at the older upgrade manifest. Netlify production remains
-locked at `e1d514d`. Source synchronization and current CI are the next steps.
+Local and remote branch HEAD match published `c329e58`. CI run `34617376047`
+has passed all four jobs, including the real local upload, Profile and tEdit
+browser gate. This CI evidence applies to that exact published commit.
+The working tree now contains the next regression slice, which is not accepted
+or published. Netlify production remains locked at `e1d514d`.
+
+### Automatic repair regression in progress
+
+Tracing the legacy pipeline found weak-output recursion, two audit repair rounds
+and a final cleanup writer, all using distinct durable stage identities. Their
+individual bounds do not enforce one repair for the same logical section.
+Checklist generation already uses one stable repair stage. The captured runner
+has one retained review checkpoint; its exact-wording adapter assesses the draft
+without rewriting it, while its historical replacement adapter remains bounded
+by that same single checkpoint. This is source evidence, not hosted acceptance.
+
+The new dispatch-context regression reproduced an exact error-classification
+gap: `PGB02 / GENERATION_REPAIR_LIMIT_REACHED` becomes an unresolved dispatch
+acknowledgement instead of an explicit permanent denial. The focused command
+passed five cases and failed this one for the expected assertion. Mismatched
+SQLSTATE/message pairs must continue to fail closed as unresolved.
+
+Six SQL assertions now exercise the existing admission/dispatch authority:
+first repair, a competing repair prepared earlier, independent sibling repair,
+exact dispatch acknowledgement replay, unchanged undispatched state after denial,
+and absence of fabricated failure usage. The disposable database reproduction
+ran as `db-20260911154815938-8681087e`: exactly two of the 13 budget assertions
+failed because the competing repair dispatched. The other 53 SQL files and web
+gate passed; cleanup and source checks passed. Only the explicit current
+regression hash was refreshed; historical upgrade manifests were unchanged.
+
+The forward migration `20260911155000_legacy_section_repair_budget.sql` now adds
+the section check to the existing locked first-dispatch transition. The old
+failure-guard body is byte-identical outside the added repair block/declaration.
+An exact `PGB02` denial survives accounting and checkpoint replay. The writer
+maps only that exact typed permanent denial to the existing needs-input slot;
+ambiguous errors, cancellation and accounting failures still propagate. Final
+wording audits remain required and passing siblings are retained. The deployment
+contract requires the new backend migration before the changed functions.
+
+All 148 focused/adjacent Edge tests pass, including exact/inexact denial,
+worker-context recreation, final audit and sibling preservation. Six changed
+Edge files pass lint/type checking. Migration/deployment checks and 13 current
+upgrade-manifest tests pass for the exact 87-migration input. Real SQL lifecycle
+verification is pending, including newly added retained-denial readback and
+same-repair transient retry assertions. Complete Edge/web/database gates and
+current upgrade rehearsals remain required; this slice is not yet published.
 
 ## Scope and authority
 
@@ -583,3 +626,31 @@ Both fresh/upgraded schemas report zero lint errors and 23 existing warnings;
 the DOCX scope and owner reader volatility warnings are absent. No provider
 was contacted and no hosted mutation occurred. The reviewed current changes
 are ready for source publication and CI; remaining operational gates stay open.
+
+## Section repair acceptance — 12 September 2026, 02:04 AEST
+
+`job-mtx54ity-1bd76b49` passed both current upgrade rehearsals and the complete
+Edge suite. Workspace run `db-20260911155810914-c71ff4bd` upgraded 79 to 87
+migrations, passed 54 SQL files / 2,761 assertions before and after upgrade, and
+preserved historical content, public API properties, receipts and sibling state
+across 23 authenticated synthetic HTTP checks. Recorded-hosted-history run
+`db-20260911160044438-88b41118` applied all 19 pending files to the recorded
+68-version baseline, passed the same SQL suite, retained two original DOCX
+objects byte-for-byte and replayed both historical save receipts. Both runs
+passed the complete web gate (445 shared / 1,163 web tests, lint, types, build
+and bundle budgets), cleanup and unchanged source hashes. Schema lint has zero
+errors and 23 retained diagnostics. The complete Edge suite passed 1,617 tests
+and 220 steps. No provider was called by these fixtures.
+
+The new real SQL assertions prove the second repair cannot dispatch, including
+an earlier preparation; independent sections and exact dispatch acknowledgement
+remain valid. The denial is durably readable with its exact code, and one
+classified transient retry of the same repair remains valid. Existing failure
+budget, accounting, replay and final-wording tests remain green.
+
+Read-only hosted refresh after this run still shows the same 68 migrations and
+25 functions; required `extract-upload`, `document-operation` and `brand-logo`
+remain absent. A private local snapshot captures metadata and definition hashes
+for 190 hosted public/private functions, with no application rows or function
+bodies. This starts catalog comparison; it is not a completed schema parity or
+backup/recovery check. No hosted mutation or deployment has occurred.

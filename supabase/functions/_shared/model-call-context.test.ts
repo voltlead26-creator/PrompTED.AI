@@ -658,6 +658,9 @@ Deno.test("metering persistence errors propagate fail closed", async () => {
 
 for (const [databaseCode, databaseMessage, expected, calls] of [
   ["PGB01", "GENERATION_ATTEMPT_LIMIT_REACHED", "GENERATION_ATTEMPT_LIMIT_REACHED", 1],
+  ["PGB02", "GENERATION_REPAIR_LIMIT_REACHED", "GENERATION_REPAIR_LIMIT_REACHED", 1],
+  ["PGB02", "different error", "MODEL_CALL_DISPATCH_ACK_UNRESOLVED", 2],
+  ["P0001", "GENERATION_REPAIR_LIMIT_REACHED", "MODEL_CALL_DISPATCH_ACK_UNRESOLVED", 2],
   ["PGB01", "different error", "MODEL_CALL_DISPATCH_ACK_UNRESOLVED", 2],
   ["P0001", "GENERATION_ATTEMPT_LIMIT_REACHED", "MODEL_CALL_DISPATCH_ACK_UNRESOLVED", 2],
 ] as const) {

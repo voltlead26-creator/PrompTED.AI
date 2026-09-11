@@ -726,6 +726,12 @@ function checkpointBlockError(checkpoint: LegacyModelCheckpoint): Error {
       const usage = checkpoint.usage ?? {};
       const code = String(usage.error_code ?? "OPENAI_UNKNOWN_ERROR");
       const providerStatus = String(usage.provider_status ?? "");
+      // A retained, exact pre-dispatch denial must keep the same recovery
+      // meaning after reload. Other provider statuses cannot establish it.
+      if (code === "GENERATION_REPAIR_LIMIT_REACHED" &&
+        providerStatus === "rejected_before_provider") {
+        return new OpenAIAdapterError(code, 409, false);
+      }
       const contract = retainedErrorContract(code, providerStatus);
       return new OpenAIAdapterError(
         /^(OPENAI|OLLAMA)_[A-Z0-9_]+$/.test(code)
@@ -1486,7 +1492,8 @@ export async function routeRequest(
                 ? "OPENAI_PROVIDER_DISPATCH_RECONCILIATION_REQUIRED"
                 : error.code.replace("MODEL_CALL_", "OPENAI_"),
               error.code === "MODEL_CALL_ACCOUNT_DELETION_FENCED" ||
-                  error.code === "GENERATION_ATTEMPT_LIMIT_REACHED" ? 409 : 503,
+                  error.code === "GENERATION_ATTEMPT_LIMIT_REACHED" ||
+                  error.code === "GENERATION_REPAIR_LIMIT_REACHED" ? 409 : 503,
               false,
             )
             : error instanceof OllamaError

@@ -1,7 +1,7 @@
 {
   "title": "PrompTED.AI \u00b7 Production completion map",
   "snapshot": "12 September 2026 \u00b7 integrated local gate update; 11 September commercial requirements retained",
-  "sourceHead": "c1cabb63885086de63a1e48873032bd55d91fa6b",
+  "sourceHead": "c329e58f8b8d03ff93ceb0577cb11e784b885f69",
   "branch": "Thought-Enhanced-Document",
   "productionHead": "e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b",
   "productionDeploy": "6a9fc526610f2efb8c05454f",
@@ -185,7 +185,7 @@
       "gap": "Configuration authority is now supplied; the exact confirmed owner UUID must still be securely resolved.",
       "acceptance": "Merge only the versioned owner marker into existing app_metadata; read it back; verify account UI and actual allowance admission without impersonating a paid subscriber.",
       "source": "docs/plans/2026-09-06-owner-access-and-generation-retry-protection.md",
-      "sourceSha256": "431cb6001bef80f1f5a1fa1859ced23f82b918485be78f7a81ef73c0bd71991d"
+      "sourceSha256": "33b954b3c671f895229e2f1bd7dfd795cd89a645edbf4013454ef3ba8bef7ceb"
     },
     {
       "id": "G1",
@@ -206,10 +206,10 @@
       "status": "In progress",
       "priority": "P0",
       "dependsOn": [],
-      "gap": "Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,752 assertions and 1,609 Edge tests. Historical captured failures without dispatch evidence and the separate one-repair allowance still need acceptance work.",
+      "gap": "Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,761 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.",
       "acceptance": "Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.",
       "source": "docs/plans/2026-09-06-owner-access-and-generation-retry-protection.md",
-      "sourceSha256": "431cb6001bef80f1f5a1fa1859ced23f82b918485be78f7a81ef73c0bd71991d"
+      "sourceSha256": "33b954b3c671f895229e2f1bd7dfd795cd89a645edbf4013454ef3ba8bef7ceb"
     },
     {
       "id": "G3",
@@ -224,7 +224,7 @@
       "gap": "10 September live attestations were unconfigured for four routes. Routing/evaluation/capacity inputs must be refreshed and completed.",
       "acceptance": "Verify actual model access, bounded capacity and evaluation results for fast/deep/research/review; derive fingerprints from real evidence, preserve authorised fallback restrictions.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "b90882b4c6e5f5f1e8ded39803b942c75cb6d437ffe8243b1b80fddf2374c0e6"
+      "sourceSha256": "beb64db8a9299466fd5415f832b6a502bcb6d97d6a86c4c01fd7fcd8d36fc6ca"
     },
     {
       "id": "G4",
@@ -249,10 +249,10 @@
       "status": "Confirmed gap",
       "priority": "P0",
       "dependsOn": [],
-      "gap": "Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 86 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.",
+      "gap": "Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 87 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.",
       "acceptance": "Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "b90882b4c6e5f5f1e8ded39803b942c75cb6d437ffe8243b1b80fddf2374c0e6"
+      "sourceSha256": "beb64db8a9299466fd5415f832b6a502bcb6d97d6a86c4c01fd7fcd8d36fc6ca"
     },
     {
       "id": "B2",
@@ -267,7 +267,7 @@
         "G2",
         "Q1"
       ],
-      "gap": "Both 79-to-86 workspace and 68-to-86 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.",
+      "gap": "Both 79-to-87 workspace and 68-to-87 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.",
       "acceptance": "Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.",
       "source": "docs/evidence/web-operational-readiness/run-isolated-db-baseline.mjs",
       "sourceSha256": "6b5b6500472f3c1b042f5322216c26fdb8339ab0cb9fdd271171649a50875dbd"
@@ -338,7 +338,7 @@
       "gap": "Earlier CPJ failures were caused by host sleep during local Supabase startup/reset. Caffeinate -u -i allowed a complete isolated run.",
       "acceptance": "Keep tests on disposable containers/ports; preserve shared data; record versions, cleanup and unchanged source hashes. Use bounded jobs that survive client exit.",
       "source": "docs/evidence/unfinished-production-20260911/Work-plan.md",
-      "sourceSha256": "d47371b991c87d3c1119847e8addcc526a5202e19bfa42e9afb16bde78420f9d"
+      "sourceSha256": "fb1fdc45395334ef69716e102cd6fb879f5baaab87c0dc71198cd49511d3a76d"
     },
     {
       "id": "Q1",
@@ -353,7 +353,7 @@
         "G1",
         "G2"
       ],
-      "gap": "Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Captured retry work, 84-migration upgrade/schema lint and integrated browser acceptance remain; three pre-existing extra Edge lint diagnostics are recorded.",
+      "gap": "Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 87-migration upgrades pass locally. CI 34617376047 passes for c329e58; the new repair slice still needs publication and CI; three pre-existing extra Edge lint diagnostics are recorded.",
       "acceptance": "Run focused/adjacent tests, all SQL, migration upgrades/lint, all Edge tests/types, web/shared/root tests, lint, types, build and bundle budgets; review final diff and source integrity.",
       "source": "scripts/verify-web-release.mjs",
       "sourceSha256": "62395b77239e85b588abcb57e2fbfa55d955058ae13e3b5530fa485c85b8eb21"
@@ -427,7 +427,7 @@
       "gap": "No current throughput or concurrent-owner performance acceptance is recorded.",
       "acceptance": "Use bounded representative concurrency; record p50/p95 latency, errors, rate limiting, memory and capacity exhaustion recovery without uncontrolled provider spending.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "b90882b4c6e5f5f1e8ded39803b942c75cb6d437ffe8243b1b80fddf2374c0e6"
+      "sourceSha256": "beb64db8a9299466fd5415f832b6a502bcb6d97d6a86c4c01fd7fcd8d36fc6ca"
     },
     {
       "id": "R1",
@@ -440,7 +440,7 @@
         "Q2",
         "Q3"
       ],
-      "gap": "Local/GitHub match c1cabb6 after reviewed source publication. CI 34613219486 passed Edge, fresh SQL and web gates; its browser job failed at the historical 79-to-81 upgrade preflight, before browser execution. The captured-budget repair is a new uncommitted slice.",
+      "gap": "Local/GitHub match c329e58. All four jobs in CI 34617376047 passed, including real local upload/Profile/tEdit browser acceptance. The section-repair guard is a new uncommitted slice and has no CI or production acceptance yet.",
       "acceptance": "Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.",
       "source": ".github/workflows/ci.yml",
       "sourceSha256": "4f50d04168a40a443e57b4cbb5084cbd23a95678aee9ab892b55d4483bed9ba8"
