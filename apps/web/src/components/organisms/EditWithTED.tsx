@@ -11,7 +11,7 @@ interface EditWithTEDProps {
   reconciling?: boolean;
   hasSelection: boolean;
   error?: string | null;
-  onRun: (action: EditAction, instruction?: string) => void;
+  onRun: (action: EditAction, instruction?: string) => void | Promise<unknown>;
   onCancel: () => void;
 }
 
@@ -40,7 +40,8 @@ export function EditWithTED({
   onRun,
   onCancel,
 }: EditWithTEDProps) {
-  const unavailable = streaming || reconciling;
+  const [submitting, setSubmitting] = useState(false);
+  const unavailable = streaming || reconciling || submitting;
   const [messages, setMessages] = useState<ThreadMessage[]>([
     {
       id: nextId(),
@@ -49,8 +50,10 @@ export function EditWithTED({
     },
   ]);
   const [input, setInput] = useState("");
-  const awaitingRef = useRef(false);
-  const prevStreamingRef = useRef(false);
+  const [clarification, setClarification] = useState<"change_tone" | "add_detail" | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const requestRef = useRef<symbol | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
   const addMessage = (role: ThreadMessage["role"], text: string) =>
@@ -58,57 +61,65 @@ export function EditWithTED({
 
   useEffect(() => {
     const end = threadEndRef.current;
-    if (typeof end?.scrollIntoView === "function") end.scrollIntoView({ block: "end" });
+    if (end?.parentElement) end.parentElement.scrollTop = end.offsetTop;
   }, [messages, streaming]);
 
-  useEffect(() => {
-    const wasStreaming = prevStreamingRef.current;
-    prevStreamingRef.current = streaming;
-    if (wasStreaming && !streaming && awaitingRef.current) {
-      awaitingRef.current = false;
-      addMessage(
-        "ted",
-        error ?? "The suggestion is ready. Review it, then choose Apply, Try again or Discard.",
-      );
-    }
-  }, [streaming, error]);
+  useEffect(() => () => { requestRef.current = null; }, []);
 
-  const dispatch = (action: EditAction, said: string, instruction?: string) => {
-    if (unavailable) return;
+  const dispatch = async (action: EditAction, said: string, instruction?: string) => {
+    if (unavailable || requestRef.current) return;
+    const token = Symbol("edit");
+    requestRef.current = token;
+    setSubmitting(true);
+    setLocalError(null);
+    setClarification(null);
     addMessage("user", said);
-    awaitingRef.current = true;
     const trimmed = instruction?.trim();
-    onRun(action, trimmed || undefined);
+    try {
+      await onRun(action, trimmed || undefined);
+    } catch {
+      if (requestRef.current === token) {
+        setLocalError("TED could not confirm this request. Check the document status before trying again.");
+      }
+    } finally {
+      if (requestRef.current === token) { requestRef.current = null; setSubmitting(false); }
+    }
   };
 
   const handleQuickAction = (action: EditAction, said: string) => {
-    if (action === "change_tone") {
-      const tone = input.trim();
-      dispatch("change_tone", tone ? `Change the tone: ${tone}` : said, tone || undefined);
-      if (tone) setInput("");
+    if (unavailable || requestRef.current) return;
+    const instruction = input.trim();
+    if ((action === "change_tone" || action === "add_detail") && !instruction) {
+      setClarification(action);
+      addMessage("ted", action === "change_tone"
+        ? "Which tone would you like? Choose below or describe it in your own words."
+        : "What facts should I add? Enter the names, dates, amounts or other details you want included. I’ll prepare a suggestion for you to review.");
+      inputRef.current?.focus({ preventScroll: true });
       return;
     }
-    dispatch(action, said);
+    void dispatch(action, instruction ? `${said} ${instruction}` : said, instruction || undefined);
+    if (instruction) setInput("");
   };
 
   const handleSend = () => {
     const text = input.trim();
     if (!text || unavailable) return;
-    dispatch("improve", text, text);
+    void dispatch(clarification ?? "improve", text, text);
     setInput("");
   };
 
   const handleCancel = () => {
-    awaitingRef.current = false;
+    requestRef.current = null;
+    setSubmitting(false);
     onCancel();
     addMessage(
       "ted",
-      "Cancellation requested. TED is reconciling the durable edit before another attempt can start. Your existing wording has not been changed.",
+      "Stopping this request. TED will check its status before you can try again. Your existing wording has not been changed.",
     );
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       handleSend();
     }
@@ -119,7 +130,7 @@ export function EditWithTED({
       <div className={styles.header}>
         <Icon name="sparkles" size={18} />
         <h3 className={styles.title}>tEdit</h3>
-        {hasSelection && <span className={styles.scope}>Selected wording</span>}
+        <span className={styles.scope}>{hasSelection ? "Selected wording" : "Whole section"}</span>
       </div>
 
       <div className={styles.thread} role="log" aria-live="polite">
@@ -143,13 +154,29 @@ export function EditWithTED({
             </span>
             <p className={styles.msgText}>
               {reconciling
-                ? "TED is reconciling the durable edit…"
+                ? "Checking your previous request before another edit can start…"
                 : "TED is preparing a suggestion…"}
             </p>
           </div>
         )}
         <div ref={threadEndRef} />
       </div>
+
+      {(error || localError) && <p className={styles.error} role="alert">{error || localError}</p>}
+      {clarification === "change_tone" && (
+        <div className={styles.quickRow} role="group" aria-label="Choose a tone">
+          {["Professional", "Friendly", "Direct"].map((tone) => (
+            <button key={tone} type="button" className={styles.chip} disabled={unavailable}
+              onClick={() => {
+                if (unavailable || requestRef.current) return;
+                void dispatch("change_tone", `Use a ${tone.toLowerCase()} tone.`, `Use a ${tone.toLowerCase()} tone. Preserve the meaning and supplied facts.`);
+                setInput("");
+              }}>
+              {tone}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className={styles.quickRow}>
         {QUICK_ACTIONS.map((action) => (
@@ -168,16 +195,18 @@ export function EditWithTED({
 
       <div className={styles.composer}>
         <textarea
+          ref={inputRef}
           className={styles.input}
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Tell TED what to change…"
+          placeholder={clarification === "add_detail" ? "Enter only the facts you want added…" : clarification === "change_tone" ? "For example: professional and warm…" : "For example: make this clearer and keep all dates…"}
           rows={2}
+          maxLength={500}
           disabled={unavailable}
           aria-label="Tell TED what to change"
         />
-        {streaming ? (
+        {streaming || submitting ? (
           <Button variant="ghost" size="sm" onClick={handleCancel}>
             Cancel
           </Button>

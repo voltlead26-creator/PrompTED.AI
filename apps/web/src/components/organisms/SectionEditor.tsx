@@ -138,13 +138,13 @@ export function wouldEraseTedPlaceholder(value: string, currentContent: string):
 function editExplanation(action: EditAction): string {
   switch (action) {
     case "shorten":
-      return "TED shortened the wording while preserving its meaning and facts.";
+      return "TED suggests a shorter version. Check that the meaning, dates and amounts are correct before applying it.";
     case "expand":
-      return "TED added useful detail based only on the wording already supplied.";
+      return "TED suggests a fuller explanation. Check that every detail is supported by the information you supplied.";
     case "change_tone":
-      return "TED adjusted the tone without intentionally changing the facts.";
+      return "TED suggests a different tone. Check that it suits your reader and still says what you mean.";
     case "add_detail":
-      return "TED incorporated the additional detail into this section.";
+      return "TED suggests wording with your additional detail. Check names, dates and amounts before applying it.";
     default:
       return "TED revised the wording for clarity. Check that the meaning and facts remain correct.";
   }
@@ -187,7 +187,6 @@ export function SectionEditor({
   const lastPublished = useRef<{ identity: string; content: string } | null>(null);
   const editorIdentity = section ? `${section.user_id}:${section.document_id}:${section.id}` : null;
   const ai = useEditWithTED();
-  const explain = useExplainWithTED();
   const editLifetimeRef = useRef<symbol | null>(null);
   const sourceSnapshot = {
     identity: editorIdentity,
@@ -203,6 +202,8 @@ export function SectionEditor({
     previousSource.binding !== sourceSnapshot.binding || previousSource.confirmedRevision !== sourceSnapshot.confirmedRevision;
   editSourceRef.current = { ...sourceSnapshot, epoch: previousSource.epoch + Number(sourceChanged) };
   const sourceEpoch = editSourceRef.current.epoch;
+  const explanationScope = `${editorIdentity}:${sourceEpoch}:${selection?.from ?? "all"}:${selection?.to ?? "all"}`;
+  const explain = useExplainWithTED(explanationScope);
   const pendingTedChange = pendingTedSnapshot?.sourceEpoch === sourceEpoch ? pendingTedSnapshot : null;
 
   useLayoutEffect(() => {
@@ -715,6 +716,21 @@ export function SectionEditor({
               tEdit
             </button>
 
+            <button
+              type="button"
+              className={styles.contextAction}
+              disabled={!editor || isVisiblyEmpty(section.content)}
+              aria-expanded={showExplainPanel}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                setShowExplainPanel((value) => !value);
+                setShowTEdit(false);
+              }}
+            >
+              <Icon name="book" size={17} />
+              Explain this
+            </button>
+
             <details className={styles.moreMenu}>
               <summary aria-label="More section options">
                 <Icon name="dots" size={18} />
@@ -745,16 +761,6 @@ export function SectionEditor({
                   <Icon name={locked ? "lock-open" : "lock"} size={16} />
                   {locked ? "Unlock section" : "Lock section"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowExplainPanel(true);
-                    setShowTEdit(false);
-                  }}
-                >
-                  <Icon name="book" size={16} />
-                  Explain this
-                </button>
                 {approved && revisionApproval ? (
                   <span role="status">
                     Editing this wording creates a new revision that needs approval.
@@ -780,8 +786,8 @@ export function SectionEditor({
                 <span className={styles.aiSidebarTitle}>tEdit</span>
                 <p>
                   {hasSelection
-                    ? "TED will edit the selected wording."
-                    : "TED will edit this section."}
+                    ? "TED will suggest a change to your selected wording."
+                    : "TED will suggest a change to this section."}
                 </p>
               </div>
               <button
@@ -794,6 +800,7 @@ export function SectionEditor({
               </button>
             </div>
             <EditWithTED
+              key={editorIdentity}
               streaming={ai.streaming}
               reconciling={legacyRecoveryState !== null}
               hasSelection={hasSelection}
@@ -818,10 +825,10 @@ export function SectionEditor({
               </button>
             </div>
             <ExplainWithTED
+              key={explain.contextKey ?? explanationScope}
               running={explain.running}
               hasSelection={hasSelection}
               error={explain.error}
-              result={explain.result}
               onRun={runAiExplain}
               onCancel={explain.cancel}
             />

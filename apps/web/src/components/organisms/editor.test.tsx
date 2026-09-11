@@ -58,7 +58,8 @@ describe("tEdit panel", () => {
     expect(screen.getByRole("button", { name: "Make clearer" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancel).toHaveBeenCalledOnce();
-    expect(screen.getByText(/Cancellation requested\. TED is reconciling/)).toBeInTheDocument();
+    expect(screen.getByText(/Stopping this request\. TED will check its status before you can try again/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make clearer" })).toBeDisabled();
     expect(screen.queryByText(/Stopped\. Your existing wording/)).not.toBeInTheDocument();
   });
 
@@ -72,7 +73,7 @@ describe("tEdit panel", () => {
         onCancel={vi.fn()}
       />,
     );
-    expect(screen.getByText("TED is reconciling the durable edit…")).toBeInTheDocument();
+    expect(screen.getByText("Checking your previous request before another edit can start…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Make clearer" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Suggest" })).toBeDisabled();
   });
@@ -86,13 +87,16 @@ describe("tEdit panel", () => {
 });
 
 describe("ExplainWithTED panel", () => {
-  it("offers the explanation prompts", () => {
+  it("offers clear explanation prompts and dispatches the selected question", async () => {
+    const onRun = vi.fn().mockResolvedValue(null);
     render(
-      <ExplainWithTED running={false} hasSelection={false} onRun={vi.fn()} onCancel={vi.fn()} />,
+      <ExplainWithTED running={false} hasSelection={false} onRun={onRun} onCancel={vi.fn()} />,
     );
-    for (const label of ["Plain English", "Make simpler", "Why it matters", "Watch for risks"]) {
+    for (const label of ["Plain English", "Why it matters", "What to check", "Next step"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
+    await userEvent.click(screen.getByRole("button", { name: "What to check" }));
+    expect(onRun).toHaveBeenCalledExactlyOnceWith("What should I check in this section before using it?");
   });
 
   it("passes axe", async () => {

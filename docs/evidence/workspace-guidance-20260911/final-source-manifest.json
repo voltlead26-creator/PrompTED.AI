@@ -1,0 +1,23 @@
+{
+  "baseCommit": "0b9dbc1aeb07dddc43398d598fd05bfd64606ebc",
+  "branch": "Thought-Enhanced-Document",
+  "committed": false,
+  "files": {
+    "apps/web/src/components/organisms/EditWithTED.module.css": "10668e1a465ae1a19cdd05279e9dc168d401166cce473db93001406ef297e455",
+    "apps/web/src/components/organisms/EditWithTED.tsx": "e38e0ffb2c3be48d452f850e87d6bdb5730628021d01253065f280542b4e9da7",
+    "apps/web/src/components/organisms/ExplainWithTED.tsx": "a6b70014936e25dc4a3e90a1060a0839bc6423d7666d6d0cd48af8469c2ad9cd",
+    "apps/web/src/components/organisms/SectionEditor.module.css": "a9aeee794309b0c2408ec95d3a4c226b72d68a79bef543903b2bb7292876f1d2",
+    "apps/web/src/components/organisms/SectionEditor.revision-edit.test.tsx": "28ce4e9aced5d959260282a44ebfa4ccb9640b7feaa7717c3f6591a7fea71cd9",
+    "apps/web/src/components/organisms/SectionEditor.tsx": "7d0f7be969c296b5f5a0887f173561a47261e6d184b22b98127c1e00e8d0e42e",
+    "apps/web/src/components/organisms/editor.test.tsx": "0d47a90d53e361ac28e8394ffd6d58fb85b482ab497564f4d6286184f459743f",
+    "apps/web/src/hooks/useExplainWithTED.ts": "a2d868d34f73284e60498d65e346223089a83641e3410d7b7380fcb04474d51d",
+    "supabase/functions/_shared/prompt-builder.test.ts": "411a946f14be811153c11b1c989c4d14bddcf090dc82373f85bceff4b8330145",
+    "supabase/functions/_shared/prompt-builder.ts": "b51ec26252cd31387dbd8ff3c1137108908d1f4338ea4221732feb50c01bcc1b",
+    "apps/web/src/components/organisms/WorkspaceAssistance.test.tsx": "36d65e97b4582848fbb6d97288d41a4276e90f58e8b65443c2d99a716484ad5b",
+    "apps/web/src/hooks/useExplainWithTED.test.tsx": "f0f2f66527e758af45fc814f2ae393d4f14eba1a3d7907d15ae3c6e1280b7eec",
+    "apps/web/src/test/browser/workspace-guidance-harness.html": "44f963d92f47938c9fdcc922f6708dd22ec9dcdc2a3308902e4bdcd631f6fd37",
+    "apps/web/src/test/browser/workspace-guidance-harness.tsx": "ad5dcd57fdf96b8fffb68117d76b4a7485236cdf41ffb3f791798f4097cd31ff",
+    "apps/web/src/test/browser/workspace-guidance-actions.ts": "4a844eb38731fa8eaf280b7786a88514a9f453bb94357eb7e15ff1f917507313",
+    "scripts/verify-workspace-guidance.mjs": "a20b048d3cb6b14d73c723a1347533985da3ddadbd6c5a958cd2d5af434a3f07"
+  }
+}

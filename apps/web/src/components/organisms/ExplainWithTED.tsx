@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import type { ExplainResult } from "@prompted/shared";
@@ -10,229 +10,141 @@ interface ExplainWithTEDProps {
   running: boolean;
   hasSelection: boolean;
   error?: string | null;
-  result?: ExplainResult | null;
-  onRun: (question?: string) => Promise<ExplainResult | null> | void;
+  onRun: (question?: string) => Promise<ExplainResult | null>;
   onCancel: () => void;
 }
 
-interface ThreadMessage {
-  id: number;
-  role: "user" | "ted";
-  text: string;
+type ThreadMessage = { id: number; role: "user" | "ted"; text?: string; answer?: ExplainResult };
+
+function Explanation({ answer }: { answer: ExplainResult }) {
+  const titleId = useId();
+  return (
+    <article className={styles.explanation} aria-labelledby={titleId}>
+      <h4 id={titleId}>{answer.title}</h4>
+      <p>{answer.plain_english}</p>
+      {([
+        ["Why it matters", answer.why_it_matters],
+        ["What to check", answer.what_to_watch],
+        ["Missing details or risks", answer.missing_or_risky],
+      ] as const).map(([label, items]) => items.length > 0 && (
+        <div key={label}>
+          <h5>{label}</h5>
+          <ul>{items.map((item, index) => <li key={index}>{item}</li>)}</ul>
+        </div>
+      ))}
+      {answer.suggested_next_step && (
+        <div className={styles.nextStep}>
+          <h5>Next step</h5>
+          <p>{answer.suggested_next_step}</p>
+        </div>
+      )}
+    </article>
+  );
 }
 
-const QUICK_PROMPTS: Array<{ label: string; icon: string; said: string; question: string }> = [
-  {
-    label: "Plain English",
-    icon: "book",
-    said: "Explain this section in plain English.",
-    question: "Explain this section in plain English.",
-  },
-  {
-    label: "Make simpler",
-    icon: "adjustments",
-    said: "Make this easier to understand.",
-    question: "Make this easier to understand.",
-  },
-  {
-    label: "Why it matters",
-    icon: "info-circle",
-    said: "Why does this matter?",
-    question: "Why does this section matter?",
-  },
-  {
-    label: "Watch for risks",
-    icon: "alert-triangle",
-    said: "What should I watch out for?",
-    question: "What should I watch out for in this section?",
-  },
-];
-
-let messageCounter = 1000;
-const nextId = () => (messageCounter += 1);
-
-function formatResult(result: ExplainResult): string {
-  const parts: string[] = [];
-  parts.push(result.title);
-  parts.push("");
-  parts.push(result.plain_english.trim());
-
-  if (result.why_it_matters.length) {
-    parts.push("");
-    parts.push("Why it matters:");
-    for (const item of result.why_it_matters) parts.push(`- ${item}`);
-  }
-
-  if (result.what_to_watch.length) {
-    parts.push("");
-    parts.push("What to watch:");
-    for (const item of result.what_to_watch) parts.push(`- ${item}`);
-  }
-
-  if (result.missing_or_risky.length) {
-    parts.push("");
-    parts.push("Missing or risky:");
-    for (const item of result.missing_or_risky) parts.push(`- ${item}`);
-  }
-
-  if (result.suggested_next_step) {
-    parts.push("");
-    parts.push(result.suggested_next_step);
-  }
-
-  return parts.join("\n").trim();
-}
-
-export function ExplainWithTED({
-  running,
-  hasSelection,
-  error,
-  result,
-  onRun,
-  onCancel,
-}: ExplainWithTEDProps) {
-  const [messages, setMessages] = useState<ThreadMessage[]>([
-    {
-      id: nextId(),
-      role: "ted",
-      text: "Ask TED to explain this section in plain English. You can type a question or tap a quick prompt.",
-    },
-  ]);
+export function ExplainWithTED({ running, hasSelection, error, onRun, onCancel }: ExplainWithTEDProps) {
+  const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [input, setInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [lastQuestion, setLastQuestion] = useState<string | null>(null);
+  const requestRef = useRef<symbol | null>(null);
+  const messageId = useRef(0);
+  const cancelRef = useRef(onCancel);
+  cancelRef.current = onCancel;
+  const threadRef = useRef<HTMLDivElement>(null);
+  const latestMessageRef = useRef<HTMLDivElement>(null);
+  const busy = running || submitting;
+  const scope = hasSelection ? "the selected wording" : "this section";
+  const prompts = [
+    { label: "Plain English", question: `Explain ${scope} in plain English.` },
+    { label: "Why it matters", question: `Why does ${scope} matter?` },
+    { label: "What to check", question: `What should I check in ${scope} before using it?` },
+    { label: "Next step", question: `What is the next useful step based on ${scope}?` },
+  ];
 
-  const awaitingRef = useRef(false);
-  const prevRunningRef = useRef(false);
-  const threadEndRef = useRef<HTMLDivElement | null>(null);
-
-  const addMessage = (role: ThreadMessage["role"], text: string) =>
-    setMessages((prev) => [...prev, { id: nextId(), role, text }]);
-
+  useEffect(() => () => { requestRef.current = null; cancelRef.current(); }, []);
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, running]);
+    // Scroll only the conversation, keeping the document and page in place.
+    if (threadRef.current && latestMessageRef.current) {
+      threadRef.current.scrollTop = latestMessageRef.current.offsetTop;
+    }
+  }, [messages]);
 
-  useEffect(() => {
-    const wasRunning = prevRunningRef.current;
-    prevRunningRef.current = running;
-    if (wasRunning && !running && awaitingRef.current) {
-      awaitingRef.current = false;
-      if (error) {
-        addMessage("ted", error);
-      } else if (result) {
-        addMessage("ted", formatResult(result));
-      } else {
-        addMessage("ted", "I couldn't explain that section just now.");
+  function addMessage(message: Omit<ThreadMessage, "id">) {
+    const id = ++messageId.current;
+    setMessages((previous) => [...previous, { ...message, id }]);
+  }
+
+  async function dispatch(question: string) {
+    if (busy || requestRef.current) return;
+    const token = Symbol("explanation");
+    requestRef.current = token;
+    setSubmitting(true);
+    setLocalError(null);
+    setLastQuestion(question);
+    addMessage({ role: "user", text: question });
+    try {
+      const answer = await onRun(question);
+      if (requestRef.current !== token) return;
+      if (answer) addMessage({ role: "ted", answer });
+      else setLocalError("TED could not explain this wording. Your document is unchanged; try again.");
+    } catch {
+      if (requestRef.current === token) {
+        setLocalError("TED could not explain this wording. Your document is unchanged; try again.");
       }
+    } finally {
+      if (requestRef.current === token) { requestRef.current = null; setSubmitting(false); }
     }
-  }, [running, error, result]);
+  }
 
-  const dispatch = (said: string, question?: string) => {
-    if (running) return;
-    addMessage("user", said);
-    awaitingRef.current = true;
-    onRun(question?.trim() || undefined);
-  };
-
-  const handleQuickPrompt = (said: string, question: string) => {
-    dispatch(said, question);
-  };
-
-  const handleSend = () => {
-    const text = input.trim();
-    if (!text || running) return;
-    dispatch(text, text);
+  function send() {
+    const question = input.trim();
+    if (!question || busy || requestRef.current) return;
+    void dispatch(question);
     setInput("");
-  };
+  }
 
-  const handleCancel = () => {
-    awaitingRef.current = false;
+  function cancel() {
+    requestRef.current = null;
+    setSubmitting(false);
+    setLocalError(null);
     onCancel();
-    addMessage("ted", "Okay, I’ve stopped there — the document is unchanged.");
-  };
+    addMessage({ role: "ted", text: "Explanation stopped. Your document is unchanged." });
+  }
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      handleSend();
+  function keyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault(); send();
     }
-  };
+  }
 
   return (
     <section className={styles.panel} aria-label="Explain this">
       <div className={styles.header}>
         <Icon name="book" size={18} />
         <h3 className={styles.title}>Explain this</h3>
-        {hasSelection && <span className={styles.scope}>Applies to your selection</span>}
+        <span className={styles.scope}>{hasSelection ? "Selected wording" : "Whole section"}</span>
       </div>
-
-      <div className={styles.thread} role="log" aria-live="polite">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`${styles.msg} ${message.role === "user" ? styles.user : styles.ted}`}
-          >
-            {message.role === "ted" && (
-              <span className={styles.avatar} aria-hidden="true">
-                <Icon name="message-chatbot" size={15} />
-              </span>
-            )}
-            <p className={styles.msgText}>{message.text}</p>
+      <p className={styles.guidance}>Understand what this wording means, what to check and what to do next. Explanations do not change your document.</p>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard users need to scroll the labelled explanation log. */}
+      <div ref={threadRef} className={styles.thread} role="log" aria-label="TED explanations" aria-live="polite" tabIndex={0}>
+        {messages.map((message, index) => (
+          <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className={`${styles.msg} ${message.role === "user" ? styles.user : styles.ted}`}>
+            {message.answer ? <Explanation answer={message.answer} /> : <p className={styles.msgText}>{message.text}</p>}
           </div>
         ))}
-        {running && (
-          <div className={`${styles.msg} ${styles.ted}`}>
-            <span className={styles.avatar} aria-hidden="true">
-              <Icon name="loader-2" size={15} />
-            </span>
-            <p className={styles.msgText} aria-live="polite">
-              TED is explaining…
-            </p>
-          </div>
-        )}
-        <div ref={threadEndRef} />
+        {busy && <p role="status" className={styles.guidance}>TED is explaining {hasSelection ? "your selection" : "this section"}…</p>}
       </div>
-
+      {(error || localError) && !busy && <p role="alert" className={styles.error}>{error || localError}</p>}
+      {localError && lastQuestion && !busy && <Button variant="ghost" size="sm" onClick={() => void dispatch(lastQuestion)}>Try explanation again</Button>}
       <div className={styles.quickRow}>
-        {QUICK_PROMPTS.map((action) => (
-          <button
-            key={action.label}
-            type="button"
-            className={styles.chip}
-            onClick={() => handleQuickPrompt(action.said, action.question)}
-            disabled={running}
-          >
-            <Icon name={action.icon} size={14} />
-            {action.label}
-          </button>
-        ))}
+        {prompts.map(({ label, question }) => <button key={label} type="button" className={styles.chip} onClick={() => void dispatch(question)} disabled={busy}>{label}</button>)}
       </div>
-
       <div className={styles.composer}>
-        <textarea
-          className={styles.input}
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask TED to explain something in this section…"
-          rows={2}
-          disabled={running}
-          aria-label="Ask TED to explain the section"
-        />
-        {running ? (
-          <Button variant="ghost" size="sm" onClick={handleCancel}>
-            Cancel
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleSend}
-            disabled={!input.trim()}
-            leadingIcon={<Icon name="arrow-right" size={16} />}
-          >
-            Send
-          </Button>
-        )}
+        <textarea className={styles.input} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={keyDown}
+          placeholder="For example: What does this deadline mean?" rows={2} maxLength={500} disabled={busy} aria-label="Ask TED to explain the section" />
+        {busy ? <Button variant="ghost" size="sm" onClick={cancel}>Cancel</Button> : <Button variant="primary" size="sm" onClick={send} disabled={!input.trim()}>Ask TED</Button>}
       </div>
     </section>
   );

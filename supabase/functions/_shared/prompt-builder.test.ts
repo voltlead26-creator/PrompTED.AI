@@ -8,6 +8,15 @@ import phase2Templates from "../../../packages/shared/src/templates/phase2-templ
   type: "json",
 };
 
+Deno.test("explanation guidance answers the question without inventing facts or completion", () => {
+  const prompt = buildSystemPrompt({ task: "explain" });
+  assert(prompt.includes("Answer the user's actual question first in plain_english"));
+  assert(prompt.includes("at most three distinct, specific points"));
+  assert(prompt.includes("one concrete action supported by the wording, or null"));
+  assert(prompt.includes("Never imply the document was edited, saved, approved, sent or independently verified"));
+  assert(prompt.includes("Wider section context is read-only"));
+});
+
 Deno.test("recommend prompt embeds every real catalogue name as ground truth", () => {
   const prompt = buildSystemPrompt({ task: "recommend", domain: "business" });
   const names = [...coreTemplates, ...phase2Templates].map((t) =>

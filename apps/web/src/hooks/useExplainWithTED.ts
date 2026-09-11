@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { explainSection } from "@prompted/shared/api-client";
 import type { ExplainResult } from "@prompted/shared/orchestration";
 import { useAuth } from "@/components/providers";
@@ -19,6 +19,8 @@ export interface ExplainRequest {
 }
 
 export interface UseExplainWithTED {
+  /** Resets transient explanation history when its owner or wording changes. */
+  contextKey: string;
   running: boolean;
   error: string | null;
   result: ExplainResult | null;
@@ -26,34 +28,55 @@ export interface UseExplainWithTED {
   cancel: () => void;
 }
 
-export function useExplainWithTED(): UseExplainWithTED {
+export function useExplainWithTED(scopeKey?: string): UseExplainWithTED {
   const { user } = useAuth();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExplainResult | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const scopeRef = useRef({ owner: user?.id, key: scopeKey });
+  scopeRef.current = { owner: user?.id, key: scopeKey };
 
   const cancel = useCallback(() => {
     controllerRef.current?.abort();
     controllerRef.current = null;
     setRunning(false);
+    setResult(null);
+    setError(null);
   }, []);
 
+  useEffect(() => {
+    cancel();
+    return () => {
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+    };
+  }, [user?.id, scopeKey, cancel]);
+
   const run = useCallback(async (req: ExplainRequest) => {
-    if (!user?.id) {
-      setError("Sign in again before asking TED to explain this section.");
-      return null;
-    }
-    ensureApiConfigured();
+    controllerRef.current?.abort();
+    controllerRef.current = null;
     setError(null);
     setResult(null);
+    if (!user?.id) {
+      setError("Sign in again before asking TED to explain this section.");
+      setRunning(false);
+      return null;
+    }
     setRunning(true);
 
     const controller = new AbortController();
-    const requestContext = captureOwnerDispatch(user.id, controller.signal);
     controllerRef.current = controller;
+    const owner = user.id;
+    const acceptedScope = scopeKey;
+    const isCurrent = () => controllerRef.current === controller &&
+      !controller.signal.aborted && scopeRef.current.owner === owner &&
+      scopeRef.current.key === acceptedScope;
+    let requestContext: ReturnType<typeof captureOwnerDispatch> | null = null;
 
     try {
+      ensureApiConfigured();
+      requestContext = captureOwnerDispatch(owner, controller.signal);
       const next = await explainSection(
         {
           content: req.content,
@@ -64,20 +87,21 @@ export function useExplainWithTED(): UseExplainWithTED {
         },
         requestContext,
       );
+      if (!isCurrent()) return null;
       requestContext.assertCurrent();
       setResult(next);
       return next;
     } catch {
-      if (!ownerDispatchIsCurrent(requestContext)) return null;
+      if (!isCurrent() || (requestContext && !ownerDispatchIsCurrent(requestContext))) return null;
       setError("TED couldn't explain that section right now. Please try again.");
       return null;
     } finally {
-      if (ownerDispatchIsCurrent(requestContext)) {
+      if (isCurrent()) {
         setRunning(false);
         controllerRef.current = null;
       }
     }
-  }, [user?.id]);
+  }, [user?.id, scopeKey]);
 
-  return { running, error, result, run, cancel };
+  return { contextKey: JSON.stringify([user?.id ?? null, scopeKey ?? null]), running, error, result, run, cancel };
 }

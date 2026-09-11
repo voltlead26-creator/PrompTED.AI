@@ -140,7 +140,7 @@
   bottom: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
   gap: 8px;
   padding: 10px max(10px, env(safe-area-inset-left)) calc(10px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-right));
   background: color-mix(in srgb, var(--paper, #F7F1E7) 94%, transparent);
@@ -344,9 +344,14 @@
   }
 
   .contextBar {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
     gap: 6px;
     border-radius: 12px 12px 0 0;
+  }
+
+  .moreMenu {
+    grid-column: 3;
+    grid-row: 1 / span 2;
   }
 
   .contextAction {

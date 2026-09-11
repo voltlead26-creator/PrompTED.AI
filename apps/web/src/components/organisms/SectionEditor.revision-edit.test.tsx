@@ -108,6 +108,13 @@ async function chooseClearer(): Promise<void> {
 }
 
 describe("SectionEditor revision-bound TED edits", () => {
+  it("offers explanation directly beside editing without opening the more menu", async () => {
+    render(<SectionEditor {...requiredProps} section={section()} onEdit={vi.fn()} />);
+    const explain = await screen.findByRole("button", { name: "Explain this" });
+    expect(explain.closest("details")).toBeNull();
+    await userEvent.click(explain);
+    expect(screen.getByRole("textbox", { name: "Ask TED to explain the section" })).toBeVisible();
+  });
   it("preserves imported text paragraphs and line breaks through a local edit and saved echo", async () => {
     const onEdit = vi.fn();
     const original = section({ content: "First paragraph.\n\nSecond paragraph.\nA separate line." });
