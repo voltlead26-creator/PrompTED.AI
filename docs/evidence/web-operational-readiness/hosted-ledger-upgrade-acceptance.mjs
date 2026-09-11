@@ -8,6 +8,30 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { readUploadProbeBody } from "./workspace-upload-transport.mjs";
 
+// Exact extra ACL entries observed on project jjsykocqpjlekgsbylkd on 12 September.
+// Applied only by the identified disposable rehearsal, never against production.
+export const observedOwnerRpcGrantFixture = `
+grant execute on function public.apply_legacy_section_edit(uuid,integer,text,text) to service_role;
+grant execute on function public.approve_captured_document_revision(uuid,integer,uuid,integer) to service_role;
+grant execute on function public.create_and_link_own_business(text,text,text,text,text,text) to service_role;
+grant execute on function public.create_and_link_own_business(text,text,text,text,text,text) to anon;
+grant execute on function public.discard_legacy_section_edit(uuid,text) to service_role;
+grant execute on function public.edit_captured_document_section(uuid,integer,uuid,integer,text,integer,text,text) to service_role;
+grant execute on function public.get_captured_document_operation(uuid) to service_role;
+grant execute on function public.get_latest_captured_document_operation(uuid) to service_role;
+grant execute on function public.link_own_business(uuid) to service_role;
+grant execute on function public.link_own_business(uuid) to anon;
+grant execute on function public.promote_profile_resume(uuid,text) to service_role;
+grant execute on function public.request_captured_document_cancellation(uuid,integer,text) to service_role;
+grant execute on function public.request_captured_document_export(uuid,integer,uuid,integer,text,text) to service_role;
+grant execute on function public.restore_previous_profile_resume() to service_role;
+grant execute on function public.save_legacy_section(uuid,integer,text,text,text) to service_role;
+grant execute on function public.update_own_profile_details(text,text,text,text,date,text,text,text,text,text,text) to service_role;
+grant execute on function public.update_own_profile_details(text,text,text,text,date,text,text,text,text,text,text) to anon;
+grant execute on function public.handle_new_user() to service_role;
+grant execute on function public.set_updated_at() to anon, authenticated, service_role;
+`;
+
 const baselineSha = "512ec9a63dea20b6e4808b3cb465e2e60a50357b3893194b4c5a9fc5acf375f0";
 const sha = value => createHash("sha256").update(value).digest("hex");
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;

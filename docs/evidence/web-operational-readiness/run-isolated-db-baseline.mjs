@@ -29,7 +29,7 @@ import { selectUploadSourceSqlScope } from "./upload-source-sql-scope.mjs";
 import { exerciseWorkspaceReads, validateWorkspaceReadUpgradePlan } from "./workspace-upload-read-acceptance.mjs";
 import { exerciseWorkspaceBrowser } from "./workspace-browser-acceptance.mjs";
 import { exerciseNewWorkspaceUploads } from "./workspace-upload-browser-acceptance.mjs";
-import { assertHostedLedgerPhase, exerciseHostedLedgerUpgrade, validateHostedLedgerUpgradePlan } from "./hosted-ledger-upgrade-acceptance.mjs";
+import { assertHostedLedgerPhase, exerciseHostedLedgerUpgrade, observedOwnerRpcGrantFixture, validateHostedLedgerUpgradePlan } from "./hosted-ledger-upgrade-acceptance.mjs";
 import { exerciseLegacyPolicyUpgrade, validateLegacyPolicyUpgradePlan } from "./legacy-policy-upgrade-acceptance.mjs";
 import { assertLegacyWorkspaceCorePhase, exerciseLegacyWorkspaceCoreUpgrade,
   coreMigrationFile, coreMigrationSha, coreTestFile, coreTestSha,
@@ -674,6 +674,18 @@ try {
       };
       const history = label => JSON.parse(sql(label,
         "select coalesce(json_agg(version order by version),'[]'::json) from supabase_migrations.schema_migrations;"));
+      // Audit metadata only: compare the recorded-hosted predecessor with the
+      // live catalog before claiming schema-body equivalence. No application
+      // rows, credentials or function bodies are included. MD5 is only a
+      // deterministic equality fingerprint, never an authenticity proof.
+      const functionCatalog = label => save(`${label}.json`, JSON.parse(sql(label,
+        `select coalesce(jsonb_agg(to_jsonb(r) order by schema_name,function_name,identity_arguments),'[]'::jsonb)
+        from (select n.nspname as schema_name, p.proname as function_name,
+          pg_catalog.pg_get_function_identity_arguments(p.oid) as identity_arguments,
+          pg_catalog.md5(pg_catalog.pg_get_functiondef(p.oid)) as definition_md5,
+          p.prosecdef as security_definer, p.provolatile as volatility, p.proacl::text as acl
+          from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+          where n.nspname in ('public','private') and p.prokind='f') r;`)));
       const transition = next => {
         checkTarget(); assert.notEqual(next, hostedLedgerPhase);
         assert.ok(next === "full" || next === "historical");
@@ -700,6 +712,11 @@ try {
         const historicalDatabase = attestDatabase("hosted-ledger-after-reset");
         assertDisposableReset(database, historicalDatabase); database = historicalDatabase;
         assert.deepEqual(history("hosted-ledger-historical-history"), plan.hostedVersions);
+        functionCatalog("hosted-ledger-historical-function-catalog");
+        sql("hosted-ledger-reproduce-observed-grants", observedOwnerRpcGrantFixture);
+        functionCatalog("hosted-ledger-observed-function-catalog");
+        assert.equal(sql("hosted-ledger-observed-anon-profile-grant",
+          "select has_function_privilege('anon','public.link_own_business(uuid)','EXECUTE');").trim(), "t");
         await exerciseHostedLedgerUpgrade({ project, workdir, env: localEnv, checkTarget, save, sql,
           applyMigration() {
             assert.equal(hostedLedgerPhase, "historical");
@@ -714,6 +731,7 @@ try {
           },
         });
         assert.equal(hostedLedgerPhase, "full");
+        functionCatalog("hosted-ledger-current-function-catalog");
         supabase("hosted-ledger-upgraded-tests", ["test", "db", "--local"], 10 * 60_000);
         supabase("hosted-ledger-upgraded-schema-lint", ["db", "lint", "--local", "--schema", "public,private",
           "--level", "warning", "--fail-on", "error"], 10 * 60_000);

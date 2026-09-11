@@ -1,7 +1,7 @@
 {
   "title": "PrompTED.AI \u00b7 Production completion map",
   "snapshot": "12 September 2026 \u00b7 integrated local gate update; 11 September commercial requirements retained",
-  "sourceHead": "c329e58f8b8d03ff93ceb0577cb11e784b885f69",
+  "sourceHead": "5f7b12e942eb6dc8b615dd7795ec94fc3a3664e6",
   "branch": "Thought-Enhanced-Document",
   "productionHead": "e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b",
   "productionDeploy": "6a9fc526610f2efb8c05454f",
@@ -206,7 +206,7 @@
       "status": "In progress",
       "priority": "P0",
       "dependsOn": [],
-      "gap": "Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,761 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.",
+      "gap": "Legacy and captured preparation/dispatch guards pass the combined local gate: 55 SQL files / 2,808 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.",
       "acceptance": "Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.",
       "source": "docs/plans/2026-09-06-owner-access-and-generation-retry-protection.md",
       "sourceSha256": "33b954b3c671f895229e2f1bd7dfd795cd89a645edbf4013454ef3ba8bef7ceb"
@@ -224,7 +224,7 @@
       "gap": "10 September live attestations were unconfigured for four routes. Routing/evaluation/capacity inputs must be refreshed and completed.",
       "acceptance": "Verify actual model access, bounded capacity and evaluation results for fast/deep/research/review; derive fingerprints from real evidence, preserve authorised fallback restrictions.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "beb64db8a9299466fd5415f832b6a502bcb6d97d6a86c4c01fd7fcd8d36fc6ca"
+      "sourceSha256": "c8c56733f6dbb49750d8b720d29463a533ecc1ecb89422f0da2f395811c18845"
     },
     {
       "id": "G4",
@@ -249,10 +249,10 @@
       "status": "Confirmed gap",
       "priority": "P0",
       "dependsOn": [],
-      "gap": "Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 87 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.",
+      "gap": "Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 88 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; table/RLS/Storage parity remains.",
       "acceptance": "Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "beb64db8a9299466fd5415f832b6a502bcb6d97d6a86c4c01fd7fcd8d36fc6ca"
+      "sourceSha256": "c8c56733f6dbb49750d8b720d29463a533ecc1ecb89422f0da2f395811c18845"
     },
     {
       "id": "B2",
@@ -267,10 +267,10 @@
         "G2",
         "Q1"
       ],
-      "gap": "Both 79-to-87 workspace and 68-to-87 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.",
+      "gap": "Both 79-to-88 workspace and 68-to-88 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Table/RLS/Storage catalog checks, a current recovery point and separate Storage protection remain.",
       "acceptance": "Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.",
       "source": "docs/evidence/web-operational-readiness/run-isolated-db-baseline.mjs",
-      "sourceSha256": "6b5b6500472f3c1b042f5322216c26fdb8339ab0cb9fdd271171649a50875dbd"
+      "sourceSha256": "22c13e0544bec16d016ab12a88b92f2ee0bdbc344f5d952360880388948d7054"
     },
     {
       "id": "B3",
@@ -338,7 +338,7 @@
       "gap": "Earlier CPJ failures were caused by host sleep during local Supabase startup/reset. Caffeinate -u -i allowed a complete isolated run.",
       "acceptance": "Keep tests on disposable containers/ports; preserve shared data; record versions, cleanup and unchanged source hashes. Use bounded jobs that survive client exit.",
       "source": "docs/evidence/unfinished-production-20260911/Work-plan.md",
-      "sourceSha256": "fb1fdc45395334ef69716e102cd6fb879f5baaab87c0dc71198cd49511d3a76d"
+      "sourceSha256": "ab5e204b207ae5a77fee216ee38846c3d8711488589caa0a3febb8c2d01c0baa"
     },
     {
       "id": "Q1",
@@ -353,7 +353,7 @@
         "G1",
         "G2"
       ],
-      "gap": "Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 87-migration upgrades pass locally. CI 34617376047 passes for c329e58; the new repair slice still needs publication and CI; three pre-existing extra Edge lint diagnostics are recorded.",
+      "gap": "Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 88-migration upgrades pass locally. CI 34620298898 passes all four jobs for 5f7b12e; the permission correction awaits its own publication and CI; three pre-existing extra Edge lint diagnostics are recorded.",
       "acceptance": "Run focused/adjacent tests, all SQL, migration upgrades/lint, all Edge tests/types, web/shared/root tests, lint, types, build and bundle budgets; review final diff and source integrity.",
       "source": "scripts/verify-web-release.mjs",
       "sourceSha256": "62395b77239e85b588abcb57e2fbfa55d955058ae13e3b5530fa485c85b8eb21"
@@ -427,7 +427,7 @@
       "gap": "No current throughput or concurrent-owner performance acceptance is recorded.",
       "acceptance": "Use bounded representative concurrency; record p50/p95 latency, errors, rate limiting, memory and capacity exhaustion recovery without uncontrolled provider spending.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "beb64db8a9299466fd5415f832b6a502bcb6d97d6a86c4c01fd7fcd8d36fc6ca"
+      "sourceSha256": "c8c56733f6dbb49750d8b720d29463a533ecc1ecb89422f0da2f395811c18845"
     },
     {
       "id": "R1",
@@ -440,7 +440,7 @@
         "Q2",
         "Q3"
       ],
-      "gap": "Local/GitHub match c329e58. All four jobs in CI 34617376047 passed, including real local upload/Profile/tEdit browser acceptance. The section-repair guard is a new uncommitted slice and has no CI or production acceptance yet.",
+      "gap": "Published 5f7b12e passes all four CI jobs in 34620298898. The current permission correction and catalog comparison pass local fresh/upgrade SQL and web gates; publication and exact-commit CI follow. No production deployment has occurred.",
       "acceptance": "Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.",
       "source": ".github/workflows/ci.yml",
       "sourceSha256": "4f50d04168a40a443e57b4cbb5084cbd23a95678aee9ab892b55d4483bed9ba8"

@@ -654,3 +654,93 @@ remain absent. A private local snapshot captures metadata and definition hashes
 for 190 hosted public/private functions, with no application rows or function
 bodies. This starts catalog comparison; it is not a completed schema parity or
 backup/recovery check. No hosted mutation or deployment has occurred.
+
+## Hosted catalog and recovery inspection — 12 September 2026
+
+The reviewed repair slice is published at
+`5f7b12e942eb6dc8b615dd7795ec94fc3a3664e6`; local/origin were confirmed equal
+and clean before the following audit-only runner change. CI `34620298898` is
+running on that exact commit. Previous CI `34617376047` passed all four jobs.
+
+The existing local `SUPABASE_ACCESS_TOKEN` and distinct
+`NEXT_SUPABASE_ACCESS_TOKEN` both return HTTP 401 from the official project
+backup-inventory endpoint. No valid Supabase candidate exists in the preserved
+operator-candidates file. Values were not printed, overwritten or rotated.
+The Supabase connector and signed-in dashboard remain accessible.
+
+The dashboard verifies PrompTED, project `jjsykocqpjlekgsbylkd`, in Little Miss
+Scarlett, linked to the requested repository and production branch. Project
+status is Healthy. Eight physical backups are listed; latest is
+10 September 2026 at 18:44:38 UTC. Point-in-time recovery is not enabled.
+The owning organization shows outstanding invoices; no invoice was paid and
+no paid add-on or new project was created. Financial disposition remains an
+operational issue, distinct from database health.
+
+The dashboard and [Supabase backup documentation](https://supabase.com/docs/guides/platform/backups)
+confirm database backups exclude Storage object bytes. The existing local
+upgrade fixtures prove original-byte preservation, not a full live backup or
+a restoration rehearsal. No production restore has been attempted.
+
+The isolated recorded-hosted-history runner now emits public/private function
+metadata before and after upgrade. This is read-only catalog instrumentation
+using the same function identity, definition hash, definer flag, volatility and
+ACL fields captured from production. The next run will enable comparison of
+all 190 observed hosted function entries with the reconstructed predecessor.
+It does not itself establish table/RLS/Storage parity or authorize migration
+if a definition or privilege differs.
+
+## Hosted function comparison and permission correction — 12 September 2026
+
+Catalog run `db-20260911161501018-f9b3cfa7` passed the recorded 68-to-87 upgrade,
+54 SQL files / 2,761 assertions, web gate, cleanup and source checks. Its exact
+predecessor has the same 190 function identities as production. Every definition
+fingerprint, signature, SECURITY DEFINER flag and volatility matches. No function
+is missing or extra. This is function-metadata evidence, not whole-schema parity.
+
+Sixteen raw ACLs differ. Effective privilege reads confirm 15 functions have
+extra grants: fourteen owner-client functions also allow service-role execution,
+and the Auth trigger has a redundant service-role grant. Three of the owner
+commands (`update_own_profile_details`, `link_own_business`,
+`create_and_link_own_business`) additionally grant anonymous execution. Their
+matching bodies still check `auth.uid()`; this finding establishes privilege
+drift, not demonstrated anonymous access to another user's data. The sixteenth
+raw difference, `set_updated_at`, is equivalent to its existing PUBLIC default
+and is not treated as a new effective privilege gap.
+
+Callers were traced through owner-authenticated browser clients and
+`document-operation`'s `userClient(req)`. Server commands retain separate
+service-role APIs. Forward migration
+`20260911162022_reconcile_owner_rpc_execute_privileges.sql`, created by the
+Supabase CLI, explicitly restores the owner-only EXECUTE surface and removes
+direct client grants on the Auth trigger. It changes no function body, argument,
+row, approval, receipt or Storage object.
+
+The disposable predecessor now reproduces the exact observed extra grants before
+applying the pending migration set. A new SQL regression checks all fourteen
+owner-command roles, direct trigger denial, actual Auth sign-up/profile creation,
+and retained service access on the separate entitlement command. The raw local
+predecessor and observed-grant fixture catalogs remain separate artifacts.
+Fresh and upgraded real SQL verification is pending; static migration/contract
+checks and 21 current/historical upgrade-manifest tests pass. No hosted grants
+or migrations have been changed.
+
+
+## Permission correction accepted locally — 12 September 2026, 02:29 AEST
+
+CPJ `job-mtx61xta-8c41ba44` passed both current 88-migration rehearsals:
+`db-20260911162409967-4d4d9df5` (recorded hosted 68-to-88, including observed
+grants) and `db-20260911162633121-a95f1a92` (workspace 79-to-88).
+Each fresh and upgraded database passes 55 SQL files / 2,808 assertions.
+This includes all 47 new privilege/sign-up regressions. The predecessor catalog
+after grant reproduction matches all 190 hosted entries, including ACL entries
+compared as sets. The corrected catalog and SQL tests prove owner EXECUTE access
+is retained and anonymous/service execution is removed from the named commands.
+
+Both runs pass historical preservation/replay acceptance, the full web gate
+(445 shared and 1,163 web tests, types, lint, production build and bundle checks),
+source-before/after equality, unchanged HEAD, and disposable Docker cleanup.
+Schema lint reports 23 existing diagnostics across eight functions, zero errors.
+No application Edge source changed since the separately passing 1,617-test suite.
+CI `34620298898` passed all four jobs on `5f7b12e942eb6dc8b615dd7795ec94fc3a3664e6`.
+The permission correction is locally verified; its own publication/CI and all
+hosted application, table/RLS/Storage parity and recovery gates remain separate.
