@@ -47,3 +47,20 @@ supabase/.temp/
 
 # Local Docker Desktop virtual disk; never application source or release input.
 /DockerDesktop/Docker.raw
+
+# Private local references, deduplicated evidence archives and maintenance receipts.
+/.local/
+# Machine-installed agent skills are tooling, not web-app release inputs.
+/.agents/
+/skills-lock.json
+
+# Reproducible workspace-guidance verification output; reviewed reports stay tracked.
+/docs/evidence/workspace-guidance-20260911/*.log
+/docs/evidence/workspace-guidance-20260911/browser/bundle/
+/docs/evidence/workspace-guidance-20260911/browser/*.png
+
+# Disposable local acceptance runs; canonical runners and reviewed reports stay visible.
+/docs/evidence/web-operational-readiness/db-*/
+/docs/evidence/web-operational-readiness/tedit-browser-*/
+/docs/evidence/web-operational-readiness/browser-dependency-*/
+/docs/evidence/web-operational-readiness/upload-source-full-gate-*/
