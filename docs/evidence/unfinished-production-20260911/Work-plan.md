@@ -3,24 +3,26 @@
 ## Latest verified state — 12 September 2026
 
 The chronological entries below retain failures and corrections as historical
-evidence. Current local acceptance is run `db-20260911144322685-303cf378` and
-combined job `job-mtx2gbp6-b9d741f0`: all 53 SQL files / 2,737 assertions, 1,606
-Edge tests (220 steps), 445 shared tests and 1,163 web tests passed, together
-with repository lint/types, production build and bundle budgets. Cleanup and
-all 1,084 pre-test source hashes passed. This covers dormant DOCX source binding,
-finite owner access across database/Edge/account UI, bounded browser observation
-and the legacy cumulative failure budget. Earlier pending/unlimited-owner draft
-entries below are superseded by their later corrections and this current state.
+evidence. Current local acceptance includes 54 SQL files / 2,752 assertions,
+1,609 Edge tests (220 steps), 445 shared tests and 1,163 web tests, repository
+lint/types, production build and bundle budgets. Both the 79-to-86 workspace
+upgrade and recorded production 68-to-86 upgrade passed with exact historical
+wording/receipt preservation. Schema lint reports zero errors and 23 retained
+warnings in older functions; the new-source warnings were corrected. Cleanup
+and source hashes passed. Evidence runs and limitations are recorded below.
 
-This is fresh local database and source evidence. Captured cumulative failures,
-the separate validation-repair budget, 84-migration upgrade rehearsal/schema
-lint, real browser acceptance and production deployment remain outstanding.
-Three additional pre-existing Edge lint diagnostics remain explicitly recorded.
-The exact Pro/Premium document caps remain the pending commercial decision.
+This covers dormant DOCX source binding, finite owner access across database,
+Edge and account UI, bounded browser observation, and legacy/captured cumulative
+guards. Historical captured failures without dispatch evidence and the separate
+validation-repair budget still require acceptance work. Real browser acceptance
+and production deployment remain outstanding. Three additional pre-existing
+Edge lint diagnostics remain recorded. The exact Pro/Premium document caps are
+still the pending commercial decision; no numeric policy is inferred from price.
 
-At approximately 00:50 AEST, Git fetch confirmed local and remote branch HEAD
-still matched `c3c2ef6`; Netlify re-read confirmed locked production remains
-`e1d514d`. Reviewed source synchronization is the next publication step.
+Local and remote branch HEAD match published `c1cabb6`, with the next reviewed
+slice uncommitted. Its prior CI passed web/Edge/fresh SQL but stopped before
+browser execution at the older upgrade manifest. Netlify production remains
+locked at `e1d514d`. Source synchronization and current CI are the next steps.
 
 ## Scope and authority
 
@@ -438,3 +440,146 @@ The accounting fixture's explicit reviewed hash was updated to
 Historical JSON manifests and migration hashes are unchanged. Fixture-pin tests
 and full runner preflight `db-20260911144229553-997b8b28` pass. The corrected
 integration run remains pending; no gate has been weakened.
+
+## Source publication and captured-budget regression — 12 September
+
+The corrected combined run passed as recorded in Latest verified state above.
+All 52 reviewed paths were committed and pushed normally as
+`c1cabb63885086de63a1e48873032bd55d91fa6b`; local and remote HEAD matched and
+the working tree was clean immediately afterwards. The reviewed-path secret
+pattern scan found no private key, live token or JWT candidates. The final
+staged whitespace check passed after correcting the generated map's extra
+trailing blank line. Netlify production remains on its older locked revision.
+
+CI `34613219486` at that exact commit has passed its Edge, fresh database and
+web gates; browser workflow acceptance is still running. No complete CI or
+production acceptance claim is made yet.
+
+The next regression is `captured_generation_failure_budget.test.sql`. It uses
+the established real-ledger synthetic admission fixture, records a failed
+generation attempt, a successful generation checkpoint and a failed review
+attempt through the public commands, and requires the next review preparation
+to be denied by the cumulative budget. Synthetic external-egress receipts are
+recorded through the existing commands; no provider is contacted. Original
+checkpoint and completed-document-credit preservation are independently read.
+The fixture is attributed to its exact source hash. Existing tests are unchanged.
+
+The trace confirms captured preparation currently checks the immutable per-stage
+ceiling, while generation and review have separate stage identities. Captured
+completion accounting and the external-egress receipt are existing authorities
+for the upcoming repair; no new counter store is introduced by the regression.
+Preflight `db-20260911150217284-c89fad25` passes. The new regression still needs
+execution to distinguish the expected cumulative-limit defect from fixture errors.
+
+Run `db-20260911150331319-8499da4b` reproduced that defect: no exception was
+raised on the next review preparation and the attempt count rose from three
+to four. Exactly two of the new file's 12 assertions failed; all other 53 SQL
+files passed. Cleanup, unchanged source hashes and the complete web gate passed.
+
+The additive `20260911151000_captured_generation_failure_budget.sql` now drafts
+the cumulative check on the existing captured attempt table and rechecks it
+at a new external-egress grant. It joins exact owner/attempt dispatch receipts
+to immutable terminal failed attempts, serializes against the operation row,
+preserves completed checkpoints and existing dispatch-token replay, and excludes
+the known completed-response wording/JSON validation errors. No new counter
+table or document-credit path is introduced. Historical failed attempts without
+dispatch receipts are not proof of dispatch; their treatment and the separate
+repair allowance remain explicit acceptance work rather than inferred usage.
+
+The Edge dispatch acknowledgement regression first failed with the misleading
+`MODEL_CALL_PROVIDER_DISPATCH_ACK_UNRESOLVED` response. Exact SQLSTATE/message
+recognition now preserves `GENERATION_ATTEMPT_LIMIT_REACHED` without retrying
+the acknowledgement. Three focused tests pass for that exact response, rejection
+of an inexact marker, and runner terminalization with no preparation on resume.
+The SQL file additionally checks denial at the dispatch boundary and preservation
+of an existing completed receipt. Full database/Edge integration remains pending;
+85-migration preflight `db-20260911151246039-035d695e` passes.
+
+CI `34613219486` completed with Edge, fresh SQL and web gates green. Its browser
+job failed at `Prove all current SQL fresh and the reviewed 79-to-81 workspace
+upgrade`, before browser execution. The existing upgrade validator still binds
+the historical exact 81-migration manifest; the published slice contains 84 and
+the next draft 85. A separately reviewed current upgrade manifest/rehearsal is
+required. Historical evidence will not be overwritten or re-labelled as current.
+
+## Captured local acceptance and current upgrade inputs — 12 September
+
+Run `db-20260911151421959-c1a48e17` passed all 2,752 assertions across 54 SQL
+files, including 15 captured cumulative-budget assertions. Combined job
+`job-mtx3k6bb-62e5c3e8` also passed all 1,609 Edge tests (220 steps), the complete
+web gate and cleanup; source hashes were unchanged. This verifies the current
+captured guard locally, not hosted historical dispatch evidence or the separate
+automatic validation-repair budget.
+
+Two new upgrade-validator regressions reproduced rejection of the current
+85-migration / 54-test manifest. `reviewed-release-sql-extension.mjs` now pins
+the four reviewed added migrations and four added SQL test files explicitly.
+Both the 79-version workspace predecessor and the observed 68-version hosted
+ledger retain their original immutable manifests. The runner temporarily holds
+the exact additional SQL files out of the workspace predecessor, verifies both
+active and held inventories/hashes, restores the complete manifest, and runs
+all current tests after the upgrade. Unknown, missing or modified files remain
+rejected. The original historical mode remains testable at its original pins.
+
+All 100 focused current/historical validator tests pass. Current workspace
+preflight `db-20260911152246179-3942808b` and hosted-ledger preflight
+`db-20260911152248019-1c9bf959` pass. All three historical baseline JSON files
+were byte-compared to HEAD and remain unchanged. These are input/preflight
+results; neither current upgrade has been executed yet.
+
+The upgrade modes now run Supabase schema lint on the application's public and
+private schemas before and after the upgrade, retaining warning diagnostics and
+failing on errors. The CLI's installed help confirms these exact supported
+options. CI's step label now describes the current reviewed upgrade rather than
+claiming the old 79-to-81 target. The CI/browser gate still needs a new published
+revision and successful execution.
+
+Run `db-20260911152344058-5fe2e444` passed the actual 79-to-85 workspace upgrade:
+48 predecessor SQL files / 2,511 assertions, then all 54 current files / 2,752
+assertions. The authenticated synthetic two-owner workflow preserved historical
+wording, save receipts, sibling sections, public RPC identity and grants; old
+receipts replayed exactly and new saves persisted independently. Full web gate,
+cleanup and source hashes passed. This is disposable authenticated upgrade proof,
+not the production account library.
+
+Fresh and upgraded schema lint reported zero errors and retained warnings. Two
+new-source warning groups are addressed by the forward-only migration
+`20260911153000_access_read_volatility_and_docx_scope.sql`: access wrappers now
+declare the deliberate fresh-read volatility of their resolver, and the DOCX
+paragraph ordinal has a distinct local name from implicit integer-loop indices.
+The copied DOCX function was mechanically compared to its original: only that
+local variable rename and CREATE OR REPLACE differ. Published migration files
+remain unchanged. Existing unrelated manifest/helper lint warnings are retained
+for review rather than suppressed.
+
+The resulting 86-migration release extension has explicit reviewed hashes.
+Both workspace and hosted-ledger preflights pass again
+(`db-20260911152943828-bbd229f3`, `db-20260911152945791-8e944d57`). The 86-migration
+upgrade itself remains pending. Workspace summary metadata now records the actual
+validated final migration rather than retaining the old fixed 81-migration end.
+
+At approximately 01:28 AEST, the Supabase connector returned exactly the same
+68 ordered migration versions as the immutable recorded hosted baseline, not
+merely the same count. No hosted mutation was performed. The next execution
+repeats the corrected workspace upgrade and separately rehearses that exact
+68-version history through all 18 pending migrations in isolation.
+
+Runs `db-20260911153057822-4785f3a3` (79-to-86 workspace) and
+`db-20260911153331378-7dd5642b` (68-to-86 production-history rehearsal) both pass.
+Each passed all 54 current SQL files / 2,752 assertions before and after the
+upgrade, the complete web gate, cleanup and unchanged source hashes. The
+workspace predecessor additionally passed 48 files / 2,511 assertions, and its
+23 authenticated synthetic HTTP checks preserved public API identity/grants,
+old receipt replay, sibling state and new-save persistence. Its summary records
+the actual final migration `20260911153000`.
+
+The production-history rehearsal preserved two owners' outcomes, documents,
+four sections, two uploads and two historical save receipts. Both original
+DOCX objects retained their exact bytes; both save receipts replayed. This
+used isolated synthetic accounts and the recorded production version list.
+It does not establish hosted schema-byte equivalence or a production workflow.
+
+Both fresh/upgraded schemas report zero lint errors and 23 existing warnings;
+the DOCX scope and owner reader volatility warnings are absent. No provider
+was contacted and no hosted mutation occurred. The reviewed current changes
+are ready for source publication and CI; remaining operational gates stay open.

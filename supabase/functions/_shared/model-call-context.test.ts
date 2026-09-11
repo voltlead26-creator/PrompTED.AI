@@ -373,6 +373,40 @@ Deno.test("provider dispatch admission and completion use one exact retry-safe t
   assertEquals(calls[2].args.p_terminal_state, "completed");
 });
 
+Deno.test("a captured cumulative budget denial stops dispatch without acknowledgement retries", async () => {
+  const signal = new AbortController().signal;
+  let calls = 0;
+  bindModelCallContext(signal, {
+    userId: "user-1",
+    admin: { rpc() {
+      calls += 1;
+      return Promise.resolve({ data: null, error: {
+        code: "PGB01", message: "GENERATION_ATTEMPT_LIMIT_REACHED",
+      } });
+    } } as never,
+  });
+  await assertRejects(() => claimUserProviderDispatch(signal, "captured-attempt-1"),
+    ModelCallContextError, "GENERATION_ATTEMPT_LIMIT_REACHED");
+  assertEquals(calls, 1);
+});
+
+Deno.test("an inexact captured budget marker remains an unresolved dispatch acknowledgement", async () => {
+  const signal = new AbortController().signal;
+  let calls = 0;
+  bindModelCallContext(signal, {
+    userId: "user-1",
+    admin: { rpc() {
+      calls += 1;
+      return Promise.resolve({ data: null, error: {
+        code: "P0001", message: "GENERATION_ATTEMPT_LIMIT_REACHED",
+      } });
+    } } as never,
+  });
+  await assertRejects(() => claimUserProviderDispatch(signal, "captured-attempt-1"),
+    ModelCallContextError, "MODEL_CALL_PROVIDER_DISPATCH_ACK_UNRESOLVED");
+  assertEquals(calls, 2);
+});
+
 Deno.test("a durable account deletion fence rejects provider dispatch", async () => {
   const signal = new AbortController().signal;
   bindModelCallContext(signal, {

@@ -1,5 +1,6 @@
 import { withPaidPlanFixtures } from "./paid-plan-fixture-revisions.mjs";
-// Exact 79→81 upgrade acceptance inside the existing disposable runner.
+import { selectReviewedReleaseSql } from "./reviewed-release-sql-extension.mjs";
+// Exact 79→81 historical upgrade plus the explicitly reviewed current extension.
 // The parent runner owns database identity, start, reset, migration and cleanup.
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -47,26 +48,30 @@ export function validateLegacyWorkspaceCoreUpgradePlan(manifest, currentSource, 
     file.startsWith("supabase/migrations/") || file.startsWith("supabase/tests/")));
   assert.deepEqual(manifest, currentSql, "Workspace core upgrade must exercise all current SQL");
   const prefixManifest = withPaidPlanFixtures(baseline.manifest);
-  const expected = { ...prefixManifest, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha,
+  const historical = { ...prefixManifest, [coreMigrationFile]: coreMigrationSha, [coreTestFile]: coreTestSha,
     [sourcePreparationMigrationFile]: sourcePreparationMigrationSha, [sourcePreparationTestFile]: sourcePreparationTestSha };
-  assert.deepEqual(manifest, expected, "Workspace core upgrade requires the exact reviewed SQL manifest");
+  const { manifest: expected, additionalHeldSql } = selectReviewedReleaseSql(historical,manifest);
   const versions = Object.keys(manifest).filter(file => file.startsWith("supabase/migrations/"))
     .map(file => file.split("/").at(-1).slice(0, 14)).sort();
-  assert.equal(versions.length, 81); assert.equal(new Set(versions).size, 81);
-  assert.deepEqual(versions.filter(version => version > baseline.predecessor), ["20260908160000", "20260909105519"]);
+  const additionalVersions=Object.keys(additionalHeldSql).filter(file => file.startsWith("supabase/migrations/"))
+    .map(file => file.split("/").at(-1).slice(0,14)).sort();
+  assert.equal(versions.length, 81+additionalVersions.length); assert.equal(new Set(versions).size, versions.length);
+  assert.deepEqual(versions.filter(version => version > baseline.predecessor), ["20260908160000", "20260909105519",...additionalVersions]);
   assert.equal(Object.keys(baseline.manifest).length, 127);
-  return { predecessor: baseline.predecessor, forward: "20260908160000", through: "20260909105519", versions,
-    prefixManifest, manifest: expected, baselineSha,
+  return { predecessor: baseline.predecessor, forward: "20260908160000", through: versions.at(-1), versions,
+    prefixManifest, manifest: expected, baselineSha, additionalHeldSql,
     migrationFile: coreMigrationFile, migrationSha: coreMigrationSha, testFile: coreTestFile, testSha: coreTestSha };
 }
 
-export function assertLegacyWorkspaceCorePhase(plan, phase, actualManifest, heldSha) {
+export function assertLegacyWorkspaceCorePhase(plan, phase, actualManifest, heldSha, additionalHeld = {}) {
   assert.ok(phase === "full" || phase === "predecessor", "Unknown workspace core SQL phase");
   assert.deepEqual(actualManifest, phase === "full" ? plan.manifest : plan.prefixManifest,
     "Copied SQL differs from the exact workspace core phase");
   assert.deepEqual(heldSha, phase === "full" ? { migration: null, test: null, sourceMigration: null, sourceTest: null } :
     { migration: coreMigrationSha, test: coreTestSha, sourceMigration: sourcePreparationMigrationSha,
       sourceTest: sourcePreparationTestSha }, "Held workspace core/upload SQL differs from the exact phase");
+  assert.deepEqual(additionalHeld,phase === "full" ? {} : plan.additionalHeldSql ?? {},
+    "Held current release SQL differs from the exact phase");
 }
 
 export function assertWorkspacePublicProperties(before, after) {
@@ -96,7 +101,9 @@ export function assertWorkspacePublicProperties(before, after) {
   assert.deepEqual(after, before, "Core extraction changed the existing public RPC identity, signature or properties");
 }
 
-export async function exerciseLegacyWorkspaceCoreUpgrade({ project, workdir, env, sql, applyMigration, checkTarget, save }) {
+export async function exerciseLegacyWorkspaceCoreUpgrade({ project, workdir, env, sql, applyMigration, checkTarget, save,
+  through = "20260909105519" }) {
+  assert.match(through,/^\d{14}$/); assert.ok(through >= "20260909105519");
   checkTarget(); assert.match(project, /^prompted-db-\d{17}-[0-9a-f]{8}$/); assert.ok(workdir.includes(`${project}-`));
   const status = spawnSync("supabase", ["--workdir", workdir, "--agent", "no", "status", "-o", "json"], {
     cwd: workdir, env, encoding: "utf8", timeout: 15000, killSignal: "SIGKILL", maxBuffer: 128 * 1024,
@@ -357,7 +364,7 @@ export async function exerciseLegacyWorkspaceCoreUpgrade({ project, workdir, env
     assert.equal(row.accepted_revision, expected.accepted_document_revision); assert.equal(row.result_revision, expected.document_revision);
   }
   save("legacy-workspace-core-upgrade-summary.json", { contract_version: "legacy-workspace-core-upgrade-acceptance.1", project,
-    predecessor: "20260908150000", forward: "20260908160000", through: "20260909105519", owners: users.map(user => user.id),
+    predecessor: "20260908150000", forward: "20260908160000", through, owners: users.map(user => user.id),
     publicOidPreserved: beforeProperties.oid, publicCatalogExceptBodyPreserved: true, historicalRowsPreserved: true,
     oldReceiptReplayedBeforeCurrentRevisionValidation: true, explicitCoreReplaysSameReceipt: true,
     omittedSiblingAndHistoryPreserved: true, directRoleDenials: direct, independentReceiptRows: receiptRows,

@@ -586,6 +586,9 @@ export async function claimUserProviderDispatch(
         "claim_user_external_egress",
         args,
       );
+      if (error?.code === "PGB01" && error.message === "GENERATION_ATTEMPT_LIMIT_REACHED") {
+        throw new ModelCallContextError("GENERATION_ATTEMPT_LIMIT_REACHED");
+      }
       const receipt = data as Record<string, unknown> | null;
       if (
         !error && receipt?.egress_permitted === true &&

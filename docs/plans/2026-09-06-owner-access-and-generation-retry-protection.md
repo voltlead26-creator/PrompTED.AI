@@ -700,10 +700,13 @@ remains pending. The initial terminal-status refresh remains intact.
 Effective owner access now uses one database response across account UI and Edge
 admission, with the corrected finite 1,000 monthly allowance and unchanged real
 billing. Legacy admission and dispatch enforce two durable failures across stages;
-captured-operation cumulative limits and the separate validation-repair budget
-remain unfinished. Run `db-20260911144322685-303cf378` passed 53 SQL files / 2,737
-assertions; the combined job passed 1,606 Edge tests, 445 shared tests, 1,163 web
-tests, repository lint/types and the production build. Source hashes were unchanged.
+captured preparation/dispatch now checks failed attempts bound to exact dispatch
+receipts. Historical captured failures without those receipts and the separate
+validation-repair budget still require acceptance work. Current combined evidence
+passes 54 SQL files / 2,752 assertions, 1,609 Edge tests, 445 shared tests, 1,163
+web tests, repository lint/types and the production build. Both 79-to-86 and
+68-to-86 upgrade rehearsals preserve synthetic historical content and receipts.
+Source hashes were unchanged; schema lint reports zero errors and 23 older warnings.
 
 The owner's 11 September 23:15 AEST instruction separately authorises necessary
 configuration and release work on the existing named services after compatibility

@@ -11,9 +11,9 @@ Open [the interactive brain map](production-completion-map.html). Its filters an
 Owner authorises required local/GitHub/Netlify/Supabase/Docker configuration and release work. Preserve user data and verify exact outcomes.
 
 - Repository/branch: `voltlead26-creator/PrompTED.AI` / `Thought-Enhanced-Document`.
-- Local and GitHub HEAD freshly matched: `c3c2ef6dd49bbdf12330b8a4ae5a0c87b2fc3316`; uncommitted overlay remains.
+- Local and GitHub HEAD freshly matched: `c1cabb63885086de63a1e48873032bd55d91fa6b`; uncommitted overlay remains.
 - Netlify production re-read: `e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b`, locked deploy `6a9fc526610f2efb8c05454f`.
-- Supabase read on 11 September: healthy project `jjsykocqpjlekgsbylkd`; 68 migration records and 25 functions. Local has 84 migration files.
+- Supabase migration list refreshed on 12 September: the exact 68 recorded versions still match. Prior function inventory: 25 functions. Local has 86 migration files.
 - Reference atlas: supplied `PrompTED-audited-atlas-bundle`, pinned to `0b9dbc1a`; retained as historical source guidance.
 
 ## Current product decision
@@ -62,7 +62,7 @@ An endpoint being active does not establish an operational feature. Research, li
 
 **Locally verified · P0** · Depends on: none
 
-Account/library and gateway fixes are committed at c3c2ef6; current polling additions are dirty and locally tested.
+Account/library and gateway fixes are committed at c3c2ef6; polling additions and owner access are committed at c1cabb6 and locally tested.
 
 **Complete when:** Review integrated lifetimes for TED guidance, profile, library and workspace; prove sign-out/account change cannot retain or overwrite another user’s state.
 
@@ -94,7 +94,7 @@ Business must equal Premium. Existing backend Pro/Premium caps are 20/40; UI adv
 
 **In progress · P0** · Depends on: A1, A2
 
-Database, account UI and Edge guard share a validated owner-aware projection. Combined gate passed 1,606 Edge, 445 shared and 1,163 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.
+Database, account UI and Edge guard share a validated owner-aware projection. Combined gate passed 1,609 Edge, 445 shared and 1,163 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.
 
 **Complete when:** Fail closed on malformed/error responses; test exact user binding, revocation, cap boundary, concurrent reservations, replay and unchanged subscription history.
 
@@ -136,7 +136,7 @@ Configuration authority is now supplied; the exact confirmed owner UUID must sti
 
 **In progress · P0** · Depends on: none
 
-Legacy preparation/dispatch now stops after two durable failures across stages. All seven new SQL assertions, 53 SQL files / 2,737 assertions and 1,606 Edge tests pass. Captured cumulative limits and the separate one-repair allowance remain pending.
+Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,752 assertions and 1,609 Edge tests. Historical captured failures without dispatch evidence and the separate one-repair allowance still need acceptance work.
 
 **Complete when:** Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.
 
@@ -168,7 +168,7 @@ A provider response or HTTP 200 does not prove persisted generation. Interruptio
 
 **Confirmed gap · P0** · Depends on: none
 
-Live refreshed 11 September: 68 migration records, 25 hosted functions, 83 local SQL migration files. Counts do not prove schema equality.
+Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 86 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.
 
 **Complete when:** Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.
 
@@ -176,9 +176,9 @@ Live refreshed 11 September: 68 migration records, 25 hosted functions, 83 local
 
 ### B2 · Rehearse and apply compatible upgrade
 
-**Pending · P0** · Depends on: B1, P1, A3, G2, Q1
+**In progress · P0** · Depends on: B1, P1, A3, G2, Q1
 
-Hosted upgrade must preserve existing accounts, documents, original files and usage. New local draft migrations have not been applied live.
+Both 79-to-86 workspace and 68-to-86 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.
 
 **Complete when:** Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.
 
@@ -304,9 +304,9 @@ No current throughput or concurrent-owner performance acceptance is recorded.
 
 ### R1 · Commit reviewed source and verify exact CI
 
-**Pending · P0** · Depends on: Q1, Q2, Q3
+**In progress · P0** · Depends on: Q1, Q2, Q3
 
-Local/GitHub both c3c2ef6 at live refresh; unfinished SQL, polling and documentation remain uncommitted.
+Local/GitHub match c1cabb6 after reviewed source publication. CI 34613219486 passed Edge, fresh SQL and web gates; its browser job failed at the historical 79-to-81 upgrade preflight, before browser execution. The captured-budget repair is a new uncommitted slice.
 
 **Complete when:** Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.
 

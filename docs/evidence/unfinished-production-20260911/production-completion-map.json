@@ -1,7 +1,7 @@
 {
   "title": "PrompTED.AI \u00b7 Production completion map",
   "snapshot": "12 September 2026 \u00b7 integrated local gate update; 11 September commercial requirements retained",
-  "sourceHead": "c3c2ef6dd49bbdf12330b8a4ae5a0c87b2fc3316",
+  "sourceHead": "c1cabb63885086de63a1e48873032bd55d91fa6b",
   "branch": "Thought-Enhanced-Document",
   "productionHead": "e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b",
   "productionDeploy": "6a9fc526610f2efb8c05454f",
@@ -112,7 +112,7 @@
       "status": "Locally verified",
       "priority": "P0",
       "dependsOn": [],
-      "gap": "Account/library and gateway fixes are committed at c3c2ef6; current polling additions are dirty and locally tested.",
+      "gap": "Account/library and gateway fixes are committed at c3c2ef6; polling additions and owner access are committed at c1cabb6 and locally tested.",
       "acceptance": "Review integrated lifetimes for TED guidance, profile, library and workspace; prove sign-out/account change cannot retain or overwrite another user\u2019s state.",
       "source": "docs/evidence/frontend-library-20260911/Audit.md",
       "sourceSha256": "dee6176e0b3cd34972480b6c5d8836c0133759c7f1109378f62a5005f00c553d"
@@ -151,7 +151,7 @@
         "A1",
         "A2"
       ],
-      "gap": "Database, account UI and Edge guard share a validated owner-aware projection. Combined gate passed 1,606 Edge, 445 shared and 1,163 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.",
+      "gap": "Database, account UI and Edge guard share a validated owner-aware projection. Combined gate passed 1,609 Edge, 445 shared and 1,163 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.",
       "acceptance": "Fail closed on malformed/error responses; test exact user binding, revocation, cap boundary, concurrent reservations, replay and unchanged subscription history.",
       "source": "supabase/functions/_shared/auth-guard.ts",
       "sourceSha256": "3195e852d58d5236a4ee0ece85d33e52699ccb260c60c25b2ccb466aa5ba7de7"
@@ -185,7 +185,7 @@
       "gap": "Configuration authority is now supplied; the exact confirmed owner UUID must still be securely resolved.",
       "acceptance": "Merge only the versioned owner marker into existing app_metadata; read it back; verify account UI and actual allowance admission without impersonating a paid subscriber.",
       "source": "docs/plans/2026-09-06-owner-access-and-generation-retry-protection.md",
-      "sourceSha256": "ab56b90ff8df6df912c5156bdcdad1250acae12225484308bd511775c495c4b4"
+      "sourceSha256": "431cb6001bef80f1f5a1fa1859ced23f82b918485be78f7a81ef73c0bd71991d"
     },
     {
       "id": "G1",
@@ -206,10 +206,10 @@
       "status": "In progress",
       "priority": "P0",
       "dependsOn": [],
-      "gap": "Legacy preparation/dispatch now stops after two durable failures across stages. All seven new SQL assertions, 53 SQL files / 2,737 assertions and 1,606 Edge tests pass. Captured cumulative limits and the separate one-repair allowance remain pending.",
+      "gap": "Legacy and captured preparation/dispatch guards pass the combined local gate: 54 SQL files / 2,752 assertions and 1,609 Edge tests. Historical captured failures without dispatch evidence and the separate one-repair allowance still need acceptance work.",
       "acceptance": "Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.",
       "source": "docs/plans/2026-09-06-owner-access-and-generation-retry-protection.md",
-      "sourceSha256": "ab56b90ff8df6df912c5156bdcdad1250acae12225484308bd511775c495c4b4"
+      "sourceSha256": "431cb6001bef80f1f5a1fa1859ced23f82b918485be78f7a81ef73c0bd71991d"
     },
     {
       "id": "G3",
@@ -224,7 +224,7 @@
       "gap": "10 September live attestations were unconfigured for four routes. Routing/evaluation/capacity inputs must be refreshed and completed.",
       "acceptance": "Verify actual model access, bounded capacity and evaluation results for fast/deep/research/review; derive fingerprints from real evidence, preserve authorised fallback restrictions.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "e7820ffb6777918b3b95e8bac6903a5ef685281bcfdc1d3349cbb8eba32b8d7e"
+      "sourceSha256": "b90882b4c6e5f5f1e8ded39803b942c75cb6d437ffe8243b1b80fddf2374c0e6"
     },
     {
       "id": "G4",
@@ -249,16 +249,16 @@
       "status": "Confirmed gap",
       "priority": "P0",
       "dependsOn": [],
-      "gap": "Live refreshed 11 September: 68 migration records, 25 hosted functions, 83 local SQL migration files. Counts do not prove schema equality.",
+      "gap": "Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 86 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality.",
       "acceptance": "Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "e7820ffb6777918b3b95e8bac6903a5ef685281bcfdc1d3349cbb8eba32b8d7e"
+      "sourceSha256": "b90882b4c6e5f5f1e8ded39803b942c75cb6d437ffe8243b1b80fddf2374c0e6"
     },
     {
       "id": "B2",
       "group": "backend",
       "title": "Rehearse and apply compatible upgrade",
-      "status": "Pending",
+      "status": "In progress",
       "priority": "P0",
       "dependsOn": [
         "B1",
@@ -267,10 +267,10 @@
         "G2",
         "Q1"
       ],
-      "gap": "Hosted upgrade must preserve existing accounts, documents, original files and usage. New local draft migrations have not been applied live.",
+      "gap": "Both 79-to-86 workspace and 68-to-86 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live; hosted catalog and backup/recovery checks remain.",
       "acceptance": "Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.",
       "source": "docs/evidence/web-operational-readiness/run-isolated-db-baseline.mjs",
-      "sourceSha256": "88a087d026272e47f33f08577f3f609c6a087190a0c24741644a0c44dad44a04"
+      "sourceSha256": "6b5b6500472f3c1b042f5322216c26fdb8339ab0cb9fdd271171649a50875dbd"
     },
     {
       "id": "B3",
@@ -338,7 +338,7 @@
       "gap": "Earlier CPJ failures were caused by host sleep during local Supabase startup/reset. Caffeinate -u -i allowed a complete isolated run.",
       "acceptance": "Keep tests on disposable containers/ports; preserve shared data; record versions, cleanup and unchanged source hashes. Use bounded jobs that survive client exit.",
       "source": "docs/evidence/unfinished-production-20260911/Work-plan.md",
-      "sourceSha256": "f0f5081bf14d93e56000f780b885664a9b914355ac56cabf9aa76dc4e0fbe117"
+      "sourceSha256": "d47371b991c87d3c1119847e8addcc526a5202e19bfa42e9afb16bde78420f9d"
     },
     {
       "id": "Q1",
@@ -427,23 +427,23 @@
       "gap": "No current throughput or concurrent-owner performance acceptance is recorded.",
       "acceptance": "Use bounded representative concurrency; record p50/p95 latency, errors, rate limiting, memory and capacity exhaustion recovery without uncontrolled provider spending.",
       "source": "supabase/deployment-contract.json",
-      "sourceSha256": "e7820ffb6777918b3b95e8bac6903a5ef685281bcfdc1d3349cbb8eba32b8d7e"
+      "sourceSha256": "b90882b4c6e5f5f1e8ded39803b942c75cb6d437ffe8243b1b80fddf2374c0e6"
     },
     {
       "id": "R1",
       "group": "release",
       "title": "Commit reviewed source and verify exact CI",
-      "status": "Pending",
+      "status": "In progress",
       "priority": "P0",
       "dependsOn": [
         "Q1",
         "Q2",
         "Q3"
       ],
-      "gap": "Local/GitHub both c3c2ef6 at live refresh; unfinished SQL, polling and documentation remain uncommitted.",
+      "gap": "Local/GitHub match c1cabb6 after reviewed source publication. CI 34613219486 passed Edge, fresh SQL and web gates; its browser job failed at the historical 79-to-81 upgrade preflight, before browser execution. The captured-budget repair is a new uncommitted slice.",
       "acceptance": "Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.",
       "source": ".github/workflows/ci.yml",
-      "sourceSha256": "f4d727625ba0f7d3904659019fc03146f8e8b781438414514a2f88ad79c45702"
+      "sourceSha256": "4f50d04168a40a443e57b4cbb5084cbd23a95678aee9ab892b55d4483bed9ba8"
     },
     {
       "id": "R2",

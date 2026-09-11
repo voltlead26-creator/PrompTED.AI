@@ -92,6 +92,8 @@ const uploadRtfAliasAcceptance = process.argv.includes("--upload-rtf-alias-accep
 const v3Inputs = [
   ["./paid-plan-fixture-revisions.mjs", "paid-plan-fixture-revisions.mjs"],
   ["./paid-plan-fixture-revisions.test.mjs", "paid-plan-fixture-revisions.test.mjs"],
+  ["./reviewed-release-sql-extension.mjs", "reviewed-release-sql-extension.mjs"],
+  ["./current-release-upgrade.test.mjs", "current-release-upgrade.test.mjs"],
   ["./hosted-ledger-upgrade-acceptance.mjs", "hosted-ledger-upgrade-acceptance.mjs"],
   ["./hosted-ledger-upgrade-acceptance.test.mjs", "hosted-ledger-upgrade-acceptance.test.mjs"],
   ["./hosted-ledger-upgrade-baseline.json", "hosted-ledger-upgrade-baseline.json"],
@@ -200,6 +202,7 @@ let hostedLedgerPhase = "full";
 const heldHostedMigrations = join(workdir, "held-hosted-migrations");
 const heldWorkspaceCoreMigration = join(workdir, "held-workspace-core-migration.sql");
 const heldWorkspaceCoreTest = join(workdir, "held-workspace-core-test.sql");
+const heldWorkspaceReleaseSql = join(workdir, "held-workspace-release-sql");
 const heldSourcePreparationMigration = join(workdir, "held-source-preparation-migration.sql");
 const heldSourcePreparationTest = join(workdir, "held-source-preparation-test.sql");
 mkdirSync(evidence, { recursive: true });
@@ -423,6 +426,11 @@ function checkTarget() {
     });
   }
   if (legacyWorkspaceCoreUpgradePlan) {
+    const additionalHeld = Object.fromEntries(readdirSync(heldWorkspaceReleaseSql).sort().map(name => {
+      const file=join(heldWorkspaceReleaseSql,name);
+      assert(lstatSync(file).isFile());
+      return [name.replaceAll("__","/"),sha(readFileSync(file))];
+    }));
     for (const file of [heldWorkspaceCoreMigration, heldWorkspaceCoreTest, heldSourcePreparationMigration, heldSourcePreparationTest]) {
       if (existsSync(file)) assert(lstatSync(file).isFile());
     }
@@ -431,7 +439,7 @@ function checkTarget() {
       test: existsSync(heldWorkspaceCoreTest) ? sha(readFileSync(heldWorkspaceCoreTest)) : null,
       sourceMigration: existsSync(heldSourcePreparationMigration) ? sha(readFileSync(heldSourcePreparationMigration)) : null,
       sourceTest: existsSync(heldSourcePreparationTest) ? sha(readFileSync(heldSourcePreparationTest)) : null,
-    });
+    },additionalHeld);
   }
   if (hostedLedgerUpgradePlan) {
     const held = Object.fromEntries(readdirSync(heldHostedMigrations).sort().map(name => {
@@ -549,6 +557,7 @@ try {
     "docs/evidence/web-operational-readiness/legacy-audit-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/legacy-workspace-core-upgrade-acceptance.test.mjs",
     "docs/evidence/web-operational-readiness/paid-plan-fixture-revisions.test.mjs", "docs/evidence/web-operational-readiness/hosted-ledger-upgrade-acceptance.test.mjs",
+    "docs/evidence/web-operational-readiness/current-release-upgrade.test.mjs",
     "docs/evidence/web-operational-readiness/disposable-database-reset.test.mjs",
     "docs/evidence/web-operational-readiness/upload-source-sql-scope.test.mjs",
     "docs/evidence/web-operational-readiness/upload-source-v3-upgrade-acceptance.test.mjs",
@@ -579,7 +588,10 @@ try {
   if (legacyPolicyUpgradeAcceptance) legacyPolicyUpgradePlan = validateLegacyPolicyUpgradePlan(manifest, sourceBefore);
   if (catalogueUpgradeAcceptance) catalogueUpgradePlan = validateCatalogueUpgradePlan(manifest, sourceBefore);
   if (legacyAuditUpgradeAcceptance) legacyAuditUpgradePlan = validateLegacyAuditUpgradePlan(manifest, sourceBefore);
-  if (legacyWorkspaceCoreUpgradeAcceptance) legacyWorkspaceCoreUpgradePlan = validateLegacyWorkspaceCoreUpgradePlan(manifest, sourceBefore);
+  if (legacyWorkspaceCoreUpgradeAcceptance) {
+    legacyWorkspaceCoreUpgradePlan = validateLegacyWorkspaceCoreUpgradePlan(manifest, sourceBefore);
+    mkdirSync(heldWorkspaceReleaseSql);
+  }
   if (hostedLedgerUpgradeAcceptance) {
     hostedLedgerUpgradePlan = validateHostedLedgerUpgradePlan(manifest, sourceBefore);
     mkdirSync(heldHostedMigrations);
@@ -649,6 +661,10 @@ try {
     let database = attestDatabase("database-after-reset");
     assertDisposableReset(initialDatabase, database);
     supabase("fresh-tests", ["test", "db", "--local"], 10 * 60_000);
+    if (hostedLedgerUpgradeAcceptance || legacyWorkspaceCoreUpgradeAcceptance) {
+      supabase("fresh-schema-lint", ["db", "lint", "--local", "--schema", "public,private",
+        "--level", "warning", "--fail-on", "error"], 10 * 60_000);
+    }
     if (hostedLedgerUpgradeAcceptance) {
       const plan = hostedLedgerUpgradePlan;
       const sql = (label, query) => {
@@ -699,6 +715,8 @@ try {
         });
         assert.equal(hostedLedgerPhase, "full");
         supabase("hosted-ledger-upgraded-tests", ["test", "db", "--local"], 10 * 60_000);
+        supabase("hosted-ledger-upgraded-schema-lint", ["db", "lint", "--local", "--schema", "public,private",
+          "--level", "warning", "--fail-on", "error"], 10 * 60_000);
       } finally {
         if (hostedLedgerPhase === "historical") transition("full");
       }
@@ -860,6 +878,8 @@ try {
           [join(workdir, coreTestFile), heldWorkspaceCoreTest, coreTestSha],
           [join(workdir, sourcePreparationMigrationFile), heldSourcePreparationMigration, sourcePreparationMigrationSha],
           [join(workdir, sourcePreparationTestFile), heldSourcePreparationTest, sourcePreparationTestSha],
+          ...Object.entries(plan.additionalHeldSql).map(([file,digest]) =>
+            [join(workdir,file),join(heldWorkspaceReleaseSql,file.replaceAll("/","__")),digest]),
         ];
         // Validate both sides before either rename. A phase never changes an
         // input's bytes or silently admits additional SQL.
@@ -900,7 +920,7 @@ try {
         const predecessorVersions = plan.versions.filter(version => version <= plan.predecessor);
         assert.deepEqual(migrationHistory("workspace-core-history-after-reset"), predecessorVersions);
         supabase("workspace-core-predecessor-tests", ["test", "db", "--local"], 10 * 60_000);
-        await exerciseLegacyWorkspaceCoreUpgrade({ project, workdir, env: localEnv, checkTarget, save,
+        await exerciseLegacyWorkspaceCoreUpgrade({ project, workdir, env: localEnv, checkTarget, save, through: plan.through,
           applyMigration() {
             assert.equal(workspaceCorePhase, "predecessor");
             assert.deepEqual(attestDatabase("workspace-core-before-forward"), database);
@@ -918,6 +938,8 @@ try {
         });
         assert.equal(workspaceCorePhase, "full");
         supabase("workspace-core-upgraded-tests", ["test", "db", "--local"], 10 * 60_000);
+        supabase("workspace-core-upgraded-schema-lint", ["db", "lint", "--local", "--schema", "public,private",
+          "--level", "warning", "--fail-on", "error"], 10 * 60_000);
       } finally {
         if (workspaceCorePhase === "predecessor") transitionPhase("full");
       }

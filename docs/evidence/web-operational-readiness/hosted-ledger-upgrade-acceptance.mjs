@@ -1,4 +1,5 @@
 import { withPaidPlanFixtures } from "./paid-plan-fixture-revisions.mjs";
+import { selectReviewedReleaseSql } from "./reviewed-release-sql-extension.mjs";
 // Rehearse the observed production migration ledger in the existing disposable
 // runner. This does not approve a hosted migration or relax release preflight.
 import assert from "node:assert/strict";
@@ -22,16 +23,17 @@ export function validateHostedLedgerUpgradePlan(manifest, source, bytes = readFi
   const current = Object.fromEntries(Object.entries(source).filter(([file]) =>
     file.startsWith("supabase/migrations/") || file.startsWith("supabase/tests/")));
   assert.deepEqual(manifest, current, "Rehearsal must exercise all current SQL");
-  assert.deepEqual(manifest, withPaidPlanFixtures(baseline.manifest), "Rehearsal requires the exact reviewed SQL manifest");
+  const { additionalHeldSql } = selectReviewedReleaseSql(withPaidPlanFixtures(baseline.manifest),manifest);
   const migrations = Object.keys(manifest).filter(file => file.startsWith("supabase/migrations/")).sort();
   const versions = migrations.map(file => file.split("/").at(-1).slice(0, 14));
-  assert.equal(versions.length, 81); assert.equal(new Set(versions).size, 81);
+  const additionalMigrationCount=Object.keys(additionalHeldSql).filter(file => file.startsWith("supabase/migrations/")).length;
+  assert.equal(versions.length, 81+additionalMigrationCount); assert.equal(new Set(versions).size, versions.length);
   const hostedVersions = baseline.hosted_versions;
   assert.equal(hostedVersions.length, 68); assert.equal(new Set(hostedVersions).size, 68);
   assert.deepEqual(hostedVersions, versions.filter(version => hostedVersions.includes(version)));
   assert.equal(hostedVersions.at(-1), "20260906010846");
   const pendingFiles = migrations.filter(file => !hostedVersions.includes(file.split("/").at(-1).slice(0, 14)));
-  assert.equal(pendingFiles.length, 13);
+  assert.equal(pendingFiles.length, 13+additionalMigrationCount);
   assert.deepEqual(pendingFiles.filter(file => file.split("/").at(-1).slice(0, 14) < hostedVersions.at(-1)),
     ["supabase/migrations/20260906000500_captured_exact_wording_assessment.sql"]);
   const historicalManifest = Object.fromEntries(Object.entries(manifest).filter(([file]) => !pendingFiles.includes(file)));

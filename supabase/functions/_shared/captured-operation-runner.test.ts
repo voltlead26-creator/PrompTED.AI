@@ -1734,6 +1734,51 @@ Deno.test("captured runner terminalizes two accepted transient attempts and resu
   );
 });
 
+Deno.test("captured cumulative database denial terminalizes and resume cannot prepare another attempt", async () => {
+  const controlled = gateway({ replayAfterFirst: true });
+  let prepares = 0;
+  let providerEntries = 0;
+  const adapter: CapturedOperationGateway = { rpc(name, args) {
+    if (name === "record_captured_document_provider_attempt" && args.p_status === "prepared") {
+      prepares += 1;
+      return Promise.resolve({ data: null, error: {
+        code: "PGB01", message: "GENERATION_ATTEMPT_LIMIT_REACHED",
+      } });
+    }
+    return controlled.adapter.rpc(name, args);
+  } };
+  const first = await runCapturedDocumentOperation({
+    userId: USER_ID,
+    body: body({ recipient_name: "Synthetic Energy Co", issue_facts: "A synthetic invoice was charged twice.",
+      desired_outcome: "Reverse the duplicate charge." }),
+    environment: { environment: "local", userCohort: "pilot" },
+    gateway: adapter,
+    provider: async (request) => {
+      providerEntries += 1;
+      if (!request.attemptLifecycle || !request.routeSnapshot) throw new Error("Missing durable attempt lifecycle or route");
+      await request.attemptLifecycle.prepare({ localAttemptNumber: 1,
+        startedAt: new Date().toISOString(), requestSha256: "a".repeat(64),
+        routeSnapshot: request.routeSnapshot });
+      throw new Error("Budget denial must stop before provider dispatch");
+    },
+  });
+  assertEquals(first.status, 422);
+  assertEquals(first.body.status, "terminal_failure");
+  assertEquals(first.body.retryable, false);
+  assertEquals(controlled.calls.find(call => call.name === "advance_captured_document_operation" &&
+    call.args.p_next_status === "terminal_failure")?.args.p_error_code, "GENERATION_ATTEMPT_LIMIT_REACHED");
+  const resumed = await runCapturedDocumentOperation({
+    userId: USER_ID, body: { action: "resume", operation_id: "44444444-4444-4444-8444-444444444444" },
+    environment: { environment: "local", userCohort: "pilot" }, gateway: adapter,
+    provider: async () => { providerEntries += 1; throw new Error("Terminal operation reached provider"); },
+  });
+  assertEquals(resumed.status, 409);
+  assertEquals(resumed.body.status, "terminal_failure");
+  assertEquals(resumed.body.retryable, false);
+  assertEquals(prepares, 1);
+  assertEquals(providerEntries, 1);
+});
+
 Deno.test("captured runner reconciles a prepared attempt left by a crashed worker before terminal failure", async () => {
   const { adapter, calls } = gateway({
     preparedReconciliationRequiredOnce: true,
