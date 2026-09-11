@@ -42,15 +42,15 @@ add('P4','product','Finish cross-account and stale-result review','Locally verif
     'docs/evidence/frontend-library-20260911/Audit.md')
 
 add('A1','access','Apply owner allowance: 1,000/month','Locally verified','P0','',
-    'User correction at 23:17 AEST supersedes unlimited owner access. SQL draft now uses a finite 1,000 cap and correct subscription period mapping; all 52 SQL files / 2,730 assertions pass; no hosted owner grant exists.',
+    'User correction at 23:17 AEST supersedes unlimited owner access. SQL draft now uses a finite 1,000 cap and correct subscription period mapping; all 57 SQL files / 2,842 assertions pass; no hosted owner grant exists.',
     'One trusted Auth UUID receives all product features and exactly 1,000 monthly documents; billing truth, RLS, rate limits and usage accounting stay intact.',
     'supabase/migrations/20260911130803_effective_owner_product_access.sql')
 add('A2','access','Resolve paid document caps','Needs decision','P0','',
-    'Business must equal Premium. Existing backend Pro/Premium caps are 20/40; UI advertises 50/unlimited. The owner was asked for exact Pro/Premium allowances.',
+    'Business equality is implemented locally in a new additive resolver migration: both use the existing enforced Premium 40 cap, while owner access remains 1,000. The correction is committed at 7b627cf; focused PostgreSQL/account checks and the full 1,621-test Edge suite pass. The retry passes both 90-migration upgrades, 57 SQL files / 2,842 assertions and the complete web gates. The earlier timeout was caused by documented laptop clamshell sleep. Exact Pro/Premium caps remain an unanswered decision (backend 20/40 versus UI 50/unlimited).',
     'Record the selected numeric allowances and make SQL, Edge, shared definitions, meters and upgrade copy agree.',
     'packages/shared/src/plans.ts')
 add('A3','access','Integrate one effective-access response','In progress','P0','A1 A2',
-    'Database, account UI and Edge guard share a validated owner-aware projection. Combined gate passed 1,609 Edge, 445 shared and 1,163 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.',
+    'Database, account UI and Edge guard share a validated owner-aware projection. Combined evidence passes 1,621 Edge, 445 shared and 1,165 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.',
     'Fail closed on malformed/error responses; test exact user binding, revocation, cap boundary, concurrent reservations, replay and unchanged subscription history.',
     'supabase/functions/_shared/auth-guard.ts')
 add('A4','access','Implement commercial billing truth','Pending','P0','A2 A3',
@@ -80,11 +80,11 @@ add('G4','generation','Prove recovery and exactly-once usage','Unverified','P0',
     'scripts/verify-live-document-generation.mjs')
 
 add('B1','backend','Reconcile hosted schema and inventory','Confirmed gap','P0','',
-    'Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 89 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; Application definitions match; hosted grants/defaults and two extra audit policies need disposition. Storage platform internals differ. The artifact owner-read grant defect is repaired and passes 14 new SQL checks, including actual read and rejected write operations.',
+    'Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 90 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; Application definitions match; hosted grants/defaults and two extra audit policies need disposition. Storage platform internals differ. The artifact owner-read grant defect is repaired and passes 14 new SQL checks, including actual read and rejected write operations.',
     'Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.',
     'supabase/deployment-contract.json')
 add('B2','backend','Rehearse and apply compatible upgrade','In progress','P0','B1 P1 A3 G2 Q1',
-    'Both 79-to-89 workspace and 68-to-89 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Remaining grant disposition, a current recovery point and separate Storage protection remain; the artifact read correction passes both 89-migration upgrades with observed hosted grants reproduced.',
+    'Both 79-to-90 workspace and 68-to-90 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Remaining grant disposition and hosted application remain. A full native archive restored locally with all 109 tables, 2,387 rows and four sequence states matching. All 49 Storage originals were copied with matching sizes and unchanged live versions; the artifact read correction passes both 90-migration upgrades with observed hosted grants reproduced.',
     'Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.',
     'docs/evidence/web-operational-readiness/run-isolated-db-baseline.mjs')
 add('B3','backend','Deploy required Edge Functions','Confirmed gap','P0','B2 G3 C1',
@@ -97,7 +97,7 @@ add('B4','backend','Resolve undeclared or dormant endpoints','Pending','P0','B1'
     'scripts/backend-release-baseline.mjs')
 
 add('C1','config','Reconcile local and hosted configuration','In progress','P0','',
-    'Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Both local Supabase management tokens return HTTP 401; connector/dashboard access works. The owning organization reports outstanding invoices; no payment was made. Remaining hosted configuration needs verification.',
+    'Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Two invalid dotenv tokens were removed after private backup. Existing native CLI login, connector and dashboard work. Owning-organization invoice WRDESZ-00004 shows $65.19 outstanding; no payment was made. Hosted deployment configuration still needs verification.',
     'Public NEXT_PUBLIC values only in web dotenv; private runtime values in ignored Supabase dotenv; operator credentials in ignored tools dotenv. Align service/project/origin mappings without printing secrets.',
     'scripts/check-web-build-environment.mjs')
 add('C2','config','Verify Auth, origins and public access','Unverified','P0','C1',
@@ -105,7 +105,7 @@ add('C2','config','Verify Auth, origins and public access','Unverified','P0','C1
     'Verify signup/signin/verification/recovery, allowed origins, redirect URLs, logout, session expiry and expected public access without bypassing account permissions.',
     'supabase/config.toml')
 add('C3','config','Stabilise Docker and local verification','Partially verified','P1','',
-    'Earlier CPJ failures were caused by host sleep during local Supabase startup/reset. Caffeinate -u -i allowed a complete isolated run.',
+    'Caffeinate -u -i resolved earlier host-sleep failures. Recovery export exposed a separate detached PATH problem; Docker 29.7.2 is healthy and the database-only retry explicitly sets its executable directory and socket.',
     'Keep tests on disposable containers/ports; preserve shared data; record versions, cleanup and unchanged source hashes. Use bounded jobs that survive client exit.',
     'docs/evidence/unfinished-production-20260911/Work-plan.md')
 
@@ -136,7 +136,7 @@ add('F3','performance','Verify production capacity and limits','Unverified','P1'
     'supabase/deployment-contract.json')
 
 add('R1','release','Commit reviewed source and verify exact CI','In progress','P0','Q1 Q2 Q3',
-    'Local/GitHub match published 2715b55. CI 34622858382 passes all four jobs, including the real local browser gate. Its permission correction passed local fresh/upgrade SQL and web gates. Current audit instrumentation reproduces additional hosted grant differences and the artifact read repair passes fresh and both upgrade paths; its publication and CI follow. No production deployment has occurred.',
+    'Application source is pinned to 7b627cf, with Business/Premium equality locally verified by the complete gates and both 90-migration upgrades. Earlier 9cfa8b2 passed all four CI jobs at run 34625410713. The new publication requires its own exact-SHA CI check; this map is a documentation snapshot. No production deployment has occurred.',
     'Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.',
     '.github/workflows/ci.yml')
 add('R2','release','Deploy compatible frontend after backend','Confirmed gap','P0','R1 B3 B4 C2',
@@ -169,8 +169,8 @@ add('O1','operations','Verify monitoring and recoverable errors','Unverified','P
     'Operational health, alert delivery and redacted correlation evidence need a current review.',
     'Observe one bounded failure and recovery through logs/UI; identify exact operation and release without sensitive content; confirm actionable alerting and support diagnostics.',
     'docs/plans/2026-09-06-web-operational-readiness-evidence.md')
-add('O2','operations','Rehearse rollback and data recovery','Unverified','P0','B1',
-    'A retained Netlify deployment is only frontend recovery; database and Storage recovery must be established separately.',
+add('O2','operations','Rehearse rollback and data recovery','Partially verified','P0','B1',
+    'Six private logical database exports have verified hashes and file permissions. All 49 Storage originals have matching local hashes and unchanged hosted identities, versions and sizes. The isolated full logical restore passes: 109 tables, 2,387 rows and four sequence states match the archive; scheduled jobs were disabled and cleanup succeeded. Hosted recovery, external keys and Storage HTTP restoration remain outside that proof.',
     'Confirm available backups and retention; rehearse compatible restore/roll-forward in isolation; preserve live history and document exact rollback triggers and targets.',
     'scripts/deploy-netlify-production.mjs')
 add('O3','operations','Finish folder organisation and handoff','Partially verified','P1','R3',
@@ -181,7 +181,7 @@ add('O3','operations','Finish folder organisation and handoff','Partially verifi
 data = {
     'title': 'PrompTED.AI · Production completion map',
     'snapshot': '12 September 2026 · integrated local gate update; 11 September commercial requirements retained',
-    'sourceHead': '2715b5518cf33d3d74ac95a78497cf0021de6025',
+    'sourceHead': '7b627cf11cca7b8e39d97305cf9c0a4dbe0ccaed',
     'branch': 'Thought-Enhanced-Document',
     'productionHead': 'e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b',
     'productionDeploy': '6a9fc526610f2efb8c05454f',

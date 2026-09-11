@@ -834,3 +834,221 @@ audit. All four bucket settings match. Storage platform DDL and equivalent
 implicit/explicit owner ACL representations remain separately classified.
 These results validate the forward correction under observed hosted defaults;
 they do not mutate production or prove real-account document generation/export.
+
+
+## Publication, native CLI access and recovery preparation — 12 September 2026
+
+Published `9cfa8b2039cad7eba495614181ccf0935c3a80ed` to the existing branch;
+CI `34625410713` is running. Supabase CLI project and backup reads succeed with
+its existing native login when the two invalid dotenv token entries are omitted.
+The native access-token key lookup returned no legacy entry; a separate native
+profile lookup timed out and returned no credential. No new token was created.
+The two invalid operator-file entries were removed after a mode-0600 private
+backup; all other parsed variables are unchanged. The web environment check
+passes. CLI reads still verify ACTIVE_HEALTHY and eight completed physical
+backups, latest 10 September 18:44:38 UTC, PITR disabled.
+
+The owning organization invoice list shows WRDESZ-00004, dated 11 September,
+$65.19 outstanding (currency code not shown). The browser URL security policy
+blocked the invoice-document view. No alternate route was used, no payment was
+made, and no spend cap or subscription was changed. The organization spend cap
+is enabled. This remains a financial/service-continuity issue.
+
+A private local recovery-copy workload is prepared for the existing project:
+CLI logical roles/schema/data/migration-history dumps, managed-schema reference,
+and all 49 original-documents objects (1,864,704 metadata bytes at inventory).
+Original Storage identities and versions are kept in a mode-0600 local manifest;
+downloaded files use flat identity hashes to avoid unsafe local path handling.
+The script only dumps/downloads, captures checksums and rejects size mismatches.
+A post-download hosted inventory comparison and actual restore rehearsal remain
+required before treating it as proven recovery. No production restore or schema
+migration has been performed.
+
+
+## Recovery copy: original files verified, database exports retried — 12 September 2026
+
+CPJ `job-mtx7smd0-b86d6211` failed overall because all six database dump commands
+could not run Docker from the detached environment. Its independent Storage
+copy completed: all 49 original-document objects downloaded, 1,864,704 bytes.
+The subsequent live inventory matches every pre-copy object identity, version,
+updated timestamp and recorded size. All local sizes and SHA-256 hashes were
+rechecked. These originals are preserved in the private recovery directory;
+no failed database export has been described as a completed database backup.
+
+Docker 29.7.2 is healthy at the established socket. A database-only retry now
+uses the explicit Docker executable directory in PATH and the verified socket
+in DOCKER_HOST, validates the daemon before dumping, preserves the first report
+and Storage copy, writes into a new private directory and stops on its first
+failed export. No restore has been attempted. Current CI 34625410713 passes web,
+Edge and fresh SQL; the browser gate was still running at this check.
+
+
+## Recovery exports accepted; isolated restore prepared — 12 September 2026, 03:34 AEST
+
+CPJ `job-mtx7yka6-ceddb5d1` passed all six database exports. Roles, application
+schema, data, migration-history schema/data and a managed-schema reference have
+non-empty files, rechecked SHA-256 hashes and private mode-0600 permissions.
+The data export includes Auth, application and Storage metadata. The separately
+verified 49 Storage originals remain preserved. Current CI `34625410713` now
+passes all four jobs, including the real local upload/profile-edit browser gate.
+
+A local script prepares a new native custom-format archive using the existing
+CLI login and restores it into a uniquely labelled Docker container with no
+network or published ports. It will require an error-free transactional restore
+and compare every captured COPY relation and sequence state with a fresh dump
+of the restored database. Cleanup is restricted to that exact created container.
+This is an isolated database rehearsal, not a production restore, application
+workflow test, Storage HTTP restore or complete project recovery. No result has
+yet been claimed.
+
+The owner supplied the invoice PDF directly after the earlier browser policy
+block. Both pages were reviewed through that explicit local file input. It shows
+$65.19 due on 11 September: Pro plan $25, four Micro compute projects net $30
+after the $10 credit, and this project's custom domain $10.19; other usage is
+offset by allowances. No currency code or suspension confirmation is printed.
+The original PDF was moved unchanged into the ignored private billing category
+and its content hash rechecked. No billing details or PDF enter Git, and no
+payment or subscription change was performed.
+
+
+## Restore transport defect isolated — 12 September 2026, 03:36 AEST
+
+CPJ `job-mtx8ipb6-49993d74` failed before its custom archive or restore container
+was created: Docker could not reach the direct database IPv6 address. An exact
+container-name inspection confirms no leftover restore container. Existing
+logical exports and Storage copies are unaffected; restoration remains unverified.
+
+The established project's session-pooler configuration resolves the transport
+constraint without changing hosted configuration. A bounded authenticated query
+from the same Docker image succeeds and returns the exact expected database and
+CLI login identity. The revised rehearsal validates the project-specific pooler
+configuration and repeats that identity check before exporting. It preserves the
+failed report and uses a separate private attempt directory. The restore database
+continues to have no network or published ports. No production restore occurred.
+
+
+## Restore dependency defect isolated — 12 September 2026, 03:39 AEST
+
+CPJ `job-mtx8m6q1-9b9fd9aa` verified the session-pooler connection and captured
+a 1,911,224-byte native archive with a verified checksum. Its transactional
+restore stopped at the first application table default that references
+`extensions.gen_random_uuid()`: the schema-filtered archive omitted the
+`pgcrypto` extension definition. The archived table of contents confirms the
+omission; live extension metadata confirms pgcrypto 1.3 is installed. The
+original CLI schema backup already includes its extension declaration.
+The exact isolated container was removed and absence rechecked.
+
+The revised native export includes all dumpable database schemas and extension
+definitions, preserving native dependency ordering. The isolated database also
+requires `cron.launch_active_jobs=off` before restoring any scheduled-job rows.
+Network isolation, transactional fail-on-error restore, row/sequence comparison
+and exact container cleanup remain enforced. No source application schema or
+production configuration changed. Cluster configuration, external encryption
+keys, Storage object delivery and hosted service configuration remain outside
+this logical database exercise. Recovery is still unverified.
+
+
+## Hosted platform owner prerequisite — 12 September 2026, 03:43 AEST
+
+CPJ `job-mtx8pol4-52ed8097` captured the full native archive (2,057,936 bytes),
+verified scheduled jobs were disabled, and progressed beyond extension creation.
+Its fail-on-error restore stopped because the stock image lacks the hosted
+`supabase_realtime_admin` role owning Realtime objects. The isolated container
+was removed successfully. Database exports do not include cluster roles.
+
+A read-only live role catalogue confirms this owner is NOLOGIN, NOINHERIT,
+NOSUPERUSER, NOCREATEROLE, NOCREATEDB, NOREPLICATION, NOBYPASSRLS, with connection
+limit -1. The local-only revision creates that exact role before restoration
+and reuses the existing full archive after checking its recorded byte count
+and SHA-256. It opens no production connection. No rows, constraints, ownership
+statements or errors are skipped. Full restoration and comparison remain pending.
+
+
+## Logical database recovery verified — 12 September 2026, 03:41 AEST
+
+CPJ `job-mtx8tfdp-70bb1504` completed successfully. The full archive restored
+transactionally with no skipped errors into the isolated database. A fresh dump
+matched all 109 COPY relations, all 2,387 rows and all four sequence states.
+The comparison files and archive checksum were independently rechecked after
+completion. Scheduled jobs stayed disabled and the created container was removed.
+Together with the separately verified 49 original Storage files, this establishes
+a current local recovery copy and proven local logical database restoration.
+It does not prove a hosted project restore, external encryption-key recovery,
+Storage HTTP restoration or a real-account application workflow.
+
+## Business allowance equality — local implementation, broader gates pending
+
+The explicit owner rule is Business = Premium per user, with separate owner
+access at 1,000/month. Exact Pro/Premium numeric caps remain an unanswered
+commercial decision; this slice preserves the database's current Premium 40
+and Pro 20 ceilings. No price, currency, purchase product or subscription row
+is invented or changed.
+
+A disposable PostgreSQL reproduction executed the committed access resolver
+and observed Premium 40 versus Business 1,000. Its first harness attempt hit
+the image's temporary startup-server shutdown; readiness now requires the
+entrypoint's completed-initialization marker before querying. The corrected
+reproduction confirmed the actual allowance mismatch and cleaned up.
+
+Additive migration `20260911174506_business_matches_premium_allowance.sql`
+replaces only the existing private resolver, using one shared Premium/Business
+branch. The private/public RPC contracts and grants are retained. Tracing shows
+the browser meter and Edge guard consume the versioned access RPC, while the
+reservation core and captured plan snapshots independently resolve that same
+authority. Existing reservations replay before new-admission cap checks, so
+historical allowance snapshots are preserved and new stale larger requests
+are clamped. Business feature identity and owner metadata rules stay intact.
+
+The new resolver passes the same isolated reproduction with Premium = Business
+= 40. Focused guard tests pass 40/40 and account presentation tests pass 5/5,
+including paid cap boundaries and Business branding. The initial guard-test
+type error was corrected with an explicit assertion that access exists; no
+type checking was disabled. Migration/deployment-contract checks and 13 current
+upgrade-manifest tests pass. The new 20-assertion SQL regression covers real
+subscriptions, reservation limits, captured snapshots, exact replay, immutable
+history, owner separation, trial/expiry and private execution restrictions;
+full SQL execution and both 90-migration upgrade gates are still pending.
+Historical migration and baseline files are unchanged. No hosted migration,
+publication or production acceptance is claimed for this new slice.
+
+
+## Allowance gate interrupted by clamshell sleep — 12 September 2026, 04:23 AEST
+
+CPJ `job-mtx955iy-9edba932` passed all Edge entry-point type checks and
+1,621 Edge tests / 220 steps. Its hosted upgrade run
+`db-20260911175145607-f67b528d` timed out during the historical reset, followed
+by a web-gate timeout. macOS power logs record Clamshell Sleep at 03:53:12,
+a brief DarkWake at 04:09:05 and lid wake at 04:21:07. This accounts for the
+wall-clock expiry; it is not a passing SQL gate or an observed SQL assertion
+failure. The new Business regression had not been executed in the upgrade.
+
+The web log shows lint and preceding deployment checks passed before the
+interruption at type checking. Disposable cleanup exited zero, no related
+verifier/type-check process remains, and source-before/after hashes match.
+The retry reruns both upgrade paths and their full web gates under unchanged
+source; the already successful Edge suite is not repeated. The user was asked
+to leave the laptop lid open because temporary keep-awake assertions cannot
+prevent clamshell sleep. Production state remains unchanged.
+
+
+## Business equality accepted locally — 12 September 2026, 04:28 AEST
+
+CPJ `job-mtxabk9y-62ac50ab` passed both complete upgrade paths:
+`db-20260911182337494-c4bccc87` (observed hosted 68-to-90) and
+`db-20260911182604141-c780b78c` (workspace 79-to-90). Fresh and upgraded
+databases pass 57 SQL files / 2,842 assertions, including all 20 new Business
+regression assertions. Every recorded command exits zero. Both full web gates
+pass lint, types, 445 shared tests, 1,165 web tests, the production build and
+progressive bundle checks. Source hashes match before/after, and cleanup passes.
+The unchanged Edge source/test set had already passed all entry-point type
+checks and 1,621 tests / 220 steps before the earlier sleep interruption.
+
+The seven reviewed implementation/test/contract files are committed as
+`7b627cf11cca7b8e39d97305cf9c0a4dbe0ccaed`. This changes the existing allowance
+authority only: Business and Premium resolve the same currently enforced 40
+documents per user, owner access remains 1,000, and historical subscriptions,
+usage and reservations are preserved. Exact Pro/Premium cap selection, real
+RevenueCat prices/currency and hosted deployment remain separate unfinished
+items. The map pins this application-source commit; a subsequent documentation
+commit records the verified recovery and gate results. CI must be inspected
+for that publication, independently of this local evidence.

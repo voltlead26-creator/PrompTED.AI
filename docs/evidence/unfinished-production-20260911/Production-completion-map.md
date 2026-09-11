@@ -11,7 +11,7 @@ Open [the interactive brain map](production-completion-map.html). Its filters an
 Owner authorises required local/GitHub/Netlify/Supabase/Docker configuration and release work. Preserve user data and verify exact outcomes.
 
 - Repository/branch: `voltlead26-creator/PrompTED.AI` / `Thought-Enhanced-Document`.
-- Local and GitHub HEAD freshly matched: `2715b5518cf33d3d74ac95a78497cf0021de6025`; uncommitted overlay remains.
+- Local and GitHub HEAD freshly matched: `7b627cf11cca7b8e39d97305cf9c0a4dbe0ccaed`; uncommitted overlay remains.
 - Netlify production re-read: `e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b`, locked deploy `6a9fc526610f2efb8c05454f`.
 - Supabase migration list refreshed on 12 September: the exact 68 recorded versions still match. Prior function inventory: 25 functions. Local has 88 migration files; the grant-reconciliation migration awaits real SQL verification.
 - Reference atlas: supplied `PrompTED-audited-atlas-bundle`, pinned to `0b9dbc1a`; retained as historical source guidance.
@@ -74,7 +74,7 @@ Account/library and gateway fixes are committed at c3c2ef6; polling additions an
 
 **Locally verified · P0** · Depends on: none
 
-User correction at 23:17 AEST supersedes unlimited owner access. SQL draft now uses a finite 1,000 cap and correct subscription period mapping; all 52 SQL files / 2,730 assertions pass; no hosted owner grant exists.
+User correction at 23:17 AEST supersedes unlimited owner access. SQL draft now uses a finite 1,000 cap and correct subscription period mapping; all 57 SQL files / 2,842 assertions pass; no hosted owner grant exists.
 
 **Complete when:** One trusted Auth UUID receives all product features and exactly 1,000 monthly documents; billing truth, RLS, rate limits and usage accounting stay intact.
 
@@ -84,7 +84,7 @@ User correction at 23:17 AEST supersedes unlimited owner access. SQL draft now u
 
 **Needs decision · P0** · Depends on: none
 
-Business must equal Premium. Existing backend Pro/Premium caps are 20/40; UI advertises 50/unlimited. The owner was asked for exact Pro/Premium allowances.
+Business equality is implemented locally in a new additive resolver migration: both use the existing enforced Premium 40 cap, while owner access remains 1,000. The correction is committed at 7b627cf; focused PostgreSQL/account checks and the full 1,621-test Edge suite pass. The retry passes both 90-migration upgrades, 57 SQL files / 2,842 assertions and the complete web gates. The earlier timeout was caused by documented laptop clamshell sleep. Exact Pro/Premium caps remain an unanswered decision (backend 20/40 versus UI 50/unlimited).
 
 **Complete when:** Record the selected numeric allowances and make SQL, Edge, shared definitions, meters and upgrade copy agree.
 
@@ -94,7 +94,7 @@ Business must equal Premium. Existing backend Pro/Premium caps are 20/40; UI adv
 
 **In progress · P0** · Depends on: A1, A2
 
-Database, account UI and Edge guard share a validated owner-aware projection. Combined gate passed 1,609 Edge, 445 shared and 1,163 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.
+Database, account UI and Edge guard share a validated owner-aware projection. Combined evidence passes 1,621 Edge, 445 shared and 1,165 web tests plus production build; source hashes stayed unchanged. Hosted deployment and real browser acceptance remain pending.
 
 **Complete when:** Fail closed on malformed/error responses; test exact user binding, revocation, cap boundary, concurrent reservations, replay and unchanged subscription history.
 
@@ -168,7 +168,7 @@ A provider response or HTTP 200 does not prove persisted generation. Interruptio
 
 **Confirmed gap · P0** · Depends on: none
 
-Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 89 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; Application definitions match; hosted grants/defaults and two extra audit policies need disposition. Storage platform internals differ. The artifact owner-read grant defect is repaired and passes 14 new SQL checks, including actual read and rejected write operations.
+Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 90 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; Application definitions match; hosted grants/defaults and two extra audit policies need disposition. Storage platform internals differ. The artifact owner-read grant defect is repaired and passes 14 new SQL checks, including actual read and rejected write operations.
 
 **Complete when:** Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.
 
@@ -178,7 +178,7 @@ Live migration refresh on 12 September matches the exact recorded 68 versions. L
 
 **In progress · P0** · Depends on: B1, P1, A3, G2, Q1
 
-Both 79-to-89 workspace and 68-to-89 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Remaining grant disposition, a current recovery point and separate Storage protection remain; the artifact read correction passes both 89-migration upgrades with observed hosted grants reproduced.
+Both 79-to-90 workspace and 68-to-90 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Remaining grant disposition and hosted application remain. A full native archive restored locally with all 109 tables, 2,387 rows and four sequence states matching. All 49 Storage originals were copied with matching sizes and unchanged live versions; the artifact read correction passes both 90-migration upgrades with observed hosted grants reproduced.
 
 **Complete when:** Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.
 
@@ -210,7 +210,7 @@ Hosted list includes legacy provider proxy endpoints. The release inventory reje
 
 **In progress · P0** · Depends on: none
 
-Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Both local Supabase management tokens return HTTP 401; connector/dashboard access works. The owning organization reports outstanding invoices; no payment was made. Remaining hosted configuration needs verification.
+Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Two invalid dotenv tokens were removed after private backup. Existing native CLI login, connector and dashboard work. Owning-organization invoice WRDESZ-00004 shows $65.19 outstanding; no payment was made. Hosted deployment configuration still needs verification.
 
 **Complete when:** Public NEXT_PUBLIC values only in web dotenv; private runtime values in ignored Supabase dotenv; operator credentials in ignored tools dotenv. Align service/project/origin mappings without printing secrets.
 
@@ -230,7 +230,7 @@ Netlify connector reports password protection on all projects; intended public-l
 
 **Partially verified · P1** · Depends on: none
 
-Earlier CPJ failures were caused by host sleep during local Supabase startup/reset. Caffeinate -u -i allowed a complete isolated run.
+Caffeinate -u -i resolved earlier host-sleep failures. Recovery export exposed a separate detached PATH problem; Docker 29.7.2 is healthy and the database-only retry explicitly sets its executable directory and socket.
 
 **Complete when:** Keep tests on disposable containers/ports; preserve shared data; record versions, cleanup and unchanged source hashes. Use bounded jobs that survive client exit.
 
@@ -306,7 +306,7 @@ No current throughput or concurrent-owner performance acceptance is recorded.
 
 **In progress · P0** · Depends on: Q1, Q2, Q3
 
-Local/GitHub match published 2715b55. CI 34622858382 passes all four jobs, including the real local browser gate. Its permission correction passed local fresh/upgrade SQL and web gates. Current audit instrumentation reproduces additional hosted grant differences and the artifact read repair passes fresh and both upgrade paths; its publication and CI follow. No production deployment has occurred.
+Application source is pinned to 7b627cf, with Business/Premium equality locally verified by the complete gates and both 90-migration upgrades. Earlier 9cfa8b2 passed all four CI jobs at run 34625410713. The new publication requires its own exact-SHA CI check; this map is a documentation snapshot. No production deployment has occurred.
 
 **Complete when:** Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.
 
@@ -388,9 +388,9 @@ Operational health, alert delivery and redacted correlation evidence need a curr
 
 ### O2 · Rehearse rollback and data recovery
 
-**Unverified · P0** · Depends on: B1
+**Partially verified · P0** · Depends on: B1
 
-A retained Netlify deployment is only frontend recovery; database and Storage recovery must be established separately.
+Six private logical database exports have verified hashes and file permissions. All 49 Storage originals have matching local hashes and unchanged hosted identities, versions and sizes. The isolated full logical restore passes: 109 tables, 2,387 rows and four sequence states match the archive; scheduled jobs were disabled and cleanup succeeded. Hosted recovery, external keys and Storage HTTP restoration remain outside that proof.
 
 **Complete when:** Confirm available backups and retention; rehearse compatible restore/roll-forward in isolation; preserve live history and document exact rollback triggers and targets.
 
