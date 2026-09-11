@@ -30,4 +30,15 @@ describe("account access presentation", () => {
     expect(screen.queryByText("50 documents per month")).not.toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   });
+  it.each(["premium", "business"] as const)("shows the server allowance for %s and retains its features", (plan) => {
+    render(<SubscriptionPlan plan={plan} documentsThisMonth={20} access={{ ...access,
+      subscriptionPlan: plan, effectivePlan: plan, subscriptionStatus: "active",
+      accessProfile: "subscription", monthlyDocumentCap: 40, businessFeatures: plan === "business" }} />);
+    expect(screen.getByText("40 documents per month")).toBeInTheDocument();
+    expect(screen.queryByText("Unlimited documents")).not.toBeInTheDocument();
+    expect(screen.queryByText("1,000 documents per month")).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    if (plan === "business") expect(screen.getByText("Brand kit (logo, colours, footer)")).toBeInTheDocument();
+    else expect(screen.queryByText("Brand kit (logo, colours, footer)")).not.toBeInTheDocument();
+  });
 });

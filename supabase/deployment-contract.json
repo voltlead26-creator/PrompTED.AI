@@ -227,6 +227,7 @@
     "requiredMigrations": [
       "20260819000000_add_durable_rate_limits",
       "20260911130803_effective_owner_product_access",
+      "20260911174506_business_matches_premium_allowance",
       "20260911143000_legacy_generation_failure_budget",
       "20260911151000_captured_generation_failure_budget",
       "20260911155000_legacy_section_repair_budget",
@@ -311,7 +312,8 @@
       "20260908140000_complete_catalogue_persistence_seeds",
       "20260908160000_legacy_workspace_save_core",
       "20260909105519_complete_upload_source_preparation",
-      "20260911130803_effective_owner_product_access"
+      "20260911130803_effective_owner_product_access",
+      "20260911174506_business_matches_premium_allowance"
     ],
     "requiredRpcs": [
       "get_latest_captured_document_operation",

@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import { AuthError, guardRequest } from "./auth-guard.ts";
 import { prepareLegacyModelAttempt, requireLegacyCheckpointContext, ModelCallContextError } from "./model-call-context.ts";
 
@@ -134,6 +134,28 @@ Deno.test("owner access admits creation after the Free cap using the exact accou
   }, undefined, undefined, { access: accessFixture(verifiedUser.id, true), usage: 3,
     observeAccess: payload => { requested = payload; } });
 });
+
+for (const plan of ["premium", "business"] as const) {
+  const paidAccess = { ...accessFixture(verifiedUser.id), subscription_plan: plan,
+    effective_plan: plan, subscription_status: "active", monthly_document_cap: 40,
+    ai_editing: true, business_features: plan === "business" };
+  Deno.test(`${plan} guard admits below the shared server allowance`, async () => {
+    await withUser(verifiedUser, async () => {
+      const auth = await guardRequest(request({ prompt: "hello" }));
+      assertEquals(auth.plan, plan);
+      assertEquals(auth.monthlyDocumentCap, 40);
+      assert(auth.access);
+      assertEquals(auth.access.businessFeatures, plan === "business");
+    }, undefined, undefined, { access: paidAccess, usage: 39 });
+  });
+  Deno.test(`${plan} guard stops at the shared server allowance`, async () => {
+    await withUser(verifiedUser, async () => {
+      const error = await assertRejects(() => guardRequest(request({})), AuthError);
+      assertEquals(error.status, 402);
+      assertEquals(error.code, "over_cap");
+    }, undefined, undefined, { access: paidAccess, usage: 40 });
+  });
+}
 
 Deno.test("access service failure rejects admission instead of inventing a Free plan", async () => {
   await withUser(verifiedUser, async () => {
