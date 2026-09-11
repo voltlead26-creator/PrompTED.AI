@@ -744,3 +744,93 @@ No application Edge source changed since the separately passing 1,617-test suite
 CI `34620298898` passed all four jobs on `5f7b12e942eb6dc8b615dd7795ec94fc3a3664e6`.
 The permission correction is locally verified; its own publication/CI and all
 hosted application, table/RLS/Storage parity and recovery gates remain separate.
+
+
+## Published correction and broader catalog audit — 12 September 2026
+
+Published commit `2715b5518cf33d3d74ac95a78497cf0021de6025` to the existing
+`Thought-Enhanced-Document` branch; local and origin matched and the worktree
+was clean before the next audit instrumentation. CI `34622858382` has passed
+web, Edge and fresh database jobs; its browser job was still running at review.
+
+The shared read-only `hosted-schema-catalog.mjs` query captures public/private
+relations, columns, constraints, indexes, non-internal triggers, policies,
+schema/default grants and Storage bucket settings. Storage objects/buckets
+schema definitions are included separately as platform-owned comparison input.
+It reads no application records or Storage object names/bytes. The live result
+contains 74 relations, 1,016 columns, 702 constraints, 233 indexes, 64 triggers,
+47 policies, nine default-grant entries, three schemas and four buckets.
+The private catalog was assembled, parsed and verified at mode 0600; temporary
+parts were removed. This is configuration evidence, not a data backup.
+
+The disposable runner now captures the same catalog before and after upgrading
+its recorded hosted predecessor. Preflight `db-20260911164342502-e55262ff`
+passes; the full comparison rehearsal is next. Raw ACL ordering and differences
+in platform-owned Storage objects require review rather than automatic repair.
+No hosted schema, grants, data, Storage objects or billing have been changed.
+
+
+## Application catalog comparison and artifact permission repair — 12 September 2026
+
+CPJ `job-mtx6t7mf-039fbfc5`, run `db-20260911164522409-d571e2fe`, passed the
+88-migration recorded-hosted upgrade, fresh/upgraded 55 SQL files and 2,808
+assertions, historical original/replay preservation, 445 shared/1,163 web tests,
+types/lint/build/bundles, source integrity and cleanup. The metadata comparison
+is a separate result: a passing rehearsal does not imply matching catalogs.
+
+All 74 relation identities match. Every common column, constraint, index and
+non-internal trigger definition matches. Four extra columns, three constraints
+and three indexes belong to platform-owned Storage versioning internals; these
+are not PrompTED migrations and have not been copied into the application.
+Bucket settings match for all four buckets. No bucket or object was changed.
+
+Forty-five existing policies match, with two extra hosted authenticated
+`audit_logs` owner policies. Authenticated users lack table access, so these
+policies alone do not prove accessible audit rows. Most raw private ACL changes
+are equivalent implicit-owner versus explicit-owner grants. Fifteen public
+tables have extra service-role permissions; public default grants are broader
+on hosted tables/sequences/functions. A broader disposable fixture now reproduces
+those application grants and policies. Storage platform differences remain
+separate from the application comparison.
+
+One concrete source defect is reproduced from the current real SQL catalog:
+`generate-artifact` calls `requireOwnedArtifactOutcome(auth.admin, userId, id)`,
+whose exact `(id,user_id)` SELECT is already declared in the deployment contract.
+Fresh `public.outcomes` instead grants service role only `Dxtm`; production grants
+`arwdDxtm`. The SELECT-only assertion failed before the repair. Migration
+`20260911165152_reconcile_artifact_outcome_read_privileges.sql` now revokes that
+role's outcomes grants and grants SELECT only. Browser privileges, RLS, rows,
+function bodies and all other table grants remain intact. Other observed grants
+still need disposition; they are not silently declared corrected.
+
+A new transaction-rolled-back SQL regression checks all eight privilege verbs,
+executes the actual service-role owner-filtered read, rejects direct creation,
+rewriting and deletion, and verifies the original source survives. Six existing
+Edge ownership/error-response tests pass. The 100 upgrade-manifest tests,
+89-migration validation and deployment-contract validation pass. New full real
+SQL/fresh/upgrade acceptance remains pending. The three original historical
+SQL baseline manifests remain unchanged.
+
+Published `2715b5518cf33d3d74ac95a78497cf0021de6025` now passes all four CI jobs
+in run `34622858382`. The artifact permission repair is a later dirty overlay.
+No hosted migration, permission, data, Storage or billing mutation has occurred.
+
+
+## Artifact read correction accepted locally — 12 September 2026, 03:00 AEST
+
+CPJ `job-mtx76oir-5879b75c` passes both current 89-migration upgrades:
+`db-20260911165550818-03b95be8` (68-to-89 with the observed hosted grants,
+defaults and extra audit policies reproduced) and
+`db-20260911165814650-93622c3a` (workspace 79-to-89).
+Fresh and upgraded databases each pass 56 SQL files / 2,822 assertions,
+including 14 new artifact-read privilege and actual SQL-operation checks.
+The resulting outcomes ACL grants service role SELECT only and retains the
+existing authenticated SELECT/INSERT/UPDATE privileges. Both full web gates,
+source-before/after equality and disposable cleanup pass.
+
+The observed-predecessor application columns, constraints, indexes, triggers,
+policies and default grants exactly match the live metadata captured in this
+audit. All four bucket settings match. Storage platform DDL and equivalent
+implicit/explicit owner ACL representations remain separately classified.
+These results validate the forward correction under observed hosted defaults;
+they do not mutate production or prove real-account document generation/export.

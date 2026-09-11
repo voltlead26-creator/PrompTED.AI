@@ -546,7 +546,8 @@
       "requiredMigrations": [
         "20260901020000_atomic_allowance_reservations",
         "20260901060000_legacy_model_accounting_and_replay",
-        "20260908130000_legacy_generation_policy_binding"
+        "20260908130000_legacy_generation_policy_binding",
+        "20260911165152_reconcile_artifact_outcome_read_privileges"
       ],
       "requiredRpcs": [
         "release_document_allowance",

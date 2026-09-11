@@ -67,7 +67,7 @@ add('G1','generation','Bound automatic browser observation','Locally verified','
     'Exercise timeout, hung reads, cancellation, terminal state, reload and manual GET-only recovery; no poll should restart provider work.',
     'apps/web/src/components/organisms/CapturedAdmission.tsx')
 add('G2','generation','Persist operation-wide failure budgets','In progress','P0','',
-    'Legacy and captured preparation/dispatch guards pass the combined local gate: 55 SQL files / 2,808 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.',
+    'Legacy and captured preparation/dispatch guards pass the combined local gate: 56 SQL files / 2,822 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.',
     'Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.',
     'docs/plans/2026-09-06-owner-access-and-generation-retry-protection.md')
 add('G3','generation','Configure real model routing and capacity','Pending','P0','C1 B2',
@@ -80,11 +80,11 @@ add('G4','generation','Prove recovery and exactly-once usage','Unverified','P0',
     'scripts/verify-live-document-generation.mjs')
 
 add('B1','backend','Reconcile hosted schema and inventory','Confirmed gap','P0','',
-    'Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 88 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; table/RLS/Storage parity remains.',
+    'Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 89 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; Application definitions match; hosted grants/defaults and two extra audit policies need disposition. Storage platform internals differ. The artifact owner-read grant defect is repaired and passes 14 new SQL checks, including actual read and rejected write operations.',
     'Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.',
     'supabase/deployment-contract.json')
 add('B2','backend','Rehearse and apply compatible upgrade','In progress','P0','B1 P1 A3 G2 Q1',
-    'Both 79-to-88 workspace and 68-to-88 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Table/RLS/Storage catalog checks, a current recovery point and separate Storage protection remain.',
+    'Both 79-to-89 workspace and 68-to-89 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Remaining grant disposition, a current recovery point and separate Storage protection remain; the artifact read correction passes both 89-migration upgrades with observed hosted grants reproduced.',
     'Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.',
     'docs/evidence/web-operational-readiness/run-isolated-db-baseline.mjs')
 add('B3','backend','Deploy required Edge Functions','Confirmed gap','P0','B2 G3 C1',
@@ -97,7 +97,7 @@ add('B4','backend','Resolve undeclared or dormant endpoints','Pending','P0','B1'
     'scripts/backend-release-baseline.mjs')
 
 add('C1','config','Reconcile local and hosted configuration','In progress','P0','',
-    'Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Hosted configuration and candidate credential validity remain unverified.',
+    'Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Both local Supabase management tokens return HTTP 401; connector/dashboard access works. The owning organization reports outstanding invoices; no payment was made. Remaining hosted configuration needs verification.',
     'Public NEXT_PUBLIC values only in web dotenv; private runtime values in ignored Supabase dotenv; operator credentials in ignored tools dotenv. Align service/project/origin mappings without printing secrets.',
     'scripts/check-web-build-environment.mjs')
 add('C2','config','Verify Auth, origins and public access','Unverified','P0','C1',
@@ -110,7 +110,7 @@ add('C3','config','Stabilise Docker and local verification','Partially verified'
     'docs/evidence/unfinished-production-20260911/Work-plan.md')
 
 add('Q1','quality','Pass the complete integrated source gate','In progress','P0','P1 P4 A3 G1 G2',
-    'Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 88-migration upgrades pass locally. CI 34620298898 passes all four jobs for 5f7b12e; the permission correction awaits its own publication and CI; three pre-existing extra Edge lint diagnostics are recorded.',
+    'Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 89-migration upgrades pass locally. CI 34622858382 passes all four jobs for 2715b55; the subsequent artifact read permission repair passes full local SQL and web gates; three pre-existing extra Edge lint diagnostics are recorded.',
     'Run focused/adjacent tests, all SQL, migration upgrades/lint, all Edge tests/types, web/shared/root tests, lint, types, build and bundle budgets; review final diff and source integrity.',
     'scripts/verify-web-release.mjs')
 add('Q2','quality','Exercise desktop/mobile browser failures','Pending','P0','Q1',
@@ -136,7 +136,7 @@ add('F3','performance','Verify production capacity and limits','Unverified','P1'
     'supabase/deployment-contract.json')
 
 add('R1','release','Commit reviewed source and verify exact CI','In progress','P0','Q1 Q2 Q3',
-    'Published 5f7b12e passes all four CI jobs in 34620298898. The current permission correction and catalog comparison pass local fresh/upgrade SQL and web gates; publication and exact-commit CI follow. No production deployment has occurred.',
+    'Local/GitHub match published 2715b55. CI 34622858382 passes all four jobs, including the real local browser gate. Its permission correction passed local fresh/upgrade SQL and web gates. Current audit instrumentation reproduces additional hosted grant differences and the artifact read repair passes fresh and both upgrade paths; its publication and CI follow. No production deployment has occurred.',
     'Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.',
     '.github/workflows/ci.yml')
 add('R2','release','Deploy compatible frontend after backend','Confirmed gap','P0','R1 B3 B4 C2',
@@ -181,7 +181,7 @@ add('O3','operations','Finish folder organisation and handoff','Partially verifi
 data = {
     'title': 'PrompTED.AI · Production completion map',
     'snapshot': '12 September 2026 · integrated local gate update; 11 September commercial requirements retained',
-    'sourceHead': '5f7b12e942eb6dc8b615dd7795ec94fc3a3664e6',
+    'sourceHead': '2715b5518cf33d3d74ac95a78497cf0021de6025',
     'branch': 'Thought-Enhanced-Document',
     'productionHead': 'e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b',
     'productionDeploy': '6a9fc526610f2efb8c05454f',

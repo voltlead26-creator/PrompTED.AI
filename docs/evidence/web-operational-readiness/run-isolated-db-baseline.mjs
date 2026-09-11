@@ -21,6 +21,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { assertAcceptanceSourceIdentity } from "./acceptance-source-identity.mjs";
+import { hostedSchemaCatalogSql, observedSchemaGrantFixture } from "./hosted-schema-catalog.mjs";
 import { resolveAcceptanceRuntime } from "./acceptance-runtime.mjs";
 import { exerciseProfileReads } from "./profile-read-acceptance.mjs";
 import { exerciseUploadSourceUpgrade } from "./upload-source-upgrade-acceptance.mjs";
@@ -95,6 +96,7 @@ const v3Inputs = [
   ["./reviewed-release-sql-extension.mjs", "reviewed-release-sql-extension.mjs"],
   ["./current-release-upgrade.test.mjs", "current-release-upgrade.test.mjs"],
   ["./hosted-ledger-upgrade-acceptance.mjs", "hosted-ledger-upgrade-acceptance.mjs"],
+  ["./hosted-schema-catalog.mjs", "hosted-schema-catalog.mjs"],
   ["./hosted-ledger-upgrade-acceptance.test.mjs", "hosted-ledger-upgrade-acceptance.test.mjs"],
   ["./hosted-ledger-upgrade-baseline.json", "hosted-ledger-upgrade-baseline.json"],
   ["./legacy-workspace-core-upgrade-acceptance.mjs", "legacy-workspace-core-upgrade-acceptance.mjs"],
@@ -713,7 +715,10 @@ try {
         assertDisposableReset(database, historicalDatabase); database = historicalDatabase;
         assert.deepEqual(history("hosted-ledger-historical-history"), plan.hostedVersions);
         functionCatalog("hosted-ledger-historical-function-catalog");
+        save("hosted-ledger-historical-schema-catalog.json", JSON.parse(sql("hosted-ledger-historical-schema-catalog", hostedSchemaCatalogSql)));
         sql("hosted-ledger-reproduce-observed-grants", observedOwnerRpcGrantFixture);
+        sql("hosted-ledger-reproduce-observed-schema-grants", observedSchemaGrantFixture);
+        save("hosted-ledger-observed-schema-catalog.json", JSON.parse(sql("hosted-ledger-observed-schema-catalog", hostedSchemaCatalogSql)));
         functionCatalog("hosted-ledger-observed-function-catalog");
         assert.equal(sql("hosted-ledger-observed-anon-profile-grant",
           "select has_function_privilege('anon','public.link_own_business(uuid)','EXECUTE');").trim(), "t");
@@ -732,6 +737,7 @@ try {
         });
         assert.equal(hostedLedgerPhase, "full");
         functionCatalog("hosted-ledger-current-function-catalog");
+        save("hosted-ledger-current-schema-catalog.json", JSON.parse(sql("hosted-ledger-current-schema-catalog", hostedSchemaCatalogSql)));
         supabase("hosted-ledger-upgraded-tests", ["test", "db", "--local"], 10 * 60_000);
         supabase("hosted-ledger-upgraded-schema-lint", ["db", "lint", "--local", "--schema", "public,private",
           "--level", "warning", "--fail-on", "error"], 10 * 60_000);

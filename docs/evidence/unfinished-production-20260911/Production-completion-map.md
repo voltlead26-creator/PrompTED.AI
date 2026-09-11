@@ -11,7 +11,7 @@ Open [the interactive brain map](production-completion-map.html). Its filters an
 Owner authorises required local/GitHub/Netlify/Supabase/Docker configuration and release work. Preserve user data and verify exact outcomes.
 
 - Repository/branch: `voltlead26-creator/PrompTED.AI` / `Thought-Enhanced-Document`.
-- Local and GitHub HEAD freshly matched: `5f7b12e942eb6dc8b615dd7795ec94fc3a3664e6`; uncommitted overlay remains.
+- Local and GitHub HEAD freshly matched: `2715b5518cf33d3d74ac95a78497cf0021de6025`; uncommitted overlay remains.
 - Netlify production re-read: `e1d514ddda3b557a10ef1836a2fb7e1c6f327d1b`, locked deploy `6a9fc526610f2efb8c05454f`.
 - Supabase migration list refreshed on 12 September: the exact 68 recorded versions still match. Prior function inventory: 25 functions. Local has 88 migration files; the grant-reconciliation migration awaits real SQL verification.
 - Reference atlas: supplied `PrompTED-audited-atlas-bundle`, pinned to `0b9dbc1a`; retained as historical source guidance.
@@ -136,7 +136,7 @@ Configuration authority is now supplied; the exact confirmed owner UUID must sti
 
 **In progress · P0** · Depends on: none
 
-Legacy and captured preparation/dispatch guards pass the combined local gate: 55 SQL files / 2,808 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.
+Legacy and captured preparation/dispatch guards pass the combined local gate: 56 SQL files / 2,822 assertions and 1,617 Edge tests. Historical captured failures without dispatch evidence still need acceptance work. The section-repair guard passes real SQL lifecycle, full Edge/web gates and both current upgrades; hosted and browser acceptance remain.
 
 **Complete when:** Enforce through existing operation/attempt authorities across reloads, tabs and restarts. Preserve partial work; reconcile ambiguous dispatch and stop after cancellation or budget exhaustion.
 
@@ -168,7 +168,7 @@ A provider response or HTTP 200 does not prove persisted generation. Interruptio
 
 **Confirmed gap · P0** · Depends on: none
 
-Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 88 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; table/RLS/Storage parity remains.
+Live migration refresh on 12 September matches the exact recorded 68 versions. Local has 89 migrations; last hosted function inventory had 25. Counts and version names do not prove schema-byte equality. All 190 function definitions/signatures match the reconstructed predecessor; 15 functions have extra effective grants. The forward correction passes 47 new SQL assertions, fresh and observed-grant predecessor upgrades; Application definitions match; hosted grants/defaults and two extra audit policies need disposition. Storage platform internals differ. The artifact owner-read grant defect is repaired and passes 14 new SQL checks, including actual read and rejected write operations.
 
 **Complete when:** Compare ordered ledger, function bodies, grants, RLS, Storage and non-secret catalog attestations; retain a private baseline and explicit migration delta.
 
@@ -178,7 +178,7 @@ Live migration refresh on 12 September matches the exact recorded 68 versions. L
 
 **In progress · P0** · Depends on: B1, P1, A3, G2, Q1
 
-Both 79-to-88 workspace and 68-to-88 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Table/RLS/Storage catalog checks, a current recovery point and separate Storage protection remain.
+Both 79-to-89 workspace and 68-to-89 recorded-production-history rehearsals pass, preserving original bytes and historical receipts. Schema lint has zero errors and 23 older warnings. No new migration is applied live. Dashboard confirms eight scheduled physical backups, latest 10 September 18:44 UTC, and no PITR. Function grant reconciliation passes locally and awaits hosted application. Remaining grant disposition, a current recovery point and separate Storage protection remain; the artifact read correction passes both 89-migration upgrades with observed hosted grants reproduced.
 
 **Complete when:** Run fresh and old-to-new upgrade checks plus schema lint; confirm recovery/backup evidence; apply additive migrations in order and re-probe exact signatures and privileges.
 
@@ -210,7 +210,7 @@ Hosted list includes legacy provider proxy endpoints. The release inventory reje
 
 **In progress · P0** · Depends on: none
 
-Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Hosted configuration and candidate credential validity remain unverified.
+Local root dotenv contamination repaired: runtime settings separated, public duplicates checked, conflicting operator copies privately retained. Environment check and 14 regressions pass. Both local Supabase management tokens return HTTP 401; connector/dashboard access works. The owning organization reports outstanding invoices; no payment was made. Remaining hosted configuration needs verification.
 
 **Complete when:** Public NEXT_PUBLIC values only in web dotenv; private runtime values in ignored Supabase dotenv; operator credentials in ignored tools dotenv. Align service/project/origin mappings without printing secrets.
 
@@ -242,7 +242,7 @@ Earlier CPJ failures were caused by host sleep during local Supabase startup/res
 
 **In progress · P0** · Depends on: P1, P4, A3, G1, G2
 
-Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 88-migration upgrades pass locally. CI 34620298898 passes all four jobs for 5f7b12e; the permission correction awaits its own publication and CI; three pre-existing extra Edge lint diagnostics are recorded.
+Current owner, polling, dormant DOCX and legacy-budget implementation passes fresh SQL, all Edge tests and the complete web gate with unchanged source hashes. Both 89-migration upgrades pass locally. CI 34622858382 passes all four jobs for 2715b55; the subsequent artifact read permission repair passes full local SQL and web gates; three pre-existing extra Edge lint diagnostics are recorded.
 
 **Complete when:** Run focused/adjacent tests, all SQL, migration upgrades/lint, all Edge tests/types, web/shared/root tests, lint, types, build and bundle budgets; review final diff and source integrity.
 
@@ -306,7 +306,7 @@ No current throughput or concurrent-owner performance acceptance is recorded.
 
 **In progress · P0** · Depends on: Q1, Q2, Q3
 
-Published 5f7b12e passes all four CI jobs in 34620298898. The current permission correction and catalog comparison pass local fresh/upgrade SQL and web gates; publication and exact-commit CI follow. No production deployment has occurred.
+Local/GitHub match published 2715b55. CI 34622858382 passes all four jobs, including the real local browser gate. Its permission correction passed local fresh/upgrade SQL and web gates. Current audit instrumentation reproduces additional hosted grant differences and the artifact read repair passes fresh and both upgrade paths; its publication and CI follow. No production deployment has occurred.
 
 **Complete when:** Stage only reviewed files; commit/push Thought-Enhanced-Document; inspect required CI at that exact SHA; resolve failures without weakening checks.
 
