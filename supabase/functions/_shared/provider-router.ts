@@ -35,6 +35,7 @@ import {
   type TerminalModelAttemptReceipt,
 } from "./cost-tracker.ts";
 import { isOpenAICreditExhaustion } from "./openai-credit-exhaustion.ts";
+import { OpenAIOutputSchemaError, prepareOpenAIOutputSchema } from "./openai-output-schema.ts";
 import {
   configurationForPolicy,
   configuredOllama,
@@ -437,7 +438,7 @@ export function buildOpenAIRequestBody(
       format: {
         type: "json_schema",
         name: request.outputSchema.name,
-        schema: request.outputSchema.schema,
+        schema: preparedOutputSchema(request.outputSchema.schema).schema,
         strict: true,
       },
     };
@@ -583,14 +584,30 @@ async function sha256Json(value: Record<string, unknown>): Promise<string> {
     .join("");
 }
 
-function parseStructured(text: string): Record<string, unknown> {
+function preparedOutputSchema(schema: Record<string, unknown>) {
   try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    return prepareOpenAIOutputSchema(schema);
+  } catch (error) {
+    if (error instanceof OpenAIOutputSchemaError) {
+      throw new OpenAIAdapterError(error.message, 500, false);
     }
+    throw error;
+  }
+}
+
+function parseStructured(text: string, schema?: StrictOutputSchema): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
   } catch {
     // The caller receives a stable code; never log private model output.
+    throw new OpenAIAdapterError("OPENAI_INVALID_STRUCTURED_OUTPUT", 502, false);
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (schema && !preparedOutputSchema(schema.schema).acceptsUniqueItems(parsed)) {
+      throw new OpenAIAdapterError("OPENAI_INVALID_STRUCTURED_OUTPUT", 502, false);
+    }
+    return parsed as Record<string, unknown>;
   }
   throw new OpenAIAdapterError("OPENAI_INVALID_STRUCTURED_OUTPUT", 502, false);
 }
@@ -631,7 +648,7 @@ function replayLegacyCheckpoint(
     throw new OpenAIAdapterError("OPENAI_EMPTY_RESPONSE", 502, false);
   }
   const structured = request.outputSchema || request.requireJson
-    ? parseStructured(text)
+    ? parseStructured(text, request.outputSchema)
     : undefined;
   if (
     structured &&
@@ -867,6 +884,11 @@ async function waitForRetry(
 export async function routeRequest(
   request: ProviderRequest,
 ): Promise<ProviderResponse> {
+  // The wire projection and local constraints must come from the same schema,
+  // even when the caller changes its object while provider work is pending.
+  if (request.outputSchema) {
+    request = { ...request, outputSchema: structuredClone(request.outputSchema) };
+  }
   const requireCheckpointReceipt = request.requireLegacyCheckpointReceipt === true;
   const auditRequested = request.legacyAuditBinding !== undefined || request.legacyAuditSources !== undefined;
   let legacyAuditBinding: LegacyDocumentAuditBinding | undefined;
@@ -1450,7 +1472,7 @@ export async function routeRequest(
           throw new OpenAIAdapterError("OPENAI_EMPTY_RESPONSE", 502, false);
         }
         const structured = request.outputSchema || request.requireJson
-          ? parseStructured(text)
+          ? parseStructured(text, request.outputSchema)
           : undefined;
         resultEnvelope.structured = structured ?? null;
         completed = {

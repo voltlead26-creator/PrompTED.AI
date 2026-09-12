@@ -22,6 +22,7 @@ import {
   legacyAuditTextSha256,
 } from "./document-audit-binding.ts";
 import { qualityAuditOutputSchema } from "./document-output-contracts.ts";
+import { EXPLAIN_OUTPUT_SCHEMA } from "./model-output-contracts.ts";
 
 // These fixtures model the existing SQL write/read contracts. The receipt
 // field is read reflectively until the tests-first production type is added.
@@ -679,6 +680,46 @@ Deno.test("malformed completed structured output cannot publish audit evidence o
   });
 });
 
+for (const duplicate of [false, true]) {
+  Deno.test("original uniqueness constraints apply to fresh and replayed responses; duplicate=" + duplicate, async () => {
+    const explanation = {
+      title: "Synthetic plan", plain_english: "The date is undecided.",
+      why_it_matters: duplicate ? ["Confirm date", "Confirm date"] : ["Confirm date"],
+      what_to_watch: [], missing_or_risky: [], suggested_next_step: null,
+    };
+    const fixture = auditReceiptFixture({ text: JSON.stringify(explanation) });
+    const request = { ...fixture.request, outputSchema: EXPLAIN_OUTPUT_SCHEMA };
+    await withAuditReceiptFixture(fixture, async () => {
+      if (duplicate) {
+        await assertRejects(() => fixture.invoke(request), OpenAIAdapterError, "OPENAI_INVALID_STRUCTURED_OUTPUT");
+        await assertRejects(() => fixture.invoke(request), OpenAIAdapterError, "OPENAI_INVALID_STRUCTURED_OUTPUT");
+        assertEquals(fixture.retainedWrite?.p_attempt_status, "failed");
+      } else {
+        assertEquals((await fixture.invoke(request)).structured, explanation);
+        assertEquals((await fixture.invoke(request)).structured, explanation);
+        assertEquals(fixture.retainedWrite?.p_attempt_status, "succeeded");
+      }
+      assertEquals(fixture.providerBodies.length, 1);
+      assert(!JSON.stringify(fixture.providerBodies[0]).includes('"uniqueItems":'));
+    });
+  });
+}
+
+Deno.test("a pending ordinary request retains its original uniqueness constraints", async () => {
+  const schema = structuredClone(EXPLAIN_OUTPUT_SCHEMA);
+  const fixture = auditReceiptFixture({ text: JSON.stringify({ why_it_matters: ["same", "same"] }) });
+  fixture.beforeRead = () => {
+    const properties = schema.schema.properties as Record<string, Record<string, unknown>>;
+    properties.why_it_matters.uniqueItems = false;
+  };
+  await withAuditReceiptFixture(fixture, async () => {
+    await assertRejects(() => fixture.invoke({ ...fixture.request, requireLegacyCheckpointReceipt: false, outputSchema: schema }),
+      OpenAIAdapterError, "OPENAI_INVALID_STRUCTURED_OUTPUT");
+    assertEquals(fixture.providerBodies.length, 1);
+    assertEquals(fixture.retainedWrite?.p_attempt_status, "failed");
+  });
+});
+
 Deno.test("ordinary legacy and captured success omit internal checkpoint receipt by default", async () => {
   const fixture = auditReceiptFixture();
   await withAuditReceiptFixture(fixture, async () => {
@@ -1095,6 +1136,20 @@ Deno.test("captured machine output uses strict Structured Outputs and store fals
     !("metadata" in body),
     "document content must not be copied into metadata",
   );
+});
+
+Deno.test("OpenAI transport omits unsupported uniqueItems without changing the canonical schema", () => {
+  const original = structuredClone(EXPLAIN_OUTPUT_SCHEMA);
+  const body = buildOpenAIRequestBody({
+    task: "explain",
+    systemPrompt: "Explain synthetic facts only.",
+    messages: [{ role: "user", content: "The date is undecided." }],
+    outputSchema: EXPLAIN_OUTPUT_SCHEMA,
+  });
+  const wire = body.text as { format: { schema: { properties: Record<string, Record<string, unknown>> } } };
+  assertEquals("uniqueItems" in wire.format.schema.properties.why_it_matters, false);
+  assertEquals(wire.format.schema.properties.why_it_matters.maxItems, 16);
+  assertEquals(EXPLAIN_OUTPUT_SCHEMA, original);
 });
 
 Deno.test("web search is available only on the approved research route", () => {
