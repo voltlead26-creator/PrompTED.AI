@@ -733,11 +733,17 @@ function isNearCopyOfHint(value: string, hint?: string): boolean {
   const writtenWords = new Set(
     written.split(" ").filter((word) => word.length > 4),
   );
-  const sourceWords = source.split(" ").filter((word) => word.length > 4);
-  if (writtenWords.size === 0 || sourceWords.length === 0) return false;
-  const overlap = sourceWords.filter((word) => writtenWords.has(word)).length /
-    sourceWords.length;
-  return overlap >= 0.72 && value.trim().length < 320;
+  const sourceWords = new Set(
+    source.split(" ").filter((word) => word.length > 4),
+  );
+  if (writtenWords.size === 0 || sourceWords.size === 0) return false;
+  const sharedWords = [...sourceWords].filter((word) => writtenWords.has(word)).length;
+  // A short factual report naturally uses its hint's topic words (injury,
+  // damage, witnesses). Calling that a copy from hint coverage alone caused
+  // audited facts to be rewritten and lost. Require the wording itself to be
+  // predominantly copied too; grounding and quality still assess its claims.
+  return sharedWords / sourceWords.size >= 0.72 &&
+    sharedWords / writtenWords.size >= 0.72 && value.trim().length < 320;
 }
 
 function isWeakOrInstructionalContent(
@@ -826,6 +832,8 @@ Never manufacture personal facts, past events, fixed dates, exact figures, crede
 Return strict JSON with: user_goal, primary_outcome, audience, author_perspective, tone, required_content, prohibited_content, known_facts, safe_assumptions, missing_critical_information, section_readiness, confidence.
 
 When a resolved Enhanced DIP information contract is supplied, every missing required fact MUST be identified by its exact information_key from that contract. Never invent a key and never substitute a prose label where a key is available.
+
+Complete section_readiness from the contract before summarising missing_critical_information. Every exact canonical missing fact named in that summary must also appear in its owning section's missing_information_keys, with ready=false. Do not omit one missing contact field merely because other contact fields are already listed. When the same information_key belongs to multiple sections, qualify the summary reference as section_key.information_key. Check these lists for contradictions before returning; do not invent extra information keys for repeated history or details outside the supplied contract.
 
 section_readiness must contain one entry for every supplied section: {"key":"section_key","ready":true|false,"missing_information":["plain-language missing fact"],"missing_information_keys":["exact_contract_information_key"]}. If the section is ready, both missing arrays are empty.`,
     messages: [{ role: "user", content: context }],

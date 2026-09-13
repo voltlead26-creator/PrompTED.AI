@@ -131,6 +131,7 @@
     "save_own_manual_plan_v1": "jsonb",
     "get_own_manual_plan_v1": "text, uuid",
     "list_own_manual_plans_v1": "integer, integer",
+    "library_manual_plan_routing_v1": "public.outcomes",
     "list_own_workspace_uploads_v1": "timestamp with time zone, uuid",
     "get_effective_product_access_v1": "uuid",
     "commit_guest_workspace_import": "text, uuid, uuid, text, text, jsonb, uuid, text, jsonb",
@@ -319,7 +320,8 @@
       "20260911130803_effective_owner_product_access",
       "20260911174506_business_matches_premium_allowance",
       "20260912070100_business_fifty_document_allowance",
-      "20260913094000_manual_plan_persistence"
+      "20260913094000_manual_plan_persistence",
+      "20260914052500_library_manual_plan_routing"
     ],
     "requiredRpcs": [
       "get_latest_captured_document_operation",
@@ -331,6 +333,7 @@
       "save_own_manual_plan_v1",
       "get_own_manual_plan_v1",
       "list_own_manual_plans_v1",
+      "library_manual_plan_routing_v1",
       "list_own_workspace_uploads_v1",
       "get_effective_product_access_v1",
       "commit_guest_workspace_import",

@@ -14,7 +14,10 @@ const { chromium, firefox, webkit, expect } = await import('@playwright/test');
 const webRequire = createRequire(join(root, 'apps/web/package.json'));
 const viteRequire = createRequire(webRequire.resolve('vitest/package.json'));
 const { build } = await import(pathToFileURL(viteRequire.resolve('vite')).href);
-const evidence = join(root, process.env.CI ? 'docs/evidence/frontend-library-20260911/browser' : '.local/verification/frontend-library-20260911/browser');
+const evidence = process.env.PROMPTED_LIBRARY_EVIDENCE_DIR
+  ? resolve(process.env.PROMPTED_LIBRARY_EVIDENCE_DIR)
+  : join(root, process.env.CI ? 'docs/evidence/frontend-library-20260911/browser' : '.local/verification/frontend-library-20260911/browser');
+if (process.env.PROMPTED_LIBRARY_EVIDENCE_DIR) assert.ok(!existsSync(evidence), 'Explicit evidence directory must be new');
 mkdirSync(evidence, { recursive: true });
 const paths = ['apps/web/src/components/atoms/Icon.tsx', 'apps/web/src/hooks/useLibrary.ts', 'apps/web/src/components/organisms/LibraryList.tsx',
   'apps/web/src/components/organisms/LibraryList.module.css', 'apps/web/src/lib/api/outcomes.ts'];
@@ -26,7 +29,7 @@ const id = n => `11111111-1111-4111-8111-${String(n).padStart(12, '0')}`;
 let rows, failRead = false, failSave = false, delayRead = false, browser, server, passed = false;
 const reset = () => {
   rows = Array.from({ length: 12 }, (_, i) => ({ id: id(i + 1), user_id: owner, situation_text: `Document ${i + 1}`,
-    status: 'draft', is_saved: i === 1, updated_at: '2026-09-11T00:00:00Z',
+    status: 'draft', is_saved: i === 1, updated_at: '2026-09-11T00:00:00Z', recommendation_payload: null,
     documents: i === 0 ? [1, 2].map(n => ({ id: `22222222-2222-4222-8222-${String(n).padStart(12, '0')}`,
       user_id: owner, outcome_id: id(1), title: n === 1 ? 'Office onboarding plan' : 'LongDocumentName'.repeat(15),
       status: 'draft', is_template: true })) : [] }));
@@ -52,7 +55,11 @@ try {
         assert.equal(url.searchParams.get('user_id'), `eq.${owner}`);
         assert.equal(url.searchParams.get('order'), 'updated_at.desc,id.desc');
         assert.equal(url.searchParams.get('limit'), '10');
-        assert.doesNotMatch(url.searchParams.get('select'), /recommendation_payload|content|version_history/);
+        const relation = url.searchParams.has('documents.is_template') ? 'documents!inner' : 'documents';
+        assert.equal(url.searchParams.get('select'),
+          'id,user_id,situation_text,status,is_saved,updated_at,recommendation_payload:library_manual_plan_routing_v1,' +
+          `documents:${relation}(id,user_id,outcome_id,title,status,is_template)`);
+        assert.doesNotMatch(url.searchParams.get('select'), /content|version_history/);
         if (failRead) { json(400, { message: 'Synthetic read failure' }); return; }
         let data = rows;
         if (url.searchParams.get('is_saved') === 'eq.true') data = data.filter(row => row.is_saved);

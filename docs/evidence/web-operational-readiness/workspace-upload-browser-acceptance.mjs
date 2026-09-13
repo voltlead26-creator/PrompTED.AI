@@ -247,6 +247,33 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
     const manualRead = await request('/rest/v1/rpc/get_own_manual_plan_v1', { token: roleSessions[0],
       body: { p_plan_id: manualCommand.plan_id, p_outcome_id: null } });
     assert.deepEqual(manualRead.plan, winner.snapshot);
+    const librarySourceSql = `select to_jsonb(o) from public.outcomes o where o.id=${literal(manualRead.plan.outcome_id)}::uuid;`;
+    const librarySourceBefore = JSON.parse(sql('library-projection-source-before', librarySourceSql));
+    const librarySelection = 'id,user_id,situation_text,status,is_saved,updated_at,' +
+      'recommendation_payload:library_manual_plan_routing_v1,' +
+      'documents:documents(id,user_id,outcome_id,title,status,is_template)';
+    const libraryPath = `/rest/v1/outcomes?${new URLSearchParams({ select: librarySelection,
+      id: `eq.${manualRead.plan.outcome_id}` })}`;
+    const libraryOwn = await request(libraryPath, { method: 'GET', token: roleSessions[0] });
+    assert.equal(libraryOwn.length, 1);
+    assert.deepEqual(libraryOwn[0], {
+      ...Object.fromEntries(['id','user_id','situation_text','status','is_saved','updated_at']
+        .map(key => [key, librarySourceBefore[key]])),
+      recommendation_payload: { manual_plan: { contract_version: 'manual-plan.1', plan_id: manualCommand.plan_id } },
+      documents: [],
+    });
+    assert.ok(Buffer.byteLength(JSON.stringify(libraryOwn[0].recommendation_payload), 'utf8') <= 1024);
+    assert.deepEqual(await request(libraryPath, { method: 'GET', token: roleSessions[1] }), [],
+      'computed selection without an owner filter preserves foreign-owner isolation');
+    const hiddenComputedRpc = await request('/rest/v1/rpc/library_manual_plan_routing_v1', {
+      token: roleSessions[0], body: {}, expectedStatus: 404,
+    });
+    assert.equal(hiddenComputedRpc.code, 'PGRST202', 'unnamed computed field is not a direct RPC');
+    assert.deepEqual(JSON.parse(sql('library-projection-source-after', librarySourceSql)), librarySourceBefore);
+    save('library-computed-projection.json', { passed: true, selection: librarySelection,
+      ownerId: users[0].id, outcomeId: manualRead.plan.outcome_id, rows: libraryOwn,
+      foreignOwnerAbsent: true, sourcePreserved: true, directRpcAbsent: true,
+      scope: 'Real local authenticated PostgREST computed-field discovery, alias, routing metadata and RLS; no hosted proof.' });
     const manualCounts = JSON.parse(sql('manual-concurrent-identity-counts', `select jsonb_build_object(
       'receipts',(select count(*) from private.manual_plan_save_receipts where artifact_id=${literal(winner.snapshot.artifact_id)}::uuid),
       'versions',(select count(*) from public.ted_artifact_versions where artifact_id=${literal(winner.snapshot.artifact_id)}::uuid));`));
@@ -674,6 +701,12 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
       const documentOutcomeIds = [...new Set(reports.filter(report => report.ownerId === user.id)
         .flatMap(report => report.records.map(record => record.outcomeId).filter(Boolean)))].sort();
       assert.equal(documentOutcomeIds.length, 1);
+      const importedProjection = await request(`/rest/v1/outcomes?${new URLSearchParams({
+        select: 'id,recommendation_payload:library_manual_plan_routing_v1', id: `eq.${documentOutcomeIds[0]}`,
+      })}`, { method: 'GET', token: roleSessions[users.indexOf(user)] });
+      assert.deepEqual(importedProjection, [{ id: documentOutcomeIds[0], recommendation_payload: null }],
+        'real imported outcome omits its non-manual recommendation payload');
+      save('library-imported-projection-' + user.id + '.json', { passed: true, rows: importedProjection });
       assert.equal(new Set([...manualOutcomeIds, ...documentOutcomeIds]).size, manualOutcomeIds.length + documentOutcomeIds.length);
       const totals = JSON.parse(sql('new-upload-owner-totals-' + user.id, `select jsonb_build_object(
         'usage',(select count(*) from public.usage_ledger where user_id=${literal(user.id)}::uuid),

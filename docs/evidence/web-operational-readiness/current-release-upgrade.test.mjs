@@ -14,19 +14,19 @@ const manifest = Object.fromEntries(["supabase/migrations/", "supabase/tests/"].
     return [file, createHash("sha256").update(readFileSync(new URL(file, root))).digest("hex")];
   })));
 
-test("current workspace upgrade binds all 93 migrations and all 59 SQL regressions", () => {
+test("current workspace upgrade binds all 94 migrations and all 60 SQL regressions", () => {
   const plan = validateLegacyWorkspaceCoreUpgradePlan(manifest, manifest);
-  assert.equal(plan.versions.length, 93);
-  assert.equal(Object.keys(plan.manifest).length, 152);
+  assert.equal(plan.versions.length, 94);
+  assert.equal(Object.keys(plan.manifest).length, 154);
   assert.equal(Object.keys(plan.prefixManifest).length, 127);
-  assert.equal(Object.keys(plan.additionalHeldSql).length, 21);
+  assert.equal(Object.keys(plan.additionalHeldSql).length, 23);
 });
 
-test("current hosted-ledger rehearsal retains the observed 68 versions and applies 25 exact forward files", () => {
+test("current hosted-ledger rehearsal retains the observed 68 versions and applies 26 exact forward files", () => {
   const plan = validateHostedLedgerUpgradePlan(manifest, manifest);
-  assert.equal(plan.versions.length, 93);
+  assert.equal(plan.versions.length, 94);
   assert.equal(plan.hostedVersions.length, 68);
-  assert.equal(plan.pendingFiles.length, 25);
+  assert.equal(plan.pendingFiles.length, 26);
   assert.deepEqual(plan.manifest, manifest);
 });
 
@@ -48,6 +48,8 @@ test("workspace predecessor holds every current extension file and rejects lost 
 for (const validate of [validateLegacyWorkspaceCoreUpgradePlan, validateHostedLedgerUpgradePlan]) {
   for (const [label, mutate] of [
     ["missing owner regression", value => { delete value["supabase/tests/effective_product_access.test.sql"]; }],
+    ["missing routing regression", value => { delete value["supabase/tests/library_manual_plan_routing.test.sql"]; }],
+    ["changed routing migration", value => { value["supabase/migrations/20260914052500_library_manual_plan_routing.sql"]="a".repeat(64); }],
     ["changed captured migration", value => { value["supabase/migrations/20260911151000_captured_generation_failure_budget.sql"]="a".repeat(64); }],
     ["unknown migration", value => { value["supabase/migrations/20990101000000_unknown.sql"]="a".repeat(64); }],
     ["missing historical migration", value => { delete value["supabase/migrations/20260908160000_legacy_workspace_save_core.sql"]; }],

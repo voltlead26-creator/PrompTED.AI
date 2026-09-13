@@ -47,6 +47,7 @@ type Options = {
   sectionTokenDemand?: number;
   groundingTokenDemand?: number;
   missingInformation?: Record<string, string[]>;
+  missingCriticalInformation?: string[];
   auditBindingResponse?: "missing" | "malformed" | "changed";
   deniedRepair?: { stage: string; code: string; message: string };
   qualityIssuesByRound?: QualityAuditIssue[][];
@@ -288,7 +289,7 @@ async function withPipeline(
           prohibited_content: ["Unsupported allegations"],
           known_facts: [originalWording],
           safe_assumptions: [],
-          missing_critical_information: [],
+          missing_critical_information: options.missingCriticalInformation ?? [],
           section_readiness: input.template.sections.map(({ key }) => ({
             key,
             ready: !options.missingInformation?.[key]?.length,
@@ -1125,6 +1126,18 @@ Deno.test("malformed internal assessment policy rejects before any model or acco
   });
 });
 
+Deno.test("contradictory intent missing facts reject before planning, drafting or audit dispatch", async () => {
+  await withPipeline({ missingInformation: { contact_details: ["full_name"] },
+    missingCriticalInformation: ["email_address: The email address employers should use."],
+    assessmentPolicy }, async fixture => {
+    fixture.input.template = resolveTemplate("resume")!;
+    await assertRejects(fixture.run, Error, "DOCUMENT_INTENT_OUTPUT_INVALID");
+    assertEquals(fixture.stages, ["generate-document.intent"]);
+    assertEquals(fixture.writes, []);
+    assertEquals(fixture.auditedReads, []);
+  });
+});
+
 Deno.test("ordinary pipeline response retains its existing public result shape without audit opt-in", async () => {
   await withPipeline({ initial: originalWording }, async (fixture) => {
     const result = await fixture.run();
@@ -1132,6 +1145,38 @@ Deno.test("ordinary pipeline response retains its existing public result shape w
     assertEquals(fixture.auditedReads, []);
   });
 });
+
+Deno.test("short factual report sharing hint vocabulary does not trigger a destructive cleanup rewrite", async () => {
+  // Recorded writer repair from the incomplete incident acceptance case.
+  const factual = "Confirmed factual sequence\n\nA loose carton fell from a shelf in aisle 3 at Example Warehouse. The event was reported as a near miss. No further sequence details were supplied.\n\nImpact\n\nNo injury or damage was reported.\n\nWitnesses and evidence\n\nWitnesses: Not confirmed.\n\nEvidence or attachments: Not confirmed.";
+  const incident = resolveTemplate("incident-near-miss-report")!;
+  const hint = incident.sections.find(section => section.key === "facts")!.hint;
+  assert(hint);
+  await withPipeline({ initial: factual, replacement: inventedWording,
+    evidenceQuote: "A loose carton fell from a shelf in aisle 3 at Example Warehouse." }, async fixture => {
+    fixture.input.situation = "A loose carton fell from a shelf in aisle 3 at Example Warehouse. No injury or damage was reported.";
+    fixture.input.template.sections[0].hint = hint;
+    const result = await fixture.run();
+    assertEquals(fixture.writes, [factual, siblingWording],
+      "Hint vocabulary alone must not consume a repair or replace an audited factual section");
+    assertEquals(result.sections[0].content, factual);
+    assertEquals(fixture.qualityDrafts.length, 1);
+  });
+});
+
+for (const copied of [
+  "Observed sequence, injury, damage, witnesses and evidence.",
+  "Evidence and witnesses, damage, injury and observed sequence.",
+]) {
+  Deno.test(`copied incident hint still requires actual document wording: ${copied}`, async () => {
+    await withPipeline({ initial: copied, replacement: originalWording }, async fixture => {
+      fixture.input.template.sections[0].hint = "Observed sequence, injury, damage, witnesses and evidence.";
+      const result = await fixture.run();
+      assertEquals(result.sections[0].content, originalWording);
+      assertEquals(fixture.writes.length, 3);
+    });
+  });
+}
 
 Deno.test("residual stripping must audit the stripped wording and still reject invented amounts", async () => {
   await withPipeline({

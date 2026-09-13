@@ -1028,7 +1028,7 @@ test(generationLimitTestName, async ({ page, context }, info) => {
     await route.continue();
   });
   await context.routeWebSocket('**/*', socket => { external.push(new URL(socket.url()).origin); socket.close(); });
-  const alert = page.getByRole('alert');
+  const alert = page.locator('main#main-content').getByRole('alert');
   async function observe(stage: Stage, navigate: () => Promise<unknown>) {
     activeStage = stage;
     const read = (path: string, method: string, key: string) => page.waitForResponse(response => {

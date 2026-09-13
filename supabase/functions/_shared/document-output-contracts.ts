@@ -443,6 +443,35 @@ export function validateIntentBriefOutput(
     };
   });
 
+  const missing_critical_information = boundedStringArray(
+    root.missing_critical_information,
+    code,
+    { max: MAX_LIST_ITEMS, itemMax: MAX_DETAIL_TEXT },
+  );
+  // The global list remains descriptive, not a second missing-fact registry.
+  // Where it explicitly names a canonical key, it must agree with the section
+  // roster consumed by drafting and clarification. Never infer aliases from
+  // prose, create tokens, or repair a contradictory retained provider result.
+  const canonicalFacts = section_readiness.flatMap((section) =>
+    (allowedInformationKeys[section.key] ?? []).map((informationKey) => ({
+      section,
+      informationKey,
+      qualifiedKey: `${section.key}.${informationKey}`,
+    }))
+  );
+  for (const missing of missing_critical_information) {
+    const reference = missing.split(":", 1)[0].trim();
+    const matches = canonicalFacts.filter((fact) =>
+      reference === fact.qualifiedKey || reference === fact.informationKey
+    );
+    if (matches.length === 0) continue; // Historical free prose has no key identity.
+    if (matches.length !== 1) invalid(code);
+    const { section, informationKey } = matches[0];
+    if (section.ready || !section.missing_information_keys.includes(informationKey)) {
+      invalid(code);
+    }
+  }
+
   return {
     user_goal: boundedString(root.user_goal, code, {
       min: 1,
@@ -481,11 +510,7 @@ export function validateIntentBriefOutput(
       max: MAX_LIST_ITEMS,
       itemMax: MAX_DETAIL_TEXT,
     }),
-    missing_critical_information: boundedStringArray(
-      root.missing_critical_information,
-      code,
-      { max: MAX_LIST_ITEMS, itemMax: MAX_DETAIL_TEXT },
-    ),
+    missing_critical_information,
     section_readiness,
     confidence: root.confidence,
   };

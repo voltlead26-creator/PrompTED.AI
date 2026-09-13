@@ -291,7 +291,10 @@ describe("library request lifetime", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(from).toHaveBeenCalledWith("outcomes");
     expect(query.select.mock.calls[0]?.[0]).toContain("documents:documents!inner(");
-    expect(query.select.mock.calls[0]?.[0]).toContain("recommendation_payload");
+    expect(query.select.mock.calls[0]?.[0]).toBe(
+      "id, user_id, situation_text, status, is_saved, updated_at, recommendation_payload:library_manual_plan_routing_v1, " +
+        "documents:documents!inner(id, user_id, outcome_id, title, status, is_template)",
+    );
     expect(query.select.mock.calls[0]?.[0]).not.toMatch(/content|version_history/);
     expect(query.eq.mock.calls).toEqual([
       ["user_id", auth.id],
@@ -306,6 +309,18 @@ describe("library request lifetime", () => {
 });
 
 describe("manual plans in My Work", () => {
+  it.each([undefined, "manual_plan", [], ["manual_plan"], {}, { body: "unexpected" }])(
+    "rejects an absent or malformed computed projection: %j", async (recommendation_payload) => {
+      const data: Record<string, unknown> = { ...manualRow(1), recommendation_payload };
+      if (recommendation_payload === undefined) delete data.recommendation_payload;
+      read.mockResolvedValue({ data: [data], error: null });
+      const { result } = renderHook(() => useLoadedLibrary("recents"));
+      await waitFor(() => expect(result.current.error).not.toBeNull());
+      expect(result.current.items).toEqual([]);
+      expect(readPlan).not.toHaveBeenCalled();
+    },
+  );
+
   it("resolves an immutable marker by outcome under the page's exact owner lease", async () => {
     const plan = manualSnapshot(1);
     read.mockResolvedValue({ data: [manualRow(1), row(2)], error: null });

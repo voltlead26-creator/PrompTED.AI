@@ -1424,6 +1424,7 @@ export function validateContract(state) {
     "date",
     "integer",
     "jsonb",
+    "public.outcomes",
     "text",
     "text[]",
     "timestamp with time zone",

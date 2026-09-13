@@ -107,7 +107,8 @@ function parseItems(value: unknown, scope: Scope): LibraryCandidate[] {
     });
     if (scope.tab === "templates" && documents.length === 0)
       throw new Error("LIBRARY_RESPONSE_INVALID");
-    if (record(row.recommendation_payload) && Object.hasOwn(row.recommendation_payload, "manual_plan")) {
+    if (!Object.hasOwn(row, "recommendation_payload")) throw new Error("LIBRARY_RESPONSE_INVALID");
+    if (row.recommendation_payload !== null) {
       const marker = parseManualPlanRoutingMetadata(row.recommendation_payload);
       if (!marker || documents.length > 0 || scope.tab === "templates" || manualPlanIds.has(marker.plan_id))
         throw new Error("LIBRARY_RESPONSE_INVALID");
@@ -242,7 +243,7 @@ export function useLibrary(tab: LibraryTab) {
           let query = supabase
             .from("outcomes")
             .select(
-              "id, user_id, situation_text, status, is_saved, updated_at, recommendation_payload, documents:" +
+              "id, user_id, situation_text, status, is_saved, updated_at, recommendation_payload:library_manual_plan_routing_v1, documents:" +
                 relation +
                 "(id, user_id, outcome_id, title, status, is_template)",
             )

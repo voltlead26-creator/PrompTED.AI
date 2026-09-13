@@ -9,6 +9,8 @@ import assert from "node:assert/strict";
 // and db-20260911160044438-88b41118 (recorded hosted); 54 files / 2,761 assertions.
 // These pins identify the reviewed input; every later run must execute again.
 export const reviewedReleaseSqlExtension = Object.freeze({
+  "supabase/migrations/20260914052500_library_manual_plan_routing.sql": "15d7dfecdd716ac2b03283f14f752746198f06914cbb691be23bcfc9cd4a40f7",
+  "supabase/tests/library_manual_plan_routing.test.sql": "de0380ea7de76412a8d6ed448308f56005be02bcedeed44e5f3c4c5460ca3265",
   "supabase/migrations/20260914005000_business_checkout_reservations.sql": "ddebce26117bf13ef95f63ba481b0cdd1b3b6f904b659be52c7ffb70b8bf3173",
   "supabase/tests/business_checkout_reservations.test.sql": "641abce338a76fa0d9296549f803876d303cca8fb5d8e9c37501acb353e22420",
   "supabase/migrations/20260913094000_manual_plan_persistence.sql": "c430f0e1a5525ed87f2af43b75624042e3835a2430ab5182d90a24d8553508ea",

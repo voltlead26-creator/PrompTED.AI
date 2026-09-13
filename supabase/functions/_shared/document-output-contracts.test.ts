@@ -196,6 +196,56 @@ Deno.test("intent validation accepts one exact ordered readiness entry per secti
   );
 });
 
+for (const reference of ["email_address", "email_address: Email for employers.", "summary.email_address: Email for employers."]) {
+  Deno.test(`intent rejects explicitly missing canonical fact omitted from readiness: ${reference}`, () => {
+    const input = intentFixture();
+    input.missing_critical_information = [reference];
+    const before = structuredClone(input);
+    assertThrows(() => validateIntentBriefOutput(input, ["summary", "evidence"],
+      { summary: ["recipient_name", "email_address"], evidence: [] }),
+      Error, "DOCUMENT_INTENT_OUTPUT_INVALID");
+    assertEquals(input, before, "Validation must not invent or register a missing token");
+  });
+}
+
+Deno.test("intent rejects a ready section that contradicts its explicitly named missing fact", () => {
+  const input = intentFixture();
+  input.missing_critical_information = ["evidence.email_address: Email is missing."];
+  assertThrows(() => validateIntentBriefOutput(input, ["summary", "evidence"],
+    { summary: ["recipient_name"], evidence: ["email_address"] }),
+    Error, "DOCUMENT_INTENT_OUTPUT_INVALID");
+});
+
+Deno.test("intent accepts consistent exact missing references without requiring the global list to duplicate readiness", () => {
+  const input = intentFixture();
+  input.missing_critical_information = ["recipient_name", "summary.recipient_name: Name missing."];
+  const allowed = { summary: ["recipient_name"], evidence: [] };
+  assertEquals(validateIntentBriefOutput(input, ["summary", "evidence"], allowed), input);
+  input.missing_critical_information = [];
+  assertEquals(validateIntentBriefOutput(input, ["summary", "evidence"], allowed), input);
+});
+
+Deno.test("intent requires qualification when an explicitly named missing key has multiple owners", () => {
+  const input = intentFixture();
+  const allowed = { summary: ["recipient_name"], evidence: ["recipient_name"] };
+  input.missing_critical_information = ["recipient_name: Name missing."];
+  assertThrows(() => validateIntentBriefOutput(input, ["summary", "evidence"], allowed),
+    Error, "DOCUMENT_INTENT_OUTPUT_INVALID");
+  input.missing_critical_information = ["summary.recipient_name: Name missing."];
+  assertEquals(validateIntentBriefOutput(input, ["summary", "evidence"], allowed), input);
+  input.missing_critical_information = ["evidence.recipient_name: Name missing."];
+  assertThrows(() => validateIntentBriefOutput(input, ["summary", "evidence"], allowed),
+    Error, "DOCUMENT_INTENT_OUTPUT_INVALID");
+});
+
+Deno.test("intent retains historical free prose without fuzzy mapping or new keys", () => {
+  const input = intentFixture();
+  input.missing_critical_information = ["Email address is unknown.", "Earlier employment history: not supplied.",
+    "EMAIL_ADDRESS: Case does not identify the canonical key.", "email_address_suffix: Different key."];
+  assertEquals(validateIntentBriefOutput(input, ["summary", "evidence"],
+    { summary: ["recipient_name", "email_address"], evidence: [] }), input);
+});
+
 Deno.test("planner validation rejects partial, duplicate, out-of-order, and extra-key output", () => {
   const valid = {
     section_context: [{

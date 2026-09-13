@@ -232,6 +232,54 @@ test("requires one exact canonical argument signature for every declared RPC", (
   assert.match(validateContract(drifted).join("\n"), /invalid canonical argument-type contract/i);
 });
 
+test("accepts the exact public.outcomes argument for declared web routing metadata", () => {
+  const state = baseState();
+  state.manifest.webRequirements = { requiredRpcs: ["library_manual_plan_routing_v1"] };
+  state.manifest.requiredRpcSignatures.library_manual_plan_routing_v1 = "public.outcomes";
+
+  assert.deepEqual(validateContract(state), []);
+});
+
+for (const [name, signature] of [
+  ["an unqualified outcomes type", "outcomes"],
+  ["a different public composite", "public.profiles"],
+  ["a different schema", "private.outcomes"],
+  ["an outcomes array", "public.outcomes[]"],
+  ["different identifier case", "public.Outcomes"],
+  ["quoted identifiers", '"public"."outcomes"'],
+  ["leading whitespace", " public.outcomes"],
+  ["trailing whitespace", "public.outcomes "],
+  ["a trailing newline", "public.outcomes\n"],
+  ["a noncanonical separator", "public.outcomes,uuid"],
+  ["an unsupported additional argument", "public.outcomes, number"],
+  ["a null signature", null],
+  ["an array signature", ["public.outcomes"]],
+]) {
+  test(`rejects ${name} in the web routing argument contract`, () => {
+    const state = baseState();
+    state.manifest.webRequirements = { requiredRpcs: ["library_manual_plan_routing_v1"] };
+    state.manifest.requiredRpcSignatures.library_manual_plan_routing_v1 = signature;
+
+    assert.deepEqual(validateContract(state), [
+      'RPC "library_manual_plan_routing_v1" has an invalid canonical argument-type contract.',
+    ]);
+  });
+}
+
+test("keeps missing and undeclared web routing signatures blocked", () => {
+  const missing = baseState();
+  missing.manifest.webRequirements = { requiredRpcs: ["library_manual_plan_routing_v1"] };
+  assert.deepEqual(validateContract(missing), [
+    'RPC "library_manual_plan_routing_v1" is missing its exact argument-type contract.',
+  ]);
+
+  const undeclared = baseState();
+  undeclared.manifest.requiredRpcSignatures.library_manual_plan_routing_v1 = "public.outcomes";
+  assert.deepEqual(validateContract(undeclared), [
+    'RPC signature contract names undeclared RPC "library_manual_plan_routing_v1".',
+  ]);
+});
+
 test("requires the versioned role-aware live schema attestation seam", () => {
   const state = baseState();
   state.schemaAttestationMigrationExists = false;
