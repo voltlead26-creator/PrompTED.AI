@@ -36,7 +36,7 @@ import type { ProofreadPanelHandle } from "@/components/organisms/ProofreadPanel
 import { DraftingIndicator } from "@/components/organisms/DraftingIndicator";
 import { WorkflowTruth } from "@/components/organisms/WorkflowTruth";
 import { useAuth } from "@/components/providers";
-import { AUTH_SECTION_ID, PAYWALL_SECTION_ID } from "@/hooks/useDocument";
+import { AUTH_SECTION_ID, DOCUMENT_LIMIT_SECTION_ID, PAYWALL_SECTION_ID } from "@/hooks/useDocument";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useExport } from "@/hooks/useExport";
 import { useDeferredTour } from "@/hooks/useDeferredTour";
@@ -645,6 +645,9 @@ function WorkspaceLoaded({
   const paywallIssue = workspace.generationIssues.find(
     (issue) => issue.sectionId === PAYWALL_SECTION_ID,
   );
+  const documentLimitIssue = workspace.generationIssues.find(
+    (issue) => issue.sectionId === DOCUMENT_LIMIT_SECTION_ID,
+  );
   const activeIssue = workspace.generationIssues.find(
     (issue) => issue.sectionId === workspace.activeSectionId,
   );
@@ -728,7 +731,13 @@ function WorkspaceLoaded({
               href={signInHref(`/outcomes/${outcomeId}`)}
             />
           )}
-          {paywallIssue && (
+          {documentLimitIssue && (
+            <ContextIssue
+              title={documentLimitIssue.sectionName}
+              message={`${documentLimitIssue.reason} You can still read, edit and export this document.`}
+            />
+          )}
+          {paywallIssue && !documentLimitIssue && (
             <ContextIssue
               title="Document credits used"
               message="You can still read, edit and export this document. Update your plan only when you need another document."

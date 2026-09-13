@@ -20,7 +20,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { assertAcceptanceSourceIdentity } from "./acceptance-source-identity.mjs";
+import { createDenoExecutionBoundary } from "../../../scripts/deno-execution-boundary.mjs";
+import { assertAcceptanceSourceIdentity, snapshotAcceptanceSources } from "./acceptance-source-identity.mjs";
 import { hostedSchemaCatalogSql, observedSchemaGrantFixture } from "./hosted-schema-catalog.mjs";
 import { resolveAcceptanceRuntime } from "./acceptance-runtime.mjs";
 import { exerciseProfileReads } from "./profile-read-acceptance.mjs";
@@ -30,6 +31,7 @@ import { selectUploadSourceSqlScope } from "./upload-source-sql-scope.mjs";
 import { exerciseWorkspaceReads, validateWorkspaceReadUpgradePlan } from "./workspace-upload-read-acceptance.mjs";
 import { exerciseWorkspaceBrowser } from "./workspace-browser-acceptance.mjs";
 import { exerciseNewWorkspaceUploads } from "./workspace-upload-browser-acceptance.mjs";
+import { exerciseBusinessCheckoutReservations } from "./business-checkout-reservation-acceptance.mjs";
 import { assertHostedLedgerPhase, exerciseHostedLedgerUpgrade, observedOwnerRpcGrantFixture, validateHostedLedgerUpgradePlan } from "./hosted-ledger-upgrade-acceptance.mjs";
 import { exerciseLegacyPolicyUpgrade, validateLegacyPolicyUpgradePlan } from "./legacy-policy-upgrade-acceptance.mjs";
 import { assertLegacyWorkspaceCorePhase, exerciseLegacyWorkspaceCoreUpgrade,
@@ -91,6 +93,8 @@ const uploadSourceAcceptance = process.argv.includes("--upload-source-acceptance
 const uploadSourceV3Acceptance = process.argv.includes("--upload-source-v3-acceptance");
 const uploadRtfAliasAcceptance = process.argv.includes("--upload-rtf-alias-acceptance");
 const v3Inputs = [
+  ["../../../scripts/deno-execution-boundary.mjs", "deno-execution-boundary.mjs"],
+  ["../../../scripts/deno-execution-boundary.test.mjs", "deno-execution-boundary.test.mjs"],
   ["./paid-plan-fixture-revisions.mjs", "paid-plan-fixture-revisions.mjs"],
   ["./paid-plan-fixture-revisions.test.mjs", "paid-plan-fixture-revisions.test.mjs"],
   ["./reviewed-release-sql-extension.mjs", "reviewed-release-sql-extension.mjs"],
@@ -118,6 +122,7 @@ const v3Inputs = [
   ["./upload-run-disposition.mjs", "upload-run-disposition.mjs"],
   ["./upload-run-disposition.test.mjs", "upload-run-disposition.test.mjs"],
   ["./workspace-upload-browser-acceptance.mjs", "workspace-upload-browser-acceptance.mjs"],
+  ["./business-checkout-reservation-acceptance.mjs", "business-checkout-reservation-acceptance.mjs"],
   ["./workspace-upload-transport.mjs", "workspace-upload-transport.mjs"],
   ["./workspace-upload-transport.test.mjs", "workspace-upload-transport.test.mjs"],
   ["./workspace-upload-deno.ts", "workspace-upload-deno.ts"],
@@ -240,11 +245,11 @@ function redact(text) {
     )
     .join("\n");
 }
-function command(label, executable, args, timeout = 30_000) {
+function command(label, executable, args, timeout = 30_000, execution = {}) {
   const start = new Date().toISOString();
   const result = spawnSync(executable, args, {
-    cwd: root,
-    env: localEnv,
+    cwd: execution.cwd ?? root,
+    env: execution.env ?? localEnv,
     encoding: "utf8",
     timeout,
     killSignal: "SIGKILL",
@@ -321,6 +326,8 @@ function attestPublishedPorts() {
   save("published-ports.json", bindings);
 }
 function sourceIdentity(label) {
+  const included = (file) =>
+    !file.startsWith("docs/") && !file.startsWith(".agents/") && file !== "skills-lock.json";
   const files = command(`${label}-files`, "git", [
     "ls-files",
     "--cached",
@@ -330,16 +337,12 @@ function sourceIdentity(label) {
   ])
     .split("\0")
     .filter(Boolean)
-    .filter(
-      (file) =>
-        !file.startsWith("docs/") && !file.startsWith(".agents/") && file !== "skills-lock.json",
-    );
-  return Object.fromEntries(
-    files.sort().map((file) => {
-      assert(lstatSync(join(root, file)).isFile(), `Unexpected non-file source: ${file}`);
-      return [file, sha(readFileSync(join(root, file)))];
-    }),
-  );
+    .filter(included);
+  const deletedFiles = command(`${label}-deleted`, "git", ["ls-files", "--deleted", "-z"])
+    .split("\0")
+    .filter(Boolean)
+    .filter(included);
+  return snapshotAcceptanceSources({ root, files, deletedFiles });
 }
 function copySql(relativeDir) {
   const from = join(root, relativeDir);
@@ -551,7 +554,7 @@ try {
   }
   command("tracked-before", "git", ["diff", "--binary", "HEAD"]);
   command("status-before", "git", ["status", "--porcelain"]);
-  command("source-test", node, ["--test", "scripts/database-test-isolation.test.mjs",
+  command("source-test", node, ["--test", "scripts/deno-execution-boundary.test.mjs", "scripts/database-test-isolation.test.mjs",
     "docs/evidence/web-operational-readiness/acceptance-source-identity.test.mjs",
     "docs/evidence/web-operational-readiness/acceptance-runtime.test.mjs",
     "docs/evidence/web-operational-readiness/legacy-policy-upgrade-acceptance.test.mjs",
@@ -576,7 +579,17 @@ try {
     command("upload-browser-types", "pnpm", ["exec", "tsc", "--project", "tests/e2e/tsconfig.json"]);
     command("upload-browser-transport-tests", node, ["--test", "docs/evidence/web-operational-readiness/workspace-upload-transport.test.mjs", "docs/evidence/web-operational-readiness/upload-run-disposition.test.mjs"]);
     command("profile-sdk-retry-tests", node, ["--test", "docs/evidence/web-operational-readiness/profile-sdk-retry.test.mjs"]);
-    command("upload-browser-deno-types", "deno", ["check", "--deny-import", "--frozen", "docs/evidence/web-operational-readiness/workspace-upload-deno.ts", "supabase/functions/ingest-upload/index.ts", "supabase/functions/extract-upload/index.ts"]);
+    const denoBoundary = createDenoExecutionBoundary(root, localEnv);
+    try {
+      // Deno 2.9.5 check has no --cached-only flag. test --no-run typechecks
+      // these explicit entrypoints without executing any module or fetching.
+      command("upload-browser-deno-types", "deno", ["test", ...denoBoundary.flags, "--no-run",
+        ...["docs/evidence/web-operational-readiness/workspace-upload-deno.ts",
+          "supabase/functions/ingest-upload/index.ts", "supabase/functions/extract-upload/index.ts"].map(path => join(root, path))],
+        30_000, denoBoundary);
+    } finally {
+      denoBoundary.close();
+    }
   }
   if (workspaceBrowserAcceptance) command("workspace-browser-types", "pnpm", ["exec", "tsc", "--project", "tests/e2e/tsconfig.json"]);
   if (workspaceBrowserAcceptance) command("workspace-browser-fixture-guards", node, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--test", "tests/e2e/workspace-fixtures.test.ts"]);
@@ -663,7 +676,7 @@ try {
     let database = attestDatabase("database-after-reset");
     assertDisposableReset(initialDatabase, database);
     supabase("fresh-tests", ["test", "db", "--local"], 10 * 60_000);
-    if (hostedLedgerUpgradeAcceptance || legacyWorkspaceCoreUpgradeAcceptance) {
+    if (hostedLedgerUpgradeAcceptance || legacyWorkspaceCoreUpgradeAcceptance || workspaceUploadBrowserAcceptance) {
       supabase("fresh-schema-lint", ["db", "lint", "--local", "--schema", "public,private",
         "--level", "warning", "--fail-on", "error"], 10 * 60_000);
     }
@@ -1066,6 +1079,29 @@ try {
     }
     if (workspaceUploadBrowserAcceptance) {
       await exerciseNewWorkspaceUploads({ root, project, workdir, env: localEnv, evidence, checkTarget, save,
+        sqlSessionCommand() {
+          checkTarget();
+          return { executable: dockerExecutable, args: ["--host", dockerHost, "exec", "-i",
+            "-e", "PGOPTIONS=-c statement_timeout=15000 -c idle_in_transaction_session_timeout=15000",
+            database.container, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1",
+            "-U", "postgres", "-d", "postgres", "-At", "-f", "-"] };
+        },
+        sql(label, query) {
+          checkTarget();
+          return command(label, dockerExecutable, ["--host", dockerHost, "exec", database.container,
+            "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-At", "-c", query]);
+        },
+      });
+      // Keep the original browser fixtures and proofs intact. The dormant
+      // checkout boundary uses separate owners after those proofs complete.
+      await exerciseBusinessCheckoutReservations({ root, project, workdir, env: localEnv, evidence, checkTarget, save,
+        sqlSessionCommand() {
+          checkTarget();
+          return { executable: dockerExecutable, args: ["--host", dockerHost, "exec", "-i",
+            "-e", "PGOPTIONS=-c statement_timeout=15000 -c idle_in_transaction_session_timeout=15000",
+            database.container, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1",
+            "-U", "postgres", "-d", "postgres", "-At", "-f", "-"] };
+        },
         sql(label, query) {
           checkTarget();
           return command(label, dockerExecutable, ["--host", dockerHost, "exec", database.container,
@@ -1178,9 +1214,9 @@ try {
     scope: preflightOnly
       ? "Preflight only; no database/service mutation or web gate"
       : hostedLedgerUpgradeAcceptance
-        ? "All-current fresh SQL and observed68-to81 migration-ledger rehearsal on an identified disposable database; two authenticated owners, historical workspace receipt replay, exact row preservation, owned reads and original DOCX bytes. Reviewed repository migration bodies, not a hosted schema clone. No live provider, hosted mutation, browser, format-preserving edit or generated export proof."
+        ? "All-current fresh SQL and observed migration-ledger upgrade through the current reviewed release on an identified disposable database; exact baseline and final version identities are recorded in hostedLedgerUpgradePlan. Two authenticated owners, historical workspace receipt replay, exact row preservation, owned reads and original DOCX bytes. Reviewed repository migration bodies, not a hosted schema clone. No live provider, hosted mutation, browser, format-preserving edit or generated export proof."
       : legacyWorkspaceCoreUpgradeAcceptance
-        ? "All-current fresh SQL and exact150000-to160000 save-core extraction on an identified disposable database; real local Auth/PostgREST, unchanged public function identity/permissions, historical receipts and independent workspace reads. No generation finalizer, live provider, browser, approval/export or hosted proof."
+        ? "All-current fresh SQL and historical workspace save-core upgrade through the current reviewed release on an identified disposable database; exact predecessor and final version identities are recorded in legacyWorkspaceCoreUpgradePlan. Real local Auth/PostgREST, unchanged public function identity/permissions, historical receipts and independent workspace reads. No generation finalizer, live provider, browser, approval/export or hosted proof."
       : legacyAuditUpgradeAcceptance
         ? "All-current fresh SQL and exact140000-to150000 audit-binding upgrade on an identified disposable database; real local Auth/PostgREST, historical literal replay and independent old-row preservation. No live provider, browser, final workspace attachment, approval/export or hosted proof."
       : catalogueUpgradeAcceptance

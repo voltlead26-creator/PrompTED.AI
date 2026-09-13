@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { updateOutcome } from "@/lib/api/outcomes";
-import type { Document, Outcome } from "@prompted/shared";
+import { readManualPlan } from "@/lib/api/manual-plans";
+import { parseManualPlanRoutingMetadata, type Document, type ManualPlanSnapshot, type Outcome } from "@prompted/shared";
 import { useAuth } from "@/components/providers";
 import {
   captureOwnerDispatch,
@@ -24,6 +25,11 @@ export type LibraryDocument = Pick<
 export interface LibraryItem {
   outcome: LibraryOutcome;
   documents: LibraryDocument[];
+  manualPlan?: Pick<ManualPlanSnapshot,
+    "owner_id" | "plan_id" | "outcome_id" | "artifact_id" | "revision" | "updated_at" | "title">;
+}
+interface LibraryCandidate extends LibraryItem {
+  manualPlanId?: string;
 }
 export type LibraryTab = "recents" | "saved" | "templates";
 interface Scope {
@@ -44,11 +50,12 @@ const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const uuid = (value: unknown): value is string => typeof value === "string" && UUID.test(value);
 
-function parseItems(value: unknown, scope: Scope): LibraryItem[] {
+function parseItems(value: unknown, scope: Scope): LibraryCandidate[] {
   const ownerId = scope.ownerId;
   if (!ownerId || !Array.isArray(value) || value.length > PAGE_SIZE)
     throw new Error("LIBRARY_RESPONSE_INVALID");
   const seen = new Set<string>();
+  const manualPlanIds = new Set<string>();
   return value.map((row: unknown) => {
     if (
       !record(row) ||
@@ -100,8 +107,46 @@ function parseItems(value: unknown, scope: Scope): LibraryItem[] {
     });
     if (scope.tab === "templates" && documents.length === 0)
       throw new Error("LIBRARY_RESPONSE_INVALID");
+    if (record(row.recommendation_payload) && Object.hasOwn(row.recommendation_payload, "manual_plan")) {
+      const marker = parseManualPlanRoutingMetadata(row.recommendation_payload);
+      if (!marker || documents.length > 0 || scope.tab === "templates" || manualPlanIds.has(marker.plan_id))
+        throw new Error("LIBRARY_RESPONSE_INVALID");
+      manualPlanIds.add(marker.plan_id);
+      return { outcome, documents, manualPlanId: marker.plan_id };
+    }
     return { outcome, documents };
   });
+}
+
+async function resolveManualPlans(candidates: LibraryCandidate[], lease: OwnerDispatchLease): Promise<LibraryItem[]> {
+  const items = await Promise.all(candidates.map(async ({ manualPlanId, ...item }): Promise<LibraryItem> => {
+    if (manualPlanId === undefined) return item;
+    // The marker routes the read; only the owner-bound artifact snapshot supplies
+    // the title and resource identity. Do not expose a provisional document card.
+    const plan = await readManualPlan({ outcomeId: item.outcome.id }, lease);
+    lease.assertCurrent();
+    if (!plan || plan.owner_id !== lease.expectedUserId || plan.outcome_id !== item.outcome.id ||
+      plan.plan_id !== manualPlanId) throw new Error("LIBRARY_RESPONSE_INVALID");
+    return {
+      ...item,
+      manualPlan: {
+        owner_id: plan.owner_id,
+        plan_id: plan.plan_id,
+        outcome_id: plan.outcome_id,
+        artifact_id: plan.artifact_id,
+        revision: plan.revision,
+        updated_at: plan.updated_at,
+        title: plan.title,
+      },
+    };
+  }));
+  const artifacts = new Set<string>();
+  for (const item of items) {
+    if (!item.manualPlan) continue;
+    if (artifacts.has(item.manualPlan.artifact_id)) throw new Error("LIBRARY_RESPONSE_INVALID");
+    artifacts.add(item.manualPlan.artifact_id);
+  }
+  return items;
 }
 
 export function useLibrary(tab: LibraryTab) {
@@ -197,7 +242,7 @@ export function useLibrary(tab: LibraryTab) {
           let query = supabase
             .from("outcomes")
             .select(
-              "id, user_id, situation_text, status, is_saved, updated_at, documents:" +
+              "id, user_id, situation_text, status, is_saved, updated_at, recommendation_payload, documents:" +
                 relation +
                 "(id, user_id, outcome_id, title, status, is_template)",
             )
@@ -212,7 +257,9 @@ export function useLibrary(tab: LibraryTab) {
         if (!active()) return;
         lease.assertCurrent();
         if (error) throw error;
-        const items = parseItems(data, scope);
+        const items = await resolveManualPlans(parseItems(data, scope), lease);
+        if (!active()) return;
+        lease.assertCurrent();
         const hasMore = items.length === PAGE_SIZE;
         cursorRef.current = { scope, offset: currentOffset + items.length, hasMore };
         setState((previous) => {
@@ -238,6 +285,7 @@ export function useLibrary(tab: LibraryTab) {
         }
       } finally {
         clearTimeout(timeout);
+        request.controller.abort();
         if (active()) {
           requestRef.current = null;
           setState((previous) => ({ ...previous, loading: false }));

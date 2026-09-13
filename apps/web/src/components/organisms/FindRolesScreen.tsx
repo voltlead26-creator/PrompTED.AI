@@ -32,12 +32,14 @@ import {
   fetchActionItems,
   fetchRoleOutcomes,
   recordRoleOutcome,
+  roleOutcomeLocalDate,
   saveRole,
   setActionItemStatus,
   ROLE_OUTCOME_STAGE_LABELS,
   type RoleActionItem,
   type RoleOutcome,
   type RoleOutcomeStage,
+  type RoleOutcomeCommand,
 } from "@/lib/api/saved-roles";
 import { ACCEPT_ATTRIBUTE } from "@/hooks/useFileAttachment";
 import { Icon } from "@/components/atoms/Icon";
@@ -62,6 +64,27 @@ type EnhancedRoleIdea = JobRoleIdea & {
   evidence_to_show?: string[];
   application_actions?: string[];
 };
+
+interface PendingRoleOutcome {
+  key: string;
+  vacancy: EnhancedVacancy;
+  command: Omit<RoleOutcomeCommand, "savedRoleId">;
+  savedRoleId: string | null;
+  lease: OwnerDispatchLease;
+}
+
+interface RoleActionNotice {
+  kind: "role-action-status";
+  message: string;
+  itemId: string;
+  target: { key: string; generation: number };
+  principalEpoch: number;
+}
+
+const ACTION_STATUS_UNCONFIRMED =
+  "TED couldn't confirm that action was saved. Open Action plan to reload its saved status before trying again.";
+const ACTION_STATUS_CONFLICT =
+  "That action changed elsewhere. The latest saved status is shown.";
 
 type EnhancedJobMatchResult = Omit<JobMatchResult, "listings" | "role_ideas"> & {
   resume_signals?: string[];
@@ -136,9 +159,29 @@ export function FindRolesScreen() {
   const [outcomesOpen, setOutcomesOpen] = useState(false);
   const [outcomeHistory, setOutcomeHistory] = useState<RoleOutcome[]>([]);
   const [recordingOutcome, setRecordingOutcome] = useState(false);
-  const recordingOutcomeRef = useRef<OwnerDispatchLease | null>(null);
+  const recordingOutcomeRef = useRef<{ lease: OwnerDispatchLease; key: string } | null>(null);
+  const pendingOutcomesRef = useRef(new Map<string, PendingRoleOutcome>());
+  const [pendingOutcome, setPendingOutcome] = useState<PendingRoleOutcome | null>(null);
+  const outcomeTargetRef = useRef({ key: "", generation: 0 });
+  const outcomeMountedRef = useRef(true);
   const [outcomeNote, setOutcomeNote] = useState("");
   const [outcomeStage, setOutcomeStage] = useState<RoleOutcomeStage>("applied");
+  const retireRolePanel = useCallback(() => {
+    outcomeTargetRef.current = { key: "", generation: outcomeTargetRef.current.generation + 1 };
+    setOutcomesOpen(false);
+    setPlanOpen(false);
+    setOutcomeHistory([]);
+    setPendingOutcome(null);
+    setOutcomeNote("");
+    setOutcomeStage("applied");
+  }, []);
+  useEffect(() => {
+    outcomeMountedRef.current = true;
+    return () => {
+      outcomeMountedRef.current = false;
+      outcomeTargetRef.current = { key: "", generation: outcomeTargetRef.current.generation + 1 };
+    };
+  }, []);
   // Clarification chat: TED's readiness-gate questions and the user's
   // answers, kept as history so each follow-up call remembers what was
   // already said instead of asking the same thing twice. Disappears once
@@ -162,7 +205,7 @@ export function FindRolesScreen() {
   const [loading, setLoading] = useState(false);
   const loadingActionRef = useRef<OwnerDispatchLease | null>(null);
   const uploadActionRef = useRef<OwnerDispatchLease | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | RoleActionNotice | null>(null);
   const [result, setResult] = useState<EnhancedJobMatchResult | null>(null);
   const [searched, setSearched] = useState(false);
   const [profileSnapshot, setProfileSnapshot] = useState<ProfileResourceSnapshot | null>(null);
@@ -338,6 +381,7 @@ export function FindRolesScreen() {
       return;
     }
     loadingActionRef.current = requestContext;
+    retireRolePanel();
     setLoading(true);
     setError(null);
     setClarifyHistory([]);
@@ -385,6 +429,7 @@ export function FindRolesScreen() {
     uploadingResume,
     effectiveResumeText,
     user?.id,
+    retireRolePanel,
   ]);
 
   /** Answers TED's clarifying question inline, in the chat panel, instead of
@@ -407,6 +452,7 @@ export function FindRolesScreen() {
       { role: "user", content: answer },
     ];
     loadingActionRef.current = requestContext;
+    retireRolePanel();
     setClarifyHistory(nextHistory);
     setClarifyDraft("");
     setLoading(true);
@@ -474,6 +520,7 @@ export function FindRolesScreen() {
     result,
     effectiveResumeText,
     user?.id,
+    retireRolePanel,
   ]);
 
   const uploadResume = useCallback(
@@ -501,6 +548,7 @@ export function FindRolesScreen() {
       }
 
       uploadActionRef.current = requestContext;
+      retireRolePanel();
       setUploadingResume(true);
       setUploadError(null);
       setError(null);
@@ -529,10 +577,11 @@ export function FindRolesScreen() {
         }
       }
     },
-    [uploadingResume, user?.id],
+    [uploadingResume, user?.id, retireRolePanel],
   );
 
   const clearResume = useCallback(() => {
+    retireRolePanel();
     resumeTextRef.current = "";
     setHasResume(false);
     setResumeName("");
@@ -540,7 +589,7 @@ export function FindRolesScreen() {
     setUploadError(null);
     setResult(null);
     setSearched(false);
-  }, []);
+  }, [retireRolePanel]);
 
   const createDocument = useCallback(
     (params: {
@@ -671,6 +720,10 @@ export function FindRolesScreen() {
   const openActionPlan = useCallback(
     async (v: EnhancedVacancy) => {
       if (!user?.id) return;
+      const target = { key: roleKey(v), generation: outcomeTargetRef.current.generation + 1 };
+      outcomeTargetRef.current = target;
+      setOutcomesOpen(false);
+      setPlanOpen(false);
       let requestContext: OwnerDispatchLease;
       try {
         requestContext = captureOwnerDispatch(user.id);
@@ -686,11 +739,22 @@ export function FindRolesScreen() {
       try {
         const items = await fetchActionItems(id, requestContext);
         requestContext.assertCurrent();
+        if (!outcomeMountedRef.current || outcomeTargetRef.current !== target) return;
         setPlanItems(items);
         setPlanOpen(true);
         setOutcomesOpen(false);
+        setError((previous) => {
+          if (!outcomeMountedRef.current || outcomeTargetRef.current !== target ||
+            !ownerDispatchIsCurrent(requestContext) || !previous || typeof previous === "string") {
+            return previous;
+          }
+          return previous.kind === "role-action-status" &&
+            previous.target.key === target.key &&
+            previous.target.generation < target.generation &&
+            previous.principalEpoch === requestContext.principalEpoch ? null : previous;
+        });
       } catch {
-        if (ownerDispatchIsCurrent(requestContext)) {
+        if (ownerDispatchIsCurrent(requestContext) && outcomeMountedRef.current && outcomeTargetRef.current === target) {
           setError("TED couldn't load that action plan. Please try again.");
         }
       }
@@ -699,7 +763,9 @@ export function FindRolesScreen() {
   );
 
   const togglePlanItem = useCallback(async (item: RoleActionItem) => {
-    if (!user?.id || togglingPlanItemIdsRef.current.has(item.id)) return;
+    if (!user?.id || !outcomeMountedRef.current || togglingPlanItemIdsRef.current.has(item.id)) return;
+    const target = outcomeTargetRef.current;
+    const expectedMutationToken = item.mutation_token;
     let requestContext: OwnerDispatchLease;
     try {
       requestContext = captureOwnerDispatch(user.id);
@@ -707,6 +773,15 @@ export function FindRolesScreen() {
       setError("Your signed-in account changed. Please try that action again.");
       return;
     }
+    const isCurrentTarget = () => outcomeMountedRef.current &&
+      outcomeTargetRef.current === target && ownerDispatchIsCurrent(requestContext);
+    const actionNotice = (message: string): RoleActionNotice => ({
+      kind: "role-action-status",
+      message,
+      itemId: item.id,
+      target,
+      principalEpoch: requestContext.principalEpoch,
+    });
     const next = item.status === "done" ? "pending" : "done";
     const inFlight = new Set(togglingPlanItemIdsRef.current).add(item.id);
     togglingPlanItemIdsRef.current = inFlight;
@@ -715,27 +790,41 @@ export function FindRolesScreen() {
       const persisted = await setActionItemStatus(
         {
           id: item.id,
-          expectedMutationToken: item.mutation_token,
+          expectedMutationToken,
           status: next,
         },
         requestContext,
       );
       requestContext.assertCurrent();
-      setPlanItems((prev) =>
-        prev.map((p) => (p.id === persisted.item.id ? persisted.item : p)),
-      );
+      if (!isCurrentTarget()) return;
+      setPlanItems((prev) => {
+        if (!isCurrentTarget()) return prev;
+        return prev.map((p) => p.id === persisted.item.id &&
+          p.mutation_token === expectedMutationToken ? persisted.item : p);
+      });
       if (persisted.status === "revision_conflict") {
-        setError("That action changed elsewhere. The latest saved status is shown.");
+        setError((previous) => isCurrentTarget()
+          ? actionNotice(ACTION_STATUS_CONFLICT)
+          : previous);
+      } else {
+        setError((previous) => {
+          if (!isCurrentTarget() || !previous || typeof previous === "string") return previous;
+          return previous.kind === "role-action-status" &&
+            previous.itemId === item.id && previous.target === target &&
+            previous.principalEpoch === requestContext.principalEpoch ? null : previous;
+        });
       }
     } catch {
-      if (ownerDispatchIsCurrent(requestContext)) {
-        setError("TED couldn't update that action. Its previous status is unchanged.");
+      if (isCurrentTarget()) {
+        setError((previous) => isCurrentTarget()
+          ? actionNotice(ACTION_STATUS_UNCONFIRMED)
+          : previous);
       }
     } finally {
       const remaining = new Set(togglingPlanItemIdsRef.current);
       remaining.delete(item.id);
       togglingPlanItemIdsRef.current = remaining;
-      setTogglingPlanItemIds(remaining);
+      if (outcomeMountedRef.current) setTogglingPlanItemIds(remaining);
     }
   }, [user?.id]);
 
@@ -754,6 +843,16 @@ export function FindRolesScreen() {
   const openOutcomes = useCallback(
     async (v: EnhancedVacancy) => {
       if (!user?.id) return;
+      const key = roleKey(v);
+      if (recordingOutcomeRef.current?.key === key) return;
+      const target = { key, generation: outcomeTargetRef.current.generation + 1 };
+      outcomeTargetRef.current = target;
+      setOutcomesOpen(false);
+      setOutcomeHistory([]);
+      const pending = pendingOutcomesRef.current.get(key) ?? null;
+      setPendingOutcome(pending);
+      setOutcomeNote(pending?.command.note ?? "");
+      setOutcomeStage(pending?.command.stage ?? "applied");
       let requestContext: OwnerDispatchLease;
       try {
         requestContext = captureOwnerDispatch(user.id);
@@ -766,57 +865,76 @@ export function FindRolesScreen() {
         if (!savedId) return;
         const history = await fetchRoleOutcomes(savedId, requestContext);
         requestContext.assertCurrent();
+        if (!outcomeMountedRef.current || outcomeTargetRef.current !== target) return;
         setOutcomeHistory(history);
         setOutcomesOpen(true);
         setPlanOpen(false);
       } catch {
-        if (ownerDispatchIsCurrent(requestContext)) {
+        if (ownerDispatchIsCurrent(requestContext) && outcomeMountedRef.current && outcomeTargetRef.current === target) {
           setError("TED couldn't load the outcome history. Please try again.");
         }
       }
     },
-    [user?.id, ensureSaved],
+    [user?.id, ensureSaved, roleKey],
   );
 
   const submitOutcome = useCallback(
     async (v: EnhancedVacancy) => {
       if (!user?.id || recordingOutcomeRef.current) return;
+      const key = roleKey(v);
+      if (outcomeTargetRef.current.key !== key) return;
+      let pending = pendingOutcomesRef.current.get(key);
       let requestContext: OwnerDispatchLease;
       try {
-        requestContext = captureOwnerDispatch(user.id);
+        requestContext = pending?.lease ?? captureOwnerDispatch(user.id);
+        requestContext.assertCurrent();
       } catch {
-        setError("Your signed-in account changed. Please try that action again.");
+        setError("Your signed-in account changed. Refresh this page to reload saved history before recording another outcome.");
         return;
       }
-      recordingOutcomeRef.current = requestContext;
+      if (!pending) {
+        pending = { key, vacancy: { ...v }, savedRoleId: null, lease: requestContext,
+          command: { eventId: crypto.randomUUID(), userId: user.id, stage: outcomeStage,
+            note: outcomeNote.trim() || undefined, occurredAt: roleOutcomeLocalDate() } };
+        pendingOutcomesRef.current.set(key, pending);
+      }
+      const target = { key, generation: outcomeTargetRef.current.generation + 1 };
+      outcomeTargetRef.current = target;
+      setPendingOutcome(pending);
+      const recording = { lease: requestContext, key };
+      recordingOutcomeRef.current = recording;
       setRecordingOutcome(true);
+      setError(null);
       try {
-        const savedId = await ensureSaved(v, requestContext);
-        if (!savedId) return;
-        const recorded = await recordRoleOutcome({
-          userId: user.id,
-          savedRoleId: savedId,
-          stage: outcomeStage,
-          note: outcomeNote,
-        }, requestContext);
+        const savedId = pending.savedRoleId ?? await ensureSaved(pending.vacancy, requestContext);
         requestContext.assertCurrent();
+        if (!savedId) throw new Error("ROLE_OUTCOME_ROLE_UNCONFIRMED");
+        pending = { ...pending, savedRoleId: savedId };
+        pendingOutcomesRef.current.set(key, pending);
+        const recorded = await recordRoleOutcome({ ...pending.command, savedRoleId: savedId }, requestContext);
+        requestContext.assertCurrent();
+        pendingOutcomesRef.current.delete(key);
+        if (!outcomeMountedRef.current || outcomeTargetRef.current !== target) return;
+        setPendingOutcome(null);
         setOutcomeHistory((history) => [
           recorded,
           ...history.filter((entry) => entry.id !== recorded.id),
         ]);
         setOutcomeNote("");
-      } catch {
-        if (ownerDispatchIsCurrent(requestContext)) {
-          setError("TED couldn't record that outcome. Please try again.");
+      } catch (error) {
+        if (ownerDispatchIsCurrent(requestContext) && outcomeMountedRef.current && outcomeTargetRef.current === target) {
+          setError(error instanceof Error && error.message === "ROLE_OUTCOME_REPLAY_CONFLICT"
+            ? "That event has different saved details. Refresh this page to reload its history before recording another outcome."
+            : "TED couldn't confirm that outcome was saved. Retry save to check the same event safely.");
         }
       } finally {
-        if (recordingOutcomeRef.current === requestContext) {
+        if (recordingOutcomeRef.current === recording) {
           recordingOutcomeRef.current = null;
-          setRecordingOutcome(false);
+          if (outcomeMountedRef.current) setRecordingOutcome(false);
         }
       }
     },
-    [user?.id, ensureSaved, outcomeStage, outcomeNote],
+    [user?.id, ensureSaved, outcomeStage, outcomeNote, roleKey],
   );
 
   /** Interview prep tied to this specific role: seeds TED's existing
@@ -1079,7 +1197,7 @@ export function FindRolesScreen() {
 
       {error && (
         <p className={styles.error} role="alert">
-          {error}
+          {typeof error === "string" ? error : error.message}
         </p>
       )}
 
@@ -1265,7 +1383,7 @@ export function FindRolesScreen() {
                           </li>
                         </ul>
 
-                        {planOpen && planItems.length > 0 && (
+                        {planOpen && outcomeTargetRef.current.key === roleKey(active) && planItems.length > 0 && (
                           <div className={styles.planBox}>
                             <h3 className={styles.detailHead}>Action plan</h3>
                             <ul className={styles.planList}>
@@ -1292,7 +1410,7 @@ export function FindRolesScreen() {
                           </div>
                         )}
 
-                        {outcomesOpen && (
+                        {outcomesOpen && outcomeTargetRef.current.key === roleKey(active) && (
                           <div className={styles.planBox}>
                             <h3 className={styles.detailHead}>Outcome tracker</h3>
                             <p className={styles.matchSub}>
@@ -1302,6 +1420,8 @@ export function FindRolesScreen() {
                             <div className={styles.outcomeForm}>
                               <select
                                 className={styles.outcomeSelect}
+                                aria-label="Outcome stage"
+                                disabled={recordingOutcome || Boolean(pendingOutcome)}
                                 value={outcomeStage}
                                 onChange={(e) =>
                                   setOutcomeStage(e.target.value as typeof outcomeStage)
@@ -1320,6 +1440,7 @@ export function FindRolesScreen() {
                               <input
                                 className={styles.outcomeNote}
                                 type="text"
+                                disabled={recordingOutcome || Boolean(pendingOutcome)}
                                 placeholder="Note (optional) - e.g. what they asked, feedback given"
                                 value={outcomeNote}
                                 onChange={(e) => setOutcomeNote(e.target.value)}
@@ -1330,7 +1451,7 @@ export function FindRolesScreen() {
                                 onClick={() => void submitOutcome(active)}
                                 disabled={recordingOutcome}
                               >
-                                {recordingOutcome ? "Saving..." : "Add"}
+                                {recordingOutcome ? "Saving..." : pendingOutcome ? "Retry save" : "Add"}
                               </button>
                             </div>
                             {outcomeHistory.length > 0 ? (
@@ -1424,8 +1545,21 @@ export function FindRolesScreen() {
                                   type="button"
                                   className={`${styles.matchItem}${isActive ? ` ${styles.matchActive}` : ""}`}
                                   onClick={() => {
+                                    const target = { key: roleKey(v), generation: outcomeTargetRef.current.generation + 1 };
                                     setActiveIndex(i);
                                     setPlanOpen(false);
+                                    outcomeTargetRef.current = target;
+                                    setError((previous) => {
+                                      if (!outcomeMountedRef.current || outcomeTargetRef.current !== target ||
+                                        !previous || typeof previous === "string") return previous;
+                                      return previous.kind === "role-action-status" &&
+                                        previous.target.generation < target.generation ? null : previous;
+                                    });
+                                    setOutcomesOpen(false);
+                                    setOutcomeHistory([]);
+                                    setPendingOutcome(null);
+                                    setOutcomeNote("");
+                                    setOutcomeStage("applied");
                                   }}
                                 >
                                   <span className={styles.matchTitle}>{v.title || "Role"}</span>

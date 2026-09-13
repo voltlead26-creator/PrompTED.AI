@@ -523,6 +523,30 @@ Deno.test("follow-up sender identity remains required in thanks while next stays
   assertEquals(blocks.some((block) => block.key === "sign_off"), false);
 });
 
+Deno.test("regression: full matching-key profiles use the admitted section order without changing authored history", () => {
+  for (const slug of ["resume", "complaint-letter", "incident-near-miss-report"]) {
+    const template = resolveTemplate(slug);
+    assert(template, "Positive canonical template: " + slug);
+    const authored = structuredClone(sourceProfile(slug).profile);
+    const policy = resolveDocumentProfilePolicy(template);
+    assert(policy.profile?.quality);
+    const keys = template.sections.map((section) => section.key);
+    assertEquals(
+      policy.profile.outputStructure.map((rule) => /\(([^)]+)\):/.exec(rule)?.[1]),
+      keys,
+      slug + " must not retain a competing authored section order",
+    );
+    assertStringIncludes(
+      policy.profile.quality.requiredStructure[0],
+      "Use only these current sections in this order: " + keys.join(", "),
+    );
+    assertEquals(policy.sourceProfile, authored);
+    assertEquals(sourceProfile(slug).profile, authored);
+    const historical = resolveDocumentProfilePolicy(template, { historical: true });
+    assertEquals(historical.profile, historical.sourceProfile);
+  }
+});
+
 Deno.test("promotion proof reaches both existing sections with the same source resolution identity", async () => {
   const template = resolveTemplate("promotion-case");
   assert(template);

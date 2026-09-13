@@ -1409,7 +1409,13 @@ export async function generateArtifactStream(
   }
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, "ARTIFACT_STREAM_FAILED", data);
+    assertRequestCurrent(requestContext);
+    const detail = isRecord(data) && isRecord(data.error) ? data.error : null;
+    const code = detail?.code;
+    const knownCode = code === "DOCUMENT_LIMIT_REACHED" || code === "PAYWALL" || code === "TED_V2_DISABLED"
+      ? code
+      : "ARTIFACT_STREAM_FAILED";
+    throw new ApiError(res.status, knownCode, data);
   }
 
   const reader = res.body.getReader();

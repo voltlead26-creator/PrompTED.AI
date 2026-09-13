@@ -128,6 +128,9 @@
     "claim_user_storage_dispatch": "uuid, uuid, text, text, text, uuid",
     "commit_document_import": "uuid, uuid, uuid, text, text, jsonb, jsonb",
     "get_own_workspace_upload_v1": "uuid",
+    "save_own_manual_plan_v1": "jsonb",
+    "get_own_manual_plan_v1": "text, uuid",
+    "list_own_manual_plans_v1": "integer, integer",
     "list_own_workspace_uploads_v1": "timestamp with time zone, uuid",
     "get_effective_product_access_v1": "uuid",
     "commit_guest_workspace_import": "text, uuid, uuid, text, text, jsonb, uuid, text, jsonb",
@@ -228,6 +231,7 @@
       "20260819000000_add_durable_rate_limits",
       "20260911130803_effective_owner_product_access",
       "20260911174506_business_matches_premium_allowance",
+      "20260912070100_business_fifty_document_allowance",
       "20260911143000_legacy_generation_failure_budget",
       "20260911151000_captured_generation_failure_budget",
       "20260911155000_legacy_section_repair_budget",
@@ -313,7 +317,9 @@
       "20260908160000_legacy_workspace_save_core",
       "20260909105519_complete_upload_source_preparation",
       "20260911130803_effective_owner_product_access",
-      "20260911174506_business_matches_premium_allowance"
+      "20260911174506_business_matches_premium_allowance",
+      "20260912070100_business_fifty_document_allowance",
+      "20260913094000_manual_plan_persistence"
     ],
     "requiredRpcs": [
       "get_latest_captured_document_operation",
@@ -322,6 +328,9 @@
       "request_captured_document_export",
       "commit_document_import",
       "get_own_workspace_upload_v1",
+      "save_own_manual_plan_v1",
+      "get_own_manual_plan_v1",
+      "list_own_manual_plans_v1",
       "list_own_workspace_uploads_v1",
       "get_effective_product_access_v1",
       "commit_guest_workspace_import",
@@ -874,7 +883,10 @@
       ],
       "requiredRpcs": ["apply_revenuecat_webhook_event"],
       "requiredTables": [],
-      "requiredSecrets": ["REVENUECAT_WEBHOOK_SECRET"],
+      "requiredSecrets": [
+        "REVENUECAT_WEBHOOK_SECRET",
+        "REVENUECAT_WEBHOOK_SOURCE_POLICY"
+      ],
       "smokeProbe": {
         "kind": "rpc",
         "name": "apply_revenuecat_webhook_event",

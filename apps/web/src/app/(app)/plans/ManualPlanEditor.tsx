@@ -4,13 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { EditAction } from "@prompted/shared";
 import { Icon } from "@/components/atoms/Icon";
 import { TedChangeReview } from "@/components/organisms/TedChangeReview";
+import { useManualPlanPersistence } from "@/hooks/useManualPlanPersistence";
 import { useEditWithTED } from "@/hooks/useEditWithTED";
 import {
-  createManualPlan,
   createManualPlanItem,
-  loadManualPlan,
   moveManualPlanItem,
-  saveManualPlan,
   type ManualPlanItem,
   type ManualPlanState,
 } from "./manual-plan-store";
@@ -18,9 +16,17 @@ import {
   currentDeviceDataScope,
   deviceDataOwnerToken,
 } from "@/lib/owner-bound-device-store";
+import { captureOwnerDispatch, ownerDispatchIsCurrent, type OwnerDispatchLease } from "@/lib/browser-principal-state";
 import styles from "./ManualPlanEditor.module.css";
 
 interface PendingTedChange {
+  storageIdentity: string;
+  sessionId: string;
+  planId: string;
+  revision: number;
+  requestToken: number;
+  original: string;
+  lease: OwnerDispatchLease | null;
   itemId: string;
   suggested: string;
   changes: string[];
@@ -29,13 +35,24 @@ interface PendingTedChange {
 }
 
 interface DeletedPlanItem {
+  storageIdentity: string;
+  sessionId: string;
+  revision: number;
+  lease: OwnerDispatchLease | null;
   item: ManualPlanItem;
   index: number;
 }
 
+interface BoundEditorText {
+  identity: string;
+  value: string;
+}
+
 interface BoundPlanState {
   storageIdentity: string;
+  sessionId: string;
   plan: ManualPlanState;
+  revision: number;
 }
 
 export function ManualPlanEditor({
@@ -46,57 +63,79 @@ export function ManualPlanEditor({
   ownerUserId?: string | null;
 }) {
   const deviceScope = useMemo(() => currentDeviceDataScope(ownerUserId), [ownerUserId]);
-  const storageIdentity = `${deviceDataOwnerToken(deviceScope)}:${planId ?? "new"}`;
-  const [boundPlan, setBoundPlan] = useState<BoundPlanState | null>(null);
-  const plan = boundPlan?.storageIdentity === storageIdentity ? boundPlan.plan : null;
+  const ownerToken = deviceDataOwnerToken(deviceScope);
+  const storageIdentity = `${ownerToken}:${planId ?? "new"}`;
+  const persistence = useManualPlanPersistence(ownerUserId, planId);
+  const plan = persistence.plan;
+  const sessionId = persistence.sessionId;
+  const boundPlan: BoundPlanState | null = plan && sessionId
+    ? { storageIdentity, sessionId, plan, revision: persistence.revision } : null;
+  const auxiliaryIdentity = boundPlan ? `${ownerToken}:${boundPlan.plan.id}:${boundPlan.sessionId}` : null;
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [instruction, setInstruction] = useState("");
+  const [boundInstruction, setBoundInstruction] = useState<BoundEditorText | null>(null);
   const [pendingTedChange, setPendingTedChange] = useState<PendingTedChange | null>(null);
   const [lastDeleted, setLastDeleted] = useState<DeletedPlanItem | null>(null);
-  const hydratedIdentityRef = useRef<string | null>(null);
+  const [boundTedNotice, setBoundTedNotice] = useState<BoundEditorText | null>(null);
+  const instruction = boundInstruction && boundInstruction.identity === auxiliaryIdentity ? boundInstruction.value : "";
+  const tedNotice = boundTedNotice && boundTedNotice.identity === auxiliaryIdentity ? boundTedNotice.value : null;
+  const setInstruction = (value: string) => setBoundInstruction(auxiliaryIdentity ? { identity: auxiliaryIdentity, value } : null);
+  const setTedNotice = (value: string | null) => setBoundTedNotice(auxiliaryIdentity && value !== null ? { identity: auxiliaryIdentity, value } : null);
+  const boundPlanRef = useRef<BoundPlanState | null>(null);
+  boundPlanRef.current = boundPlan;
+  const pendingChangeRef = useRef<PendingTedChange | null>(null);
+  const inFlightRef = useRef<PendingTedChange | null>(null);
+  const requestSequenceRef = useRef(0);
   const currentIdentityRef = useRef(storageIdentity);
+  const currentOwnerRef = useRef(ownerToken);
   currentIdentityRef.current = storageIdentity;
+  currentOwnerRef.current = ownerToken;
   const editor = useEditWithTED();
+  const { cancel } = editor;
 
   useEffect(() => {
-    if (hydratedIdentityRef.current === storageIdentity) return;
-    hydratedIdentityRef.current = storageIdentity;
-    const initial = (planId ? loadManualPlan(deviceScope, planId) : null) ?? createManualPlan();
-    setBoundPlan({ storageIdentity, plan: initial });
-    setSelectedItemId(initial.items[0]?.id ?? null);
-    setSaveState("idle");
-    setInstruction("");
-    setPendingTedChange(null);
-    setLastDeleted(null);
-  }, [deviceScope, planId, storageIdentity]);
+    // Canonical plan + hook lifetime remains stable when Next adopts this
+    // session's allocated URL, but changes for another owner, plan or recovery.
+    setBoundInstruction(previous => previous?.identity === auxiliaryIdentity ? previous : null);
+    setBoundTedNotice(previous => previous?.identity === auxiliaryIdentity ? previous : null);
+    setPendingTedChange(previous => previous && `${previous.storageIdentity}:${previous.sessionId}` === auxiliaryIdentity ? previous : null);
+    setLastDeleted(previous => previous && `${previous.storageIdentity}:${previous.sessionId}` === auxiliaryIdentity ? previous : null);
+    return () => {
+      requestSequenceRef.current += 1;
+      pendingChangeRef.current = null;
+      if (inFlightRef.current) {
+        inFlightRef.current = null;
+        cancel();
+      }
+    };
+  }, [auxiliaryIdentity, cancel]);
 
   useEffect(() => {
-    if (!plan || hydratedIdentityRef.current !== storageIdentity) return;
-    setSaveState("saving");
-    const timer = window.setTimeout(() => {
-      const saved = saveManualPlan(deviceScope, {
-        ...plan,
-        updatedAt: new Date().toISOString(),
-      });
-      setSaveState(saved ? "saved" : "error");
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [deviceScope, plan, storageIdentity]);
+    setSelectedItemId(previous => plan?.items.some(item => item.id === previous) ? previous : plan?.items[0]?.id ?? null);
+  }, [plan]);
 
   const selectedItem = useMemo(
     () => plan?.items.find((item) => item.id === selectedItemId) ?? null,
     [plan, selectedItemId],
   );
 
-  if (!plan) return <div className={styles.loading}>Opening live editor…</div>;
+  if (!plan) return persistence.status === "error" || persistence.status === "unavailable"
+    ? <div role="alert"><p>{persistence.message}</p>{persistence.status === "error" ? <button type="button" onClick={() => void persistence.reload()}>Retry opening plan</button> : null}</div>
+    : <div className={styles.loading}>Opening live editor…</div>;
 
-  function updatePlan(mutator: (current: ManualPlanState) => ManualPlanState) {
-    setBoundPlan((current) =>
-      current?.storageIdentity === storageIdentity
-        ? { ...current, plan: mutator(current.plan) }
-        : current,
-    );
+  function updatePlan(mutator: (current: ManualPlanState) => ManualPlanState): ManualPlanState | null {
+    const current = boundPlanRef.current;
+    if (currentIdentityRef.current !== storageIdentity || current?.storageIdentity !== storageIdentity) return null;
+    const nextPlan = persistence.update(mutator);
+    if (!nextPlan) return null;
+    boundPlanRef.current = { ...current, revision: current.revision + 1, plan: nextPlan };
+    requestSequenceRef.current += 1;
+    if (pendingChangeRef.current || inFlightRef.current) {
+      setTedNotice("Your plan changed. Ask TED again using the current wording.");
+      pendingChangeRef.current = null;
+      setPendingTedChange(null);
+      if (inFlightRef.current) cancel();
+    }
+    return nextPlan;
   }
 
   function updateItem(itemId: string, patch: Partial<ManualPlanItem>) {
@@ -113,18 +152,17 @@ export function ManualPlanEditor({
   }
 
   function deleteItem(itemId: string) {
-    const currentPlan = plan;
-    if (!currentPlan) return;
+    const current = boundPlanRef.current;
+    if (!current || current.storageIdentity !== storageIdentity) return;
+    const currentPlan = current.plan;
     const deletedIndex = currentPlan.items.findIndex((item) => item.id === itemId);
     const deletedItem = currentPlan.items[deletedIndex];
     if (!deletedItem) return;
 
-    setLastDeleted({ item: deletedItem, index: deletedIndex });
-    if (selectedItemId === itemId && currentPlan.items.length > 1) {
-      setSelectedItemId(currentPlan.items.find((item) => item.id !== itemId)?.id ?? null);
-    }
-
-    updatePlan((current) => {
+    let lease: OwnerDispatchLease | null = null;
+    try { if (ownerUserId) lease = captureOwnerDispatch(ownerUserId); }
+    catch { return; }
+    const next = updatePlan((current) => {
       if (current.items.length === 1) {
         return {
           ...current,
@@ -141,10 +179,27 @@ export function ManualPlanEditor({
       const next = current.items.filter((item) => item.id !== itemId);
       return { ...current, items: next };
     });
+    const updated = boundPlanRef.current;
+    if (!next || !updated) return;
+    setLastDeleted({ storageIdentity: `${ownerToken}:${currentPlan.id}`, sessionId: current.sessionId,
+      revision: updated.revision, lease, item: { ...deletedItem }, index: deletedIndex });
+    if (selectedItemId === itemId && currentPlan.items.length > 1) {
+      setSelectedItemId(currentPlan.items.find((item) => item.id !== itemId)?.id ?? null);
+    }
+  }
+
+  function deletionIsCurrent(deleted: DeletedPlanItem): boolean {
+    const current = boundPlanRef.current;
+    return current !== null && `${currentOwnerRef.current}:${current.plan.id}` === deleted.storageIdentity &&
+      current.sessionId === deleted.sessionId && current.revision === deleted.revision &&
+      (!deleted.lease || ownerDispatchIsCurrent(deleted.lease));
   }
 
   function undoDelete() {
-    if (!lastDeleted) return;
+    if (!lastDeleted || !deletionIsCurrent(lastDeleted)) {
+      setLastDeleted(null);
+      return;
+    }
     updatePlan((current) => {
       const existingIndex = current.items.findIndex((item) => item.id === lastDeleted.item.id);
       if (existingIndex >= 0) {
@@ -167,48 +222,75 @@ export function ManualPlanEditor({
     updatePlan((current) => ({ ...current, items: moveManualPlanItem(current.items, itemId, direction) }));
   }
 
+  function changeIsCurrent(change: PendingTedChange) {
+    const current = boundPlanRef.current;
+    return current !== null && `${currentOwnerRef.current}:${current.plan.id}` === change.storageIdentity &&
+      (currentIdentityRef.current === current.storageIdentity || currentIdentityRef.current === change.storageIdentity) &&
+      current.plan.id === change.planId && current.sessionId === change.sessionId && current.revision === change.revision &&
+      requestSequenceRef.current === change.requestToken &&
+      current.plan.items.some(item => item.id === change.itemId && item.text === change.original) &&
+      (!change.lease || ownerDispatchIsCurrent(change.lease));
+  }
+
   async function requestTedEdit(
     action: EditAction,
     customInstruction?: string,
-    allowPendingChange = false,
+    retry?: PendingTedChange,
   ) {
-    if (
-      !selectedItem?.text.trim() ||
-      (!allowPendingChange && pendingTedChange) ||
-      editor.streaming
-    ) return;
-    const requestIdentity = storageIdentity;
-    const original = selectedItem.text;
-    const result = await editor.run({
-      action,
-      content: original,
-      instruction: customInstruction,
-      domain: "action plan step",
-    });
-    if (currentIdentityRef.current !== requestIdentity || !result?.content.trim()) return;
-    setPendingTedChange({
-      itemId: selectedItem.id,
-      suggested: result.content.trim(),
-      changes: result.changes,
-      action,
-      instruction: customInstruction,
-    });
+    const current = boundPlanRef.current;
+    const item = current?.plan.items.find(item => item.id === (retry?.itemId ?? selectedItemId));
+    if (!current || current.storageIdentity !== storageIdentity || !item?.text.trim() ||
+      inFlightRef.current || pendingChangeRef.current || editor.streaming || (retry && !changeIsCurrent(retry))) return;
+    let lease: OwnerDispatchLease | null = null;
+    try { if (ownerUserId) lease = captureOwnerDispatch(ownerUserId); }
+    catch { setTedNotice("Sign in again before asking TED to edit this action."); return; }
+    const request: PendingTedChange = { storageIdentity: `${ownerToken}:${current.plan.id}`, planId: current.plan.id, revision: current.revision,
+      sessionId: current.sessionId,
+      requestToken: ++requestSequenceRef.current, original: item.text, lease,
+      itemId: item.id, suggested: "", changes: [], action, instruction: customInstruction };
+    inFlightRef.current = request;
+    setTedNotice(null);
+    try {
+      const result = await editor.run({ action, content: request.original,
+        instruction: customInstruction, domain: "action plan step" });
+      if (!changeIsCurrent(request) || !result?.content.trim()) return;
+      const proposal = { ...request, suggested: result.content.trim(), changes: result.changes };
+      pendingChangeRef.current = proposal;
+      setPendingTedChange(proposal);
+    } catch {
+      if (changeIsCurrent(request)) setTedNotice("TED couldn’t finish that suggestion. Your plan is unchanged; try again.");
+    } finally {
+      if (inFlightRef.current === request) inFlightRef.current = null;
+    }
   }
 
   function applyTedChange() {
-    if (!pendingTedChange) return;
-    updateItem(pendingTedChange.itemId, { text: pendingTedChange.suggested });
+    const pending = pendingChangeRef.current;
+    if (!pending) return;
+    pendingChangeRef.current = null;
     setPendingTedChange(null);
+    if (!changeIsCurrent(pending)) {
+      setTedNotice("Your plan or account changed. Ask TED again using the current wording.");
+      return;
+    }
+    updateItem(pending.itemId, { text: pending.suggested });
   }
 
   function retryTedChange() {
-    if (!pendingTedChange) return;
-    const { action, instruction: retryInstruction } = pendingTedChange;
+    const pending = pendingChangeRef.current;
+    if (!pending) return;
+    pendingChangeRef.current = null;
     setPendingTedChange(null);
-    window.setTimeout(() => void requestTedEdit(action, retryInstruction, true), 0);
+    if (!changeIsCurrent(pending)) {
+      setTedNotice("Your plan or account changed. Ask TED again using the current wording.");
+      return;
+    }
+    void requestTedEdit(pending.action, pending.instruction, pending);
   }
 
   const completed = plan.items.filter((item) => item.done).length;
+  const visibleDeletion = lastDeleted && deletionIsCurrent(lastDeleted) ? lastDeleted : null;
+  const visibleTedChange = pendingTedChange && changeIsCurrent(pendingTedChange) ? pendingTedChange : null;
 
   return (
     <section className={styles.editor} aria-label="Live interactive checklist and action-plan editor">
@@ -222,14 +304,26 @@ export function ManualPlanEditor({
             onChange={(event) => updatePlan((current) => ({ ...current, title: event.target.value }))}
           />
           <p className={styles.saveState} aria-live="polite">
-            {saveState === "saving"
-              ? "Saving…"
-              : saveState === "saved"
-                ? "Saved on this device"
-                : saveState === "error"
-                  ? "Couldn’t save on this device"
-                  : "Live editor"}
+            {persistence.status === "saving" ? "Saving to your account…"
+              : persistence.status === "saved" ? persistence.account ? "Saved to your account" : "Saved on this device"
+              : persistence.status === "opening" ? "Opening account version…"
+              : persistence.status === "pending" ? "Changes waiting to save…"
+              : persistence.account ? "Account save needs attention" : "Couldn’t save on this device"}
           </p>
+          {persistence.message ? <p role="status">{persistence.message}</p> : null}
+          {persistence.status === "error" || persistence.status === "import" ? <button type="button" onClick={() => void persistence.retry()}>
+            {persistence.status === "import" ? "Save to my account" : persistence.account ? "Retry account save" : "Retry device save"}
+          </button> : null}
+          {persistence.status === "saving" ? <button type="button" onClick={persistence.cancelSave}>Cancel save request</button> : null}
+          {persistence.status === "conflict" ? <div role="alert">
+            <p>Your device edits are preserved. Load and review the account version before switching to it.</p>
+            <button type="button" onClick={() => void persistence.reload()}>Review account version</button>
+            {persistence.remote ? <details><summary>Account version: {persistence.remote.title || "Untitled action plan"}</summary>
+              <ol>{persistence.remote.items.map(item => <li key={item.id}><strong>{item.section}</strong><p>{item.text}</p><p>{item.notes}</p><p>{item.due_date ?? "No due date"} · {item.done ? "Complete" : "Incomplete"}</p></li>)}</ol>
+              <button type="button" onClick={persistence.useAccountVersion}>Use account version and keep device recovery copy</button>
+            </details> : null}
+          </div> : null}
+
         </div>
         <div className={styles.progress}>
           <strong>{completed} / {plan.items.length}</strong>
@@ -320,7 +414,7 @@ export function ManualPlanEditor({
         <Icon name="plus" size={18} /> Add action
       </button>
 
-      {lastDeleted ? (
+      {visibleDeletion ? (
         <div className={styles.undoNotice} role="status">
           <span>Action deleted.</span>
           <button type="button" onClick={undoDelete}>
@@ -330,10 +424,10 @@ export function ManualPlanEditor({
       ) : null}
 
       <div className={styles.tedBar} role="toolbar" aria-label="Edit selected action with TED">
-        <button type="button" disabled={!selectedItem?.text.trim() || editor.streaming || Boolean(pendingTedChange)} onClick={() => void requestTedEdit("expand")}>
+        <button type="button" disabled={!selectedItem?.text.trim() || editor.streaming || Boolean(visibleTedChange)} onClick={() => void requestTedEdit("expand")}>
           Expand
         </button>
-        <button type="button" disabled={!selectedItem?.text.trim() || editor.streaming || Boolean(pendingTedChange)} onClick={() => void requestTedEdit("shorten")}>
+        <button type="button" disabled={!selectedItem?.text.trim() || editor.streaming || Boolean(visibleTedChange)} onClick={() => void requestTedEdit("shorten")}>
           Shorten
         </button>
         <div className={styles.teditControl}>
@@ -346,7 +440,7 @@ export function ManualPlanEditor({
           <button
             type="button"
             className={styles.primary}
-            disabled={!selectedItem?.text.trim() || !instruction.trim() || editor.streaming || Boolean(pendingTedChange)}
+            disabled={!selectedItem?.text.trim() || !instruction.trim() || editor.streaming || Boolean(visibleTedChange)}
             onClick={() => {
               const nextInstruction = instruction.trim();
               setInstruction("");
@@ -357,17 +451,17 @@ export function ManualPlanEditor({
           </button>
         </div>
         {editor.streaming ? <span className={styles.editStatus}>TED is drafting a suggestion…</span> : null}
-        {editor.error ? <span className={styles.editError}>{editor.error}</span> : null}
+        {tedNotice || editor.error ? <span className={styles.editError} role="status">{tedNotice ?? editor.error}</span> : null}
       </div>
 
-      {pendingTedChange ? (
+      {visibleTedChange ? (
         <TedChangeReview
-          suggested={pendingTedChange.suggested}
-          changes={pendingTedChange.changes}
+          suggested={visibleTedChange.suggested}
+          changes={visibleTedChange.changes}
           explanation="Only the selected action will change. The rest of your plan stays exactly as it is."
           onApply={applyTedChange}
           onRetry={retryTedChange}
-          onDiscard={() => setPendingTedChange(null)}
+          onDiscard={() => { pendingChangeRef.current = null; setPendingTedChange(null); }}
         />
       ) : null}
     </section>

@@ -6,6 +6,7 @@ import { type DocumentPipelineInput, runDocumentPipeline } from "./document-pipe
 import { createHash } from "node:crypto";
 import { bindModelCallContext, setModelCallCheckpointContext } from "./model-call-context.ts";
 import { isProviderReconciliationRequired } from "./allowance-reservations.ts";
+import type { QualityAuditIssue } from "./document-output-contracts.ts";
 
 const originalWording = "I was charged $10 twice.";
 const siblingWording = "Please review the duplicate charge.";
@@ -41,6 +42,7 @@ type Options = {
   onProviderRequest?: (schema: string | undefined) => void;
   auditBindingResponse?: "missing" | "malformed" | "changed";
   deniedRepair?: { stage: string; code: string; message: string };
+  qualityIssuesByRound?: QualityAuditIssue[][];
   assessmentPolicy?: {
     version: "legacy-wording-assessment.1";
     executionPolicySha256: string;
@@ -329,6 +331,12 @@ async function withPipeline(
       }
       case "prompted_document_quality_audit":
         qualityDrafts.push(prompt.split("Complete draft:\n")[1]);
+        if (options.qualityIssuesByRound) {
+          const issues = options.qualityIssuesByRound[qualityDrafts.length - 1] ?? [];
+          output = { decision: issues.length ? "changes_required" : "approve",
+            issues: issues.map((issue) => ({ ...issue, section_key: issue.section_key ?? null })) };
+          break;
+        }
         if (qualityDrafts.length > 1 && options.finalQuality === "uncertain") {
           return Promise.reject(
             new TypeError("Synthetic provider connection lost"),
@@ -458,6 +466,76 @@ Deno.test("unchanged audited wording does not dispatch another audit or repair",
     assertEquals(fixture.groundingDrafts.length, 1);
     assertEquals(fixture.qualityDrafts.length, 1);
     assertEquals(fixture.writes.length, 2);
+  });
+});
+
+Deno.test("regression: later document-level review preserves the factual repair and passing sibling", async () => {
+  await withPipeline({ initial: inventedWording, replacement: originalWording,
+    unsupportedText: inventedWording,
+    qualityIssuesByRound: [[], [{ severity: "high", category: "structure",
+      finding: "Check the complete document section order.",
+      required_correction: "Use the admitted order without changing factual wording." }], []],
+  }, async (fixture) => {
+    const result = await fixture.run();
+    assertEquals(result.sections.map((section) => section.content), [originalWording, siblingWording]);
+    assertEquals(result.unresolvedPlaceholders, []);
+    assertEquals(fixture.writes.length, 3,
+      "Only the initial two sections and the named factual correction may reach a writer");
+    assertEquals(fixture.groundingDrafts.length, 3,
+      "Document-level findings still require a fresh audit, not silent approval");
+    const repairPrompt = fixture.prompts.filter((prompt) => prompt.includes('section titled "Issue"')).at(-1)!;
+    assert(repairPrompt.includes(JSON.stringify({ key: "issue", label: "Issue", content: inventedWording })),
+      "The named repair needs its exact prior draft as reference, separate from source evidence");
+  });
+});
+
+Deno.test("regression: final cleanup receives the current section wording as reference", async () => {
+  const initial = originalWording + " TODO";
+  await withPipeline({ initial, replacement: originalWording }, async (fixture) => {
+    const result = await fixture.run();
+    assertEquals(result.sections[0].content, originalWording);
+    const repairPrompt = fixture.prompts.filter((prompt) => prompt.includes('section titled "Issue"')).at(-1)!;
+    assert(repairPrompt.includes(JSON.stringify({ key: "issue", label: "Issue", content: initial })),
+      "Cleanup must preserve the current section baseline while removing the flagged content");
+  });
+});
+
+Deno.test("unresolved document-level factual review retains the existing explicit safety fallback", async () => {
+  const issue: QualityAuditIssue = { severity: "high", category: "fact",
+    finding: "The complete document contains unsupported assertions.",
+    required_correction: "Remove unsupported assertions." };
+  await withPipeline({ initial: originalWording, replacement: originalWording,
+    qualityIssuesByRound: [[issue], [issue], [issue]],
+  }, async (fixture) => {
+    const result = await fixture.run();
+    assertEquals(result.unresolvedPlaceholders.map((placeholder) => placeholder.sectionKey),
+      ["issue", "request"]);
+    assert(result.sections.every((section) => section.content.includes("TED_PLACEHOLDER")),
+      "A factual safety failure must never be silently approved");
+    assertEquals(fixture.writes.length, 2,
+      "An unresolved whole-document finding cannot consume section repair attempts");
+    assertEquals(fixture.qualityDrafts.length, 3);
+    assertEquals(fixture.groundingDrafts.length, 3);
+    for (const draft of fixture.qualityDrafts) {
+      assertEquals(JSON.parse(draft).map((section: { content: string }) => section.content),
+        [originalWording, siblingWording]);
+    }
+  });
+});
+
+Deno.test("bounded editorial review preserves source-supported wording and admitted order", async () => {
+  const issue: QualityAuditIssue = { severity: "high", category: "structure",
+    finding: "Prefer another conventional section order.",
+    required_correction: "Consider a different order." };
+  await withPipeline({ initial: originalWording, replacement: originalWording,
+    qualityIssuesByRound: [[issue], [issue], [issue]],
+  }, async (fixture) => {
+    const result = await fixture.run();
+    assertEquals(result.sections.map((section) => section.key), ["issue", "request"]);
+    assertEquals(result.sections.map((section) => section.content), [originalWording, siblingWording]);
+    assertEquals(fixture.writes.length, 2);
+    assertEquals(fixture.qualityDrafts.length, 3);
+    assertEquals(result.unresolvedPlaceholders, []);
   });
 });
 

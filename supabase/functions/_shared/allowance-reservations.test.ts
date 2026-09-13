@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-import-prefix -- Edge test dependencies use direct JSR specifiers pinned by the repository lockfile.
 import {
+  assert,
   assertEquals,
   assertRejects,
   assertStringIncludes,
@@ -170,6 +171,69 @@ Deno.test("cap rejection preserves the stable paywall response", async () => {
     (error.payload.error as Record<string, unknown>).paywall_trigger,
     true,
   );
+});
+
+for (const [plan, cap, nextPlan] of [
+  ["free", 3, "pro"],
+  ["pro", 20, "premium"],
+  ["premium", 40, "business"],
+] as const) {
+  Deno.test(`${plan} atomic cap rejection recommends only the next subscription plan`, async () => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const admin = fakeAdmin((name, args) => {
+      calls.push({ name, args });
+      return { data: null, error: { message: "ALLOWANCE_CAP_REACHED" } };
+    });
+    const error = await assertRejects(
+      () => reserveDocumentAllowance(admin, { ...base, plan, monthlyCap: cap }),
+      AllowanceReservationError,
+    );
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0].name, "reserve_document_allowance_with_result");
+    assertEquals(calls[0].args.p_user_id, base.userId);
+    assertEquals(calls[0].args.p_plan, plan);
+    assertEquals(calls[0].args.p_monthly_cap, cap);
+    assertEquals(error.status, 402);
+    assertEquals(error.code, "PAYWALL");
+    assertEquals(error.payload, { error: {
+      code: "PAYWALL",
+      message: "You've reached your document limit for this month. Upgrade to keep going.",
+      paywall_trigger: true,
+      current_plan: plan,
+      plan_required: nextPlan,
+    } });
+  });
+}
+
+Deno.test("business atomic cap rejection reports the monthly limit without an upgrade", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const admin = fakeAdmin((name, args) => {
+    calls.push({ name, args });
+    return { data: null, error: { message: "ALLOWANCE_CAP_REACHED" } };
+  });
+  const error = await assertRejects(
+    () => reserveDocumentAllowance(admin, { ...base, plan: "business", monthlyCap: 50 }),
+    AllowanceReservationError,
+  );
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].name, "reserve_document_allowance_with_result");
+  assertEquals(calls[0].args.p_user_id, base.userId);
+  assertEquals(calls[0].args.p_plan, "business");
+  assertEquals(calls[0].args.p_monthly_cap, 50);
+  assertEquals(error.status, 402);
+  assertEquals(error.code, "DOCUMENT_LIMIT_REACHED");
+  const detail = error.payload.error as Record<string, unknown>;
+  assertEquals(error.payload, { error: {
+    code: "DOCUMENT_LIMIT_REACHED",
+    message: detail.message,
+    paywall_trigger: false,
+    current_plan: "business",
+  } });
+  assert(typeof detail.message === "string");
+  assertStringIncludes(detail.message, "month");
+  assertStringIncludes(detail.message, "next month");
+  assertEquals(/\bupgrade\b/i.test(detail.message), false);
+  assertEquals(Object.hasOwn(detail, "plan_required"), false);
 });
 
 Deno.test("active and settled replays never receive provider permission", async () => {
@@ -425,10 +489,25 @@ Deno.test("legacy generation routes derive missing identities and expose output 
 });
 
 Deno.test("owner reservation contention reports the finite limit without an upgrade", async () => {
-  const admin = fakeAdmin(() => ({ data: null, error: { message: "ALLOWANCE_CAP_REACHED" } }));
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const admin = fakeAdmin((name, args) => {
+    calls.push({ name, args });
+    return { data: null, error: { message: "ALLOWANCE_CAP_REACHED" } };
+  });
   const input = { ...base, monthlyCap: 1000, accessProfile: "owner" as const };
   const error = await assertRejects(() => reserveDocumentAllowance(admin, input), AllowanceReservationError);
   assertEquals(error.status, 402);
   assertEquals(error.code, "DOCUMENT_LIMIT_REACHED");
   assertEquals((error.payload.error as Record<string, unknown>).paywall_trigger, false);
+  assertEquals(error.payload, { error: {
+    code: "DOCUMENT_LIMIT_REACHED",
+    message: "You have used your 1,000 documents for this month. New allowance becomes available next month.",
+    paywall_trigger: false,
+    current_plan: "free",
+  } });
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].name, "reserve_document_allowance_with_result");
+  assertEquals(calls[0].args.p_user_id, base.userId);
+  assertEquals(calls[0].args.p_plan, "free");
+  assertEquals(calls[0].args.p_monthly_cap, 1000);
 });

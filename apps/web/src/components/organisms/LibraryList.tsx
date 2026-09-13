@@ -7,7 +7,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import type { BadgeStatus } from "@/components/atoms/Badge";
 import { useLibrary } from "@/hooks/useLibrary";
-import type { LibraryTab, LibraryOutcome, LibraryDocument } from "@/hooks/useLibrary";
+import type { LibraryTab, LibraryOutcome, LibraryDocument, LibraryItem } from "@/hooks/useLibrary";
 import styles from "./LibraryList.module.css";
 
 function outcomeStatus(outcome: LibraryOutcome, docs: LibraryDocument[]): BadgeStatus {
@@ -36,21 +36,27 @@ function formatRelativeDate(iso: string): string {
 interface DocumentCardProps {
   outcome: LibraryOutcome;
   documents: LibraryDocument[];
+  manualPlan?: LibraryItem["manualPlan"];
   onToggleSaved: () => void;
   saving: boolean;
   disabled: boolean;
 }
 
-function DocumentCard({ outcome, documents, onToggleSaved, saving, disabled }: DocumentCardProps) {
+function DocumentCard({ outcome, documents, manualPlan, onToggleSaved, saving, disabled }: DocumentCardProps) {
   const status = outcomeStatus(outcome, documents);
   const primaryDoc = documents[0];
-  const title = primaryDoc?.title ?? outcome.situation_text.slice(0, 60);
+  const title = manualPlan
+    ? (manualPlan.title.trim() ? manualPlan.title : "Untitled plan")
+    : primaryDoc?.title ?? outcome.situation_text.slice(0, 60);
+  const href = manualPlan
+    ? `/plans?create=manual&plan=${encodeURIComponent(manualPlan.plan_id)}`
+    : `/outcomes/${outcome.id}`;
 
   return (
     <article className={styles.card}>
       <div className={styles.cardMain}>
         <Link
-          href={`/outcomes/${outcome.id}`}
+          href={href}
           className={styles.cardLink}
           aria-label={`Open ${title}`}
         >
@@ -201,11 +207,12 @@ function LibraryContent() {
         ) : (
           <>
             <ul className={styles.list}>
-              {items.map(({ outcome, documents }) => (
+              {items.map(({ outcome, documents, manualPlan }) => (
                 <li key={outcome.id}>
                   <DocumentCard
                     outcome={outcome}
                     documents={documents}
+                    manualPlan={manualPlan}
                     onToggleSaved={() => {
                       void toggleSaved(outcome.id, outcome.is_saved);
                     }}

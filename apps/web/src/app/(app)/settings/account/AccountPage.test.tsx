@@ -1,6 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UsageState } from "@prompted/shared";
+import type { EffectiveProductAccess } from "@prompted/shared/plans";
 import AccountPage from "./page";
 import { recordBrowserPrincipal } from "@/lib/browser-principal-state";
 
@@ -35,6 +36,19 @@ const usage: UsageState = {
   currentPeriodEnd: "2026-09-12T00:00:00.000Z",
 };
 
+const accountOwnerId = "81001111-0000-4000-8000-000000000001";
+const confirmedFreeAccess: EffectiveProductAccess = {
+  userId: accountOwnerId,
+  subscriptionPlan: "free",
+  effectivePlan: "free",
+  subscriptionStatus: null,
+  currentPeriodEnd: null,
+  accessProfile: "subscription",
+  monthlyDocumentCap: 3,
+  aiEditing: false,
+  businessFeatures: false,
+};
+
 describe("AccountPage", () => {
   afterEach(() => vi.useRealTimers());
   beforeEach(() => {
@@ -52,10 +66,10 @@ describe("AccountPage", () => {
     expect(mocks.router.replace).toHaveBeenCalledWith("/sign-in");
   });
 
-  it("shows plan, renewal date, sign out and delete account", async () => {
+  it("shows plan, subscription period end, sign out and delete account", async () => {
     render(<AccountPage />);
     await waitFor(() => expect(screen.getByText("Pro")).toBeInTheDocument());
-    expect(screen.getByText(/renews/i)).toBeInTheDocument();
+    expect(screen.getByText(/subscription period end:/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sign out" })).toHaveAttribute("href", "/sign-out");
     expect(screen.getByRole("link", { name: "Delete account" })).toHaveAttribute(
       "href",
@@ -73,6 +87,67 @@ describe("AccountPage", () => {
         "Online checkout isn't available yet. No upgrade request was sent, and your plan is unchanged.",
       tone: "info",
     });
+  });
+
+  it.each(["expired", "cancelled"] as const)(
+    "does not claim the monthly limit was reached when comparing an unused %s Business account",
+    async (subscriptionStatus) => {
+      mocks.user = { id: accountOwnerId, email: "kai@example.com" };
+      recordBrowserPrincipal(accountOwnerId);
+      mocks.fetchUsageState.mockResolvedValueOnce({
+        plan: "business",
+        documentsThisMonth: 0,
+        subscriptionStatus,
+        currentPeriodEnd: "2020-01-15T12:00:00.000Z",
+        access: {
+          ...confirmedFreeAccess,
+          subscriptionPlan: "business",
+          subscriptionStatus,
+          currentPeriodEnd: "2020-01-15T12:00:00.000Z",
+        },
+      } satisfies UsageState);
+      render(<AccountPage />);
+      await screen.findByRole("heading", { name: "Business" });
+      expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+      const dialog = within(screen.getByRole("dialog", { name: "Upgrade your plan" }));
+      expect(dialog.queryByText(/reached.*limit|upgrade to keep going/i)).not.toBeInTheDocument();
+      for (const plan of ["Pro", "Premium", "Business"]) {
+        expect(dialog.getByRole("button", { name: `Select ${plan} plan` })).toBeInTheDocument();
+      }
+      expect(mocks.fetchUsageState).toHaveBeenCalledTimes(1);
+      expect(mocks.showToast).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains the confirmed monthly cap warning when opening and closing plan comparison", async () => {
+    mocks.user = { id: accountOwnerId, email: "kai@example.com" };
+    recordBrowserPrincipal(accountOwnerId);
+    mocks.fetchUsageState.mockResolvedValueOnce({
+      plan: "free",
+      documentsThisMonth: 3,
+      subscriptionStatus: null,
+      currentPeriodEnd: null,
+      access: confirmedFreeAccess,
+    } satisfies UsageState);
+    render(<AccountPage />);
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveTextContent(
+      "You've reached your monthly limit. Upgrade to create more documents.",
+    );
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+    expect(screen.getByRole("dialog", { name: "Upgrade your plan" })).toBeInTheDocument();
+    expect(warning).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBe(warning);
+    expect(warning).toHaveTextContent("You've reached your monthly limit.");
+    expect(mocks.fetchUsageState).toHaveBeenCalledTimes(1);
+    expect(mocks.showToast).not.toHaveBeenCalled();
   });
 
   it("hides the previous account plan and rejects its delayed response after an account switch", async () => {
@@ -130,4 +205,101 @@ describe("AccountPage", () => {
     view.unmount();
     expect(signal.aborted).toBe(true);
   });
+
+  it.each(["expired", "cancelled"] as const)(
+    "compares upgrades from effective Free for a historical %s Business subscription",
+    async (subscriptionStatus) => {
+      mocks.user = { id: accountOwnerId, email: "kai@example.com" };
+      recordBrowserPrincipal(accountOwnerId);
+      mocks.fetchUsageState.mockResolvedValueOnce({
+        plan: "business",
+        documentsThisMonth: 3,
+        subscriptionStatus,
+        currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+        access: {
+          ...confirmedFreeAccess,
+          subscriptionPlan: "business",
+          subscriptionStatus,
+          currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+        },
+      } satisfies UsageState);
+      render(<AccountPage />);
+      await screen.findByRole("heading", { name: "Business" });
+      expect(screen.getByRole("list", { name: "Free plan features" })).toHaveTextContent(
+        "3 documents per month",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      for (const plan of ["Pro", "Premium", "Business"]) {
+        expect(screen.getByRole("button", { name: `Select ${plan} plan` })).toBeInTheDocument();
+      }
+      expect(screen.getByRole("heading", { name: "Business" })).toBeInTheDocument();
+      expect(screen.getByRole("note")).toHaveTextContent("Online checkout isn't available yet");
+      expect(mocks.showToast).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["pending", "ready"] as const)(
+    "renews a %s account read after A-to-B-to-A without rendering the intervening owner",
+    async (initialStatus) => {
+      mocks.user = { id: accountOwnerId, email: "kai@example.com" };
+      recordBrowserPrincipal(accountOwnerId);
+      const previousUsage: UsageState = {
+        ...usage,
+        access: {
+          ...confirmedFreeAccess,
+          subscriptionPlan: "pro",
+          effectivePlan: "pro",
+          subscriptionStatus: "active",
+          currentPeriodEnd: usage.currentPeriodEnd ?? null,
+          monthlyDocumentCap: 20,
+          aiEditing: true,
+        },
+      };
+      const freshUsage: UsageState = {
+        plan: "free",
+        documentsThisMonth: 1,
+        subscriptionStatus: null,
+        currentPeriodEnd: null,
+        access: confirmedFreeAccess,
+      };
+      let completePrevious!: (value: UsageState) => void;
+      let completeFresh!: (value: UsageState) => void;
+      mocks.fetchUsageState
+        .mockReturnValueOnce(new Promise<UsageState>((resolve) => { completePrevious = resolve; }))
+        .mockReturnValueOnce(new Promise<UsageState>((resolve) => { completeFresh = resolve; }));
+      const view = render(<AccountPage />);
+      expect(mocks.fetchUsageState).toHaveBeenCalledTimes(1);
+      const previousSignal = mocks.fetchUsageState.mock.calls[0]![1] as AbortSignal;
+      if (initialStatus === "ready") {
+        await act(async () => completePrevious(previousUsage));
+        fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      }
+
+      act(() => {
+        recordBrowserPrincipal("81001111-0000-4000-8000-000000000002");
+        recordBrowserPrincipal(accountOwnerId);
+        view.rerender(<AccountPage />);
+      });
+      expect(screen.queryByRole("heading", { name: "Pro" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await waitFor(() => expect(mocks.fetchUsageState).toHaveBeenCalledTimes(2));
+      expect(previousSignal.aborted).toBe(true);
+      expect(mocks.fetchUsageState.mock.calls[1]![0]).toBe(accountOwnerId);
+      const freshSignal = mocks.fetchUsageState.mock.calls[1]![1] as AbortSignal;
+      expect(freshSignal).not.toBe(previousSignal);
+      expect(freshSignal.aborted).toBe(false);
+
+      await act(async () => completeFresh(freshUsage));
+      await screen.findByRole("heading", { name: "Free" });
+      if (initialStatus === "pending") {
+        await act(async () => completePrevious(previousUsage));
+      }
+      expect(screen.getByRole("heading", { name: "Free" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Pro" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(mocks.fetchUsageState).toHaveBeenCalledTimes(2);
+    },
+  );
 });

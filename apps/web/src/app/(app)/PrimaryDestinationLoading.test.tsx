@@ -9,7 +9,10 @@ const auth = vi.hoisted(() => ({
   user: null as null | { id: string; email: string },
 }));
 vi.mock("@/components/providers", () => ({ useAuth: () => auth }));
-vi.mock("next/navigation", () => ({ usePathname: () => "/home" }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/home",
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/components/organisms/LibraryList", () => ({ LibraryList: () => null }));
 vi.mock("@/components/organisms/ChecklistLibrary", () => ({ ChecklistLibrary: () => null }));
 vi.mock("@/components/organisms/WhatsDue", () => ({ WhatsDue: () => null }));

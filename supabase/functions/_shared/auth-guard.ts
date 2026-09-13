@@ -172,6 +172,13 @@ export const PAYWALL_PAYLOAD = (plan: Plan, accessProfile: "subscription" | "own
     paywall_trigger: false,
     current_plan: plan,
   },
+}) : plan === "business" ? ({
+  error: {
+    code: "DOCUMENT_LIMIT_REACHED",
+    message: "You've reached your document limit for this month. New allowance becomes available next month.",
+    paywall_trigger: false,
+    current_plan: plan,
+  },
 }) : ({
   error: {
     code: "PAYWALL",
@@ -179,13 +186,13 @@ export const PAYWALL_PAYLOAD = (plan: Plan, accessProfile: "subscription" | "own
       "You've reached your document limit for this month. Upgrade to keep going.",
     paywall_trigger: true,
     current_plan: plan,
-    plan_required: plan === "free" ? "pro" : "premium",
+    plan_required: plan === "free" ? "pro" : plan === "pro" ? "premium" : "business",
   },
 });
 
 export interface GuardOptions {
   /**
-   * When true (default), reject with 402 PAYWALL once the user's monthly
+   * When true (default), reject with 402 once the user's monthly
    * document cap is reached. The cap meters NEW DOCUMENT CREATION ONLY —
    * uploads, section edits, regenerates, explains, exports and chat must
    * pass { enforceCap: false }. A capped user must always be able to read,

@@ -749,45 +749,55 @@ Deno.test("generate-document preserves unsettled history whose old provider temp
   assertEquals(previousRead, before);
 });
 
-Deno.test("generate-document permits proven equivalent historical provider inputs", async () => {
-  const test = fixture({ previousRead: historicalPending() });
-  // Resume has an already aligned historical/current template AND fact
-  // contract. Offer-letter now changes fact projection and is tested below
-  // as a recovery conflict; equal section labels alone were not equivalence.
+Deno.test("generate-document preserves unbound historical resume work after structure projection changes", async () => {
+  const previousRead = historicalPending();
+  const before = structuredClone(previousRead);
+  const test = fixture({ previousRead });
+  // Equal section keys cannot establish provider-input equivalence. Current
+  // resume guidance now uses canonical structure; historical guidance stays
+  // authored, so unfinished work cannot resume under the changed policy.
   const resume = requiredCatalogueTemplate(coreCatalogue, "resume");
   const { response, text } = await test.send(catalogueBody(resume));
-  assertEquals(response.status, 200);
-  assertStringIncludes(text, "[DONE]");
-  const policy = test.calls.reserve[0]?.executionPolicy;
-  assert(policy);
-  assertEquals(policy.legacySha256, policy.sha256);
-  assertEquals(test.calls.pipeline.length, 1);
+  assertEquals(response.status, 409);
+  const result = JSON.parse(text);
+  assertEquals(result.error.code, "GENERATION_TEMPLATE_RECOVERY_REQUIRED");
+  assertEquals(result.error.retryable, false);
+  assert(!text.includes("[DONE]"));
+  assertEquals(test.calls.reserve, []);
+  assertEquals(test.calls.release, []);
+  assertEquals(test.calls.settle, []);
+  assertEquals(test.calls.design, []);
+  assertEquals(test.calls.pipeline, []);
+  assertEquals(test.calls.unexpectedHttp, []);
+  assertEquals(previousRead, before);
 });
 
-Deno.test("generate-document NEW canonical interruption resumes its durable policy instead of the old generic template", async () => {
-  const test = fixture({ persistPolicy: true, pipelineFailures: 1 });
-  const body = catalogueBody(complaint);
-  const interrupted = await test.send(body);
-  assertStringIncludes(interrupted.text, '"type":"error"');
-  assert(!interrupted.text.includes("[DONE]"));
-  assertEquals(test.calls.settle.length, 0);
-  const firstPolicy = test.calls.reserve[0]?.executionPolicy;
-  assert(firstPolicy);
-  const resumed = await test.send(body);
-  assertEquals(resumed.response.status, 200);
-  assertStringIncludes(resumed.text, "[DONE]");
-  assertEquals(test.calls.reserve.length, 2);
-  assertEquals(test.calls.reserve[1]?.executionPolicy, firstPolicy);
-  assertEquals(
-    test.calls.reserve[1]?.requestId,
-    test.calls.reserve[0]?.requestId,
-  );
-  assertEquals(test.calls.pipeline.map((input) => input.template.name), [
-    "Complaint Letter",
-    "Complaint Letter",
-  ]);
-  assertEquals(test.calls.settle.length, 1);
-});
+for (const template of [complaint, requiredCatalogueTemplate(coreCatalogue, "resume")]) {
+  Deno.test(`generate-document NEW canonical ${template.slug} interruption resumes its exact durable policy`, async () => {
+    const test = fixture({ persistPolicy: true, pipelineFailures: 1 });
+    const body = catalogueBody(template);
+    const interrupted = await test.send(body);
+    assertStringIncludes(interrupted.text, '"type":"error"');
+    assert(!interrupted.text.includes("[DONE]"));
+    assertEquals(test.calls.settle.length, 0);
+    const firstPolicy = test.calls.reserve[0]?.executionPolicy;
+    assert(firstPolicy);
+    const resumed = await test.send(body);
+    assertEquals(resumed.response.status, 200);
+    assertStringIncludes(resumed.text, "[DONE]");
+    assertEquals(test.calls.reserve.length, 2);
+    assertEquals(test.calls.reserve[1]?.executionPolicy, firstPolicy);
+    assertEquals(
+      test.calls.reserve[1]?.requestId,
+      test.calls.reserve[0]?.requestId,
+    );
+    assertEquals(test.calls.pipeline.map((input) => input.template.name), [
+      template.name,
+      template.name,
+    ]);
+    assertEquals(test.calls.settle.length, 1);
+  });
+}
 
 Deno.test("generate-document changed accepted policy fails before reacquisition and preserves receipt", async () => {
   const previousRead = historicalPending();

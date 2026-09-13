@@ -120,62 +120,154 @@ export async function fetchSavedRoles(
   return (data ?? []) as SavedRole[];
 }
 
-/** Record what happened at a given stage \u2014 the outcome-tracking loop. */
-export async function recordRoleOutcome(input: {
+export interface RoleOutcomeCommand {
+  /** Allocated once before the first attempt; reused on every uncertain retry. */
+  eventId: string;
   userId: string;
   savedRoleId: string;
   stage: RoleOutcomeStage;
   note?: string;
-  occurredAt?: string;
-}, lease: OwnerDispatchLease): Promise<RoleOutcome> {
+  occurredAt: string;
+}
+
+export function roleOutcomeLocalDate(now = new Date()): string {
+  return `${now.getFullYear().toString().padStart(4, "0")}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getDate().toString().padStart(2, "0")}`;
+}
+
+function isCivilDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+const ROLE_OUTCOME_COLUMNS = "id,user_id,saved_role_id,stage,note,occurred_at";
+
+function readRoleOutcome(value: unknown, ownerId: string, roleId: string): RoleOutcome | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.id !== "string" || !UUID_PATTERN.test(row.id) || row.user_id !== ownerId ||
+    row.saved_role_id !== roleId || typeof row.stage !== "string" ||
+    !Object.hasOwn(ROLE_OUTCOME_STAGE_LABELS, row.stage) ||
+    (row.note !== null && typeof row.note !== "string") || !isCivilDate(row.occurred_at)) return null;
+  return { id: row.id, stage: row.stage as RoleOutcomeStage, note: row.note, occurred_at: row.occurred_at };
+}
+
+/** Insert once; reconcile ambiguous acknowledgements by exact immutable identity. */
+export async function recordRoleOutcome(input: RoleOutcomeCommand, lease: OwnerDispatchLease): Promise<RoleOutcome> {
   if (input.userId.trim().toLowerCase() !== lease.expectedUserId) {
     throw new Error("SAVED_ROLE_OWNER_CONTEXT_MISMATCH");
   }
-  const { data, error } = await withOwnerSupabase(lease, async (supabase) =>
-    await supabase
-      .from("role_outcomes")
-      .insert({
-        user_id: input.userId,
-        saved_role_id: input.savedRoleId,
-        stage: input.stage,
-        note: input.note?.trim() || null,
-        occurred_at: input.occurredAt ?? new Date().toISOString().slice(0, 10),
-      })
-      .select("id,stage,note,occurred_at")
-      .single(),
-  );
-  if (error || !data) throw error ?? new Error("ROLE_OUTCOME_SAVE_UNCONFIRMED");
-  return data as RoleOutcome;
+  if (!UUID_PATTERN.test(input.eventId) || !UUID_PATTERN.test(input.savedRoleId) ||
+    !Object.hasOwn(ROLE_OUTCOME_STAGE_LABELS, input.stage) || !isCivilDate(input.occurredAt) ||
+    (input.note !== undefined && typeof input.note !== "string")) throw new Error("ROLE_OUTCOME_COMMAND_INVALID");
+  const expected = { id: input.eventId.toLowerCase(), user_id: lease.expectedUserId, saved_role_id: input.savedRoleId.toLowerCase(),
+    stage: input.stage, note: input.note?.trim() || null, occurred_at: input.occurredAt };
+  const matches = (row: RoleOutcome) => row.id === expected.id && row.stage === expected.stage &&
+    row.note === expected.note && row.occurred_at === expected.occurred_at;
+  return withOwnerSupabase(lease, async supabase => {
+    lease.assertCurrent();
+    try {
+      const { data, error } = await supabase.from("role_outcomes").insert(expected).select(ROLE_OUTCOME_COLUMNS).single();
+      lease.assertCurrent();
+      const row = !error && readRoleOutcome(data, expected.user_id, expected.saved_role_id);
+      if (row && matches(row)) return row;
+    } catch {
+      // An insert may have committed before its acknowledgement was lost.
+      // A read under the same owner lease is the only permitted reconciliation.
+      lease.assertCurrent();
+    }
+    lease.assertCurrent();
+    const { data, error } = await supabase.from("role_outcomes").select(ROLE_OUTCOME_COLUMNS)
+      .eq("id", expected.id).eq("user_id", expected.user_id).eq("saved_role_id", expected.saved_role_id).maybeSingle();
+    lease.assertCurrent();
+    const row = !error && readRoleOutcome(data, expected.user_id, expected.saved_role_id);
+    if (!row) throw new Error("ROLE_OUTCOME_SAVE_UNCONFIRMED");
+    if (!matches(row)) throw new Error("ROLE_OUTCOME_REPLAY_CONFLICT");
+    return row;
+  });
 }
 
 export async function fetchRoleOutcomes(
   savedRoleId: string,
   lease: OwnerDispatchLease,
 ): Promise<RoleOutcome[]> {
+  if (!UUID_PATTERN.test(savedRoleId)) throw new Error("ROLE_OUTCOME_ROLE_INVALID");
+  savedRoleId = savedRoleId.toLowerCase();
   const { data, error } = await withOwnerSupabase(lease, async (supabase) =>
     await supabase
       .from("role_outcomes")
-      .select("id,stage,note,occurred_at")
+      .select(ROLE_OUTCOME_COLUMNS)
       .eq("saved_role_id", savedRoleId)
+      .eq("user_id", lease.expectedUserId)
       .order("occurred_at", { ascending: false }),
   );
   if (error) throw error;
-  return (data ?? []) as RoleOutcome[];
+  if (!Array.isArray(data)) throw new Error("ROLE_OUTCOME_HISTORY_INVALID");
+  const rows: RoleOutcome[] = [];
+  const ids = new Set<string>();
+  for (const value of data) {
+    const row = readRoleOutcome(value, lease.expectedUserId, savedRoleId);
+    if (!row || ids.has(row.id)) throw new Error("ROLE_OUTCOME_HISTORY_INVALID");
+    ids.add(row.id);
+    rows.push(row);
+  }
+  return rows;
+}
+
+const ROLE_ACTION_COLUMNS = "id,user_id,saved_role_id,label,description,status,sort_order,mutation_token";
+// PostgreSQL UUID values need not carry an RFC version; returned text is lowercase.
+const ROLE_ACTION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function readRoleActionItem(value: unknown, ownerId: string, roleId: string): RoleActionItem | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.id !== "string" || !ROLE_ACTION_UUID_PATTERN.test(row.id) ||
+    row.user_id !== ownerId || row.saved_role_id !== roleId ||
+    typeof row.label !== "string" ||
+    (row.description !== null && typeof row.description !== "string") ||
+    (row.status !== "pending" && row.status !== "done" && row.status !== "skipped") ||
+    typeof row.sort_order !== "number" || !Number.isInteger(row.sort_order) ||
+    row.sort_order < -2147483648 || row.sort_order > 2147483647 ||
+    typeof row.mutation_token !== "string" || !ROLE_ACTION_UUID_PATTERN.test(row.mutation_token)
+  ) return null;
+  return {
+    id: row.id,
+    label: row.label,
+    description: row.description,
+    status: row.status,
+    sort_order: row.sort_order,
+    mutation_token: row.mutation_token,
+  };
 }
 
 export async function fetchActionItems(
   savedRoleId: string,
   lease: OwnerDispatchLease,
 ): Promise<RoleActionItem[]> {
+  if (typeof savedRoleId !== "string" || !ROLE_ACTION_UUID_PATTERN.test(savedRoleId.toLowerCase())) {
+    throw new Error("ROLE_ACTION_ROLE_INVALID");
+  }
+  const roleId = savedRoleId.toLowerCase();
   const { data, error } = await withOwnerSupabase(lease, async (supabase) =>
     await supabase
       .from("role_action_items")
-      .select("id,label,description,status,sort_order,mutation_token")
-      .eq("saved_role_id", savedRoleId)
+      .select(ROLE_ACTION_COLUMNS)
+      .eq("saved_role_id", roleId)
+      .eq("user_id", lease.expectedUserId)
       .order("sort_order", { ascending: true }),
   );
   if (error) throw error;
-  return (data ?? []) as RoleActionItem[];
+  if (!Array.isArray(data)) throw new Error("ROLE_ACTION_ITEMS_INVALID");
+  const rows: RoleActionItem[] = [];
+  const ids = new Set<string>();
+  for (const value of data) {
+    const row = readRoleActionItem(value, lease.expectedUserId, roleId);
+    if (!row || ids.has(row.id)) throw new Error("ROLE_ACTION_ITEMS_INVALID");
+    ids.add(row.id);
+    rows.push(row);
+  }
+  return rows;
 }
 
 export type RoleActionItemMutationResult =
@@ -187,7 +279,7 @@ function isRoleActionItem(value: unknown, expectedId: string): value is RoleActi
   const item = value as Record<string, unknown>;
   return (
     item.id === expectedId &&
-    typeof item.label === "string" && item.label.trim().length > 0 &&
+    typeof item.label === "string" &&
     (item.description === null || typeof item.description === "string") &&
     (item.status === "pending" || item.status === "done" || item.status === "skipped") &&
     Number.isInteger(item.sort_order) &&

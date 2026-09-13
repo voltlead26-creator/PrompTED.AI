@@ -1,4 +1,27 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+/** Snapshot the exact Git-rostered source files for before/after comparison. */
+export function snapshotAcceptanceSources({ root, files, deletedFiles = [] }) {
+  const sourceFiles = new Set(files);
+  const deleted = new Set(deletedFiles);
+  for (const file of deletedFiles) {
+    assert(sourceFiles.has(file), `Deleted source is outside the source roster: ${file}`);
+  }
+  return Object.fromEntries(
+    [...files].sort().map((file) => {
+      const path = join(root, file);
+      const stat = lstatSync(path, { throwIfNoEntry: !deleted.has(file) });
+      // Only an explicit Git deletion may be absent. Retain its path so a
+      // later recreation/deletion cannot disappear from the drift comparison.
+      if (stat === undefined) return [file, null];
+      assert(stat.isFile(), `Unexpected non-file source: ${file}`);
+      return [file, createHash("sha256").update(readFileSync(path)).digest("hex")];
+    }),
+  );
+}
 
 /** Freeze the explicitly selected repository revision before starting a local stack. */
 export function assertAcceptanceSourceIdentity({ head, expectedHead, branch, origin, github }) {

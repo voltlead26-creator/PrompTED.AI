@@ -190,17 +190,16 @@ describe("SubscriptionPlan", () => {
     expect(screen.getByText(/\/ 3/)).toBeInTheDocument();
   });
 
-  it("shows 'unlimited' in usage count for premium plan", () => {
+  it("shows the 40-document Premium allowance and current usage", () => {
     render(
       <SubscriptionPlan
         plan="premium"
         documentsThisMonth={15}
       />,
     );
-    // "/ unlimited" appears in the usage counter
-    expect(screen.getByText(/\/ unlimited/i)).toBeInTheDocument();
-    // no progress bar for unlimited plans
-    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.getByText(/\/ 40/)).toBeInTheDocument();
+    expect(screen.queryByText(/unlimited/i)).toBeNull();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "37.5");
   });
 
   it("shows cap warning when at cap", () => {
@@ -256,7 +255,7 @@ describe("SubscriptionPlan", () => {
     expect(screen.getByText(/free plan/i)).toBeInTheDocument();
   });
 
-  it("shows a renewal date for an active paid subscription", () => {
+  it("shows the subscription period end without inferring renewal", () => {
     render(
       <SubscriptionPlan
         plan="pro"
@@ -265,7 +264,7 @@ describe("SubscriptionPlan", () => {
         currentPeriodEnd="2026-09-12T00:00:00.000Z"
       />,
     );
-    expect(screen.getByText(/renews/i)).toHaveTextContent("September");
+    expect(screen.getByText(/subscription period end:/i)).toHaveTextContent("September");
   });
 
   it("shows an end date for a cancelled subscription", () => {
@@ -277,11 +276,11 @@ describe("SubscriptionPlan", () => {
         currentPeriodEnd="2026-09-12T00:00:00.000Z"
       />,
     );
-    expect(screen.getByText(/access ends/i)).toBeInTheDocument();
+    expect(screen.getByText(/subscription period end:/i)).toBeInTheDocument();
   });
 
   it("shows nothing extra for a paid plan with no known period end", () => {
     render(<SubscriptionPlan plan="pro" documentsThisMonth={0} />);
-    expect(screen.queryByText(/renews|access ends|free plan/i)).toBeNull();
+    expect(screen.queryByText(/subscription period end:|renews|access ends|free plan/i)).toBeNull();
   });
 });

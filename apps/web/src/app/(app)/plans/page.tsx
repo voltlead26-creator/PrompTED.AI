@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { useAuth } from "@/components/providers";
 import { ChecklistLibrary } from "@/components/organisms/ChecklistLibrary";
 import { WhatsDue } from "@/components/organisms/WhatsDue";
@@ -13,30 +14,33 @@ import { PlansCreatePanel } from "./PlansCreatePanel";
 import styles from "../library/library.module.css";
 import hubStyles from "./PlansHub.module.css";
 
-type CreateMode = "manual" | "ted" | null;
-
 export default function PlansPage() {
+  return (
+    <Suspense fallback={<PlansLoading />}>
+      <PlansContent />
+    </Suspense>
+  );
+}
+
+function PlansLoading() {
+  return (
+    <section className={styles.page} aria-labelledby="plans-heading">
+      <h1 id="plans-heading" className={styles.heading}>
+        Checklists / Action Plans
+      </h1>
+      <Spinner label="Loading your plans" showLabel />
+    </section>
+  );
+}
+
+function PlansContent() {
   const { user, loading } = useAuth();
   const { items: dueItems } = useWhatsDue(user?.id ?? "");
-  const [createMode, setCreateMode] = useState<CreateMode>(null);
-  const [planId, setPlanId] = useState<string | null>(null);
+  const params = useSearchParams();
+  const createMode = params.get("create");
+  const planId = params.get("plan");
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const mode = params.get("create");
-    setCreateMode(mode === "manual" || mode === "ted" ? mode : null);
-    setPlanId(params.get("plan"));
-  }, []);
-
-  if (loading)
-    return (
-      <section className={styles.page} aria-labelledby="plans-heading">
-        <h1 id="plans-heading" className={styles.heading}>
-          Checklists / Action Plans
-        </h1>
-        <Spinner label="Loading your plans" showLabel />
-      </section>
-    );
+  if (loading) return <PlansLoading />;
 
   if (createMode === "manual") {
     return (

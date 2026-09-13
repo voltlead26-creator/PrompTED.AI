@@ -1,5 +1,15 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { resolveExportFormat } from "./export-format-policy.ts";
+import { PLANS } from "../../../packages/shared/src/plans.ts";
+
+Deno.test("plan export features match the existing activated format policy", () => {
+  const activated = ["pdf", "word", "excel"].filter(format => resolveExportFormat(format).ok);
+  for (const plan of Object.values(PLANS)) {
+    const advertised = plan.features.filter(feature => / export$/i.test(feature))
+      .flatMap(feature => feature.replace(/ export$/i, "").toLowerCase().split(/,\s*/));
+    assertEquals(advertised, activated, `${plan.id} advertises only activated exports`);
+  }
+});
 
 Deno.test("missing and explicit PDF formats activate inspected PDF only", () => {
   assertEquals(resolveExportFormat(undefined), { ok: true, format: "pdf" });

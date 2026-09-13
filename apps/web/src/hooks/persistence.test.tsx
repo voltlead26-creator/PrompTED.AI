@@ -509,6 +509,65 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const monthlyDocumentLimitMessage =
+  "You've reached your document limit for this month. New allowance becomes available next month.";
+const unconfirmedDocumentLimitMessage =
+  "PrompTED could not confirm the document limit details. New generation is paused. You can still edit your existing wording.";
+const coherentDocumentLimitDetails = {
+  code: "DOCUMENT_LIMIT_REACHED",
+  message: monthlyDocumentLimitMessage,
+  paywall_trigger: false,
+  current_plan: "business",
+};
+
+function prepareDocumentLimitWorkspace(initialGeneration: boolean) {
+  vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
+  mockFetchOutcome.mockResolvedValue({
+    situation_text: "I was charged $10 twice.",
+    recommendation_payload: {
+      situation: "I was charged $10 twice.",
+      primary: { template_id: "complaint_letter", reason: "Complaint Letter" },
+    },
+  });
+  mockFetchDocumentByOutcomeId.mockResolvedValue({
+    ...dbDocument,
+    title: "Complaint Letter",
+    template_id: "complaint_letter",
+  });
+  const approvedSibling = {
+    ...dbSections[0]!,
+    id: "request",
+    key: "request",
+    name: "Request",
+    order_index: 1,
+    content: "Please review the duplicate charge.",
+    status: "approved" as const,
+    revision: 3,
+    approved_revision: 3,
+  };
+  mockFetchSections.mockResolvedValue([
+    {
+      ...dbSections[0]!,
+      id: "issue",
+      key: "issue",
+      name: "Issue",
+      content: initialGeneration ? "" : "I was charged $10 twice for the same purchase.",
+    },
+    approvedSibling,
+  ]);
+  return approvedSibling;
+}
+
+function documentLimitError(currentPlan = "business", message = monthlyDocumentLimitMessage) {
+  return new ApiError(402, "DOCUMENT_LIMIT_REACHED", {
+    error: {
+      ...coherentDocumentLimitDetails,
+      message,
+      current_plan: currentPlan,
+    },
+  });
+}
+
 afterEach(() => recordBrowserPrincipal(undefined));
 
 describe("useDocument — DB persistence wiring", () => {
@@ -1532,7 +1591,194 @@ describe("useDocument — DB persistence wiring", () => {
     },
   );
 
-  it.each([null, 401, 402])(
+  it.each([
+    { path: "initial", currentPlan: "business", message: monthlyDocumentLimitMessage },
+    { path: "section retry", currentPlan: "business", message: monthlyDocumentLimitMessage },
+    {
+      path: "initial",
+      currentPlan: "free",
+      message: "You have used your 1,000 documents for this month. New allowance becomes available next month.",
+    },
+    {
+      path: "section retry",
+      currentPlan: "free",
+      message: "You have used your 1,000 documents for this month. New allowance becomes available next month.",
+    },
+  ])("keeps the $currentPlan monthly cap truthful after $path generation", async ({ path, currentPlan, message }) => {
+    const initialGeneration = path === "initial";
+    const approvedSibling = prepareDocumentLimitWorkspace(initialGeneration);
+    vi.mocked(generateDocumentStream).mockRejectedValue(documentLimitError(currentPlan, message));
+    const { result } = renderHook(() => useDocument("outcome-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    if (!initialGeneration) {
+      expect(generateDocumentStream).not.toHaveBeenCalled();
+      await act(async () => {
+        await result.current.retryGenerationSection("issue");
+      });
+    }
+
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+    expect(result.current.generationIssues).toEqual([
+      expect.objectContaining({
+        sectionId: "__document_limit__",
+        sectionName: "Monthly document limit reached",
+        reason: monthlyDocumentLimitMessage,
+        retryable: false,
+      }),
+    ]);
+    expect(result.current.state?.sections.find((section) => section.id === "request")).toEqual(approvedSibling);
+    expect(result.current.drafting).toBe(false);
+    expect(result.current.regeneratingSectionId).toBeNull();
+
+    act(() => {
+      result.current.setSections((sections) => sections.map((section) => section.id === "issue"
+        ? { ...section, content: "Owner-entered wording while the monthly limit is reached.", status: "edited" as const }
+        : section));
+    });
+    expect(result.current.generationIssues).toContainEqual(
+      expect.objectContaining({ sectionId: "__document_limit__", retryable: false }),
+    );
+    const saveCount = mockSaveLegacyWorkspaceV1.mock.calls.length;
+    await act(async () => {
+      await result.current.retryGenerationSection("issue");
+      await result.current.retryGenerationSection("request");
+      await result.current.retryGenerationSection("__document_limit__");
+    });
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+    expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalledTimes(saveCount);
+    expect(result.current.state?.sections.find((section) => section.id === "issue")?.content).toBe(
+      "Owner-entered wording while the monthly limit is reached.",
+    );
+    expect(result.current.state?.sections.find((section) => section.id === "request")).toEqual(approvedSibling);
+  });
+
+  it("blocks a retained retry callback as soon as the cap response settles", async () => {
+    prepareDocumentLimitWorkspace(false);
+    const generation = deferred<void>();
+    vi.mocked(generateDocumentStream).mockImplementationOnce(() => generation.promise);
+    const { result } = renderHook(() => useDocument("outcome-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const retryBeforeCap = result.current.retryGenerationSection;
+    let attempt: Promise<void> | undefined;
+    act(() => { attempt = retryBeforeCap("issue"); });
+    await waitFor(() => expect(generateDocumentStream).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      generation.reject(documentLimitError());
+      await attempt;
+      await retryBeforeCap("issue");
+    });
+
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+    expect(result.current.generationIssues).toContainEqual(
+      expect.objectContaining({ sectionId: "__document_limit__", retryable: false }),
+    );
+    expect(result.current.state?.sections.find((section) => section.id === "issue")?.content).toBe(
+      "I was charged $10 twice for the same purchase.",
+    );
+  });
+
+  it("uses safe monthly-limit wording instead of displaying server diagnostics", async () => {
+    prepareDocumentLimitWorkspace(true);
+    const unsafeMessage = "Private server diagnostic: synthetic-record-42; upgrade at an untrusted destination.";
+    vi.mocked(generateDocumentStream).mockRejectedValue(documentLimitError("business", unsafeMessage));
+    const { result } = renderHook(() => useDocument("outcome-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.generationIssues).toEqual([
+      expect.objectContaining({ sectionId: "__document_limit__", reason: monthlyDocumentLimitMessage, retryable: false }),
+    ]);
+    expect(JSON.stringify(result.current.generationIssues)).not.toContain(unsafeMessage);
+  });
+
+  it.each([
+    {
+      name: "a lower-plan PAYWALL",
+      code: "PAYWALL",
+      payload: { error: { code: "PAYWALL", paywall_trigger: true, current_plan: "premium", plan_required: "business" } },
+    },
+    { name: "a legacy HTTP 402", code: "LEGACY_LIMIT", payload: {} },
+    {
+      name: "an unrelated non-upgrade flag",
+      code: "PAYWALL",
+      payload: { error: { code: "PAYWALL", paywall_trigger: false, current_plan: "free" } },
+    },
+  ])("retains existing paywall handling for $name", async ({ code, payload }) => {
+    prepareDocumentLimitWorkspace(true);
+    vi.mocked(generateDocumentStream).mockRejectedValue(new ApiError(402, code, payload));
+    const { result } = renderHook(() => useDocument("outcome-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.generationIssues).toEqual([
+      expect.objectContaining({ sectionId: "__paywall__", reason: expect.stringContaining("Update your subscription") }),
+    ]);
+    expect(result.current.generationIssues.some((issue) => issue.sectionId === "__document_limit__")).toBe(false);
+  });
+
+  it.each([
+    { name: "missing limit details", status: 402, payload: {} },
+    { name: "a missing non-upgrade flag", status: 402, payload: { error: { code: "DOCUMENT_LIMIT_REACHED", message: monthlyDocumentLimitMessage, current_plan: "business" } } },
+    { name: "a contradictory upgrade flag", status: 402, payload: { error: { ...coherentDocumentLimitDetails, paywall_trigger: true } } },
+    { name: "a contradictory upgrade target", status: 402, payload: { error: { ...coherentDocumentLimitDetails, plan_required: "business" } } },
+    { name: "an explicit null upgrade target", status: 402, payload: { error: { ...coherentDocumentLimitDetails, plan_required: null } } },
+    { name: "a mismatched nested code", status: 402, payload: { error: { ...coherentDocumentLimitDetails, code: "PAYWALL" } } },
+    { name: "an invalid plan", status: 402, payload: { error: { ...coherentDocumentLimitDetails, current_plan: "unknown-plan" } } },
+    { name: "an unexpected status", status: 503, payload: { error: coherentDocumentLimitDetails } },
+  ])("blocks a known cap with $name without inventing an upgrade or reset date", async ({ status, payload }) => {
+    prepareDocumentLimitWorkspace(true);
+    vi.mocked(generateDocumentStream).mockRejectedValue(new ApiError(status, "DOCUMENT_LIMIT_REACHED", payload));
+    const { result } = renderHook(() => useDocument("outcome-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.generationIssues).toEqual([
+      expect.objectContaining({
+        sectionId: "__document_limit__",
+        sectionName: "Document generation paused",
+        reason: unconfirmedDocumentLimitMessage,
+        retryable: false,
+      }),
+    ]);
+    await act(async () => { await result.current.retryGenerationSection("issue"); });
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { path: "initial", returnToFirstOwner: false },
+    { path: "initial", returnToFirstOwner: true },
+    { path: "section retry", returnToFirstOwner: false },
+    { path: "section retry", returnToFirstOwner: true },
+  ])("fences a late $path cap after an owner change (return=$returnToFirstOwner)", async ({ path, returnToFirstOwner }) => {
+    const initialGeneration = path === "initial";
+    prepareDocumentLimitWorkspace(initialGeneration);
+    const generation = deferred<void>();
+    vi.mocked(generateDocumentStream).mockImplementationOnce(() => generation.promise);
+    const { result, rerender } = renderHook(() => useDocument("outcome-1"));
+    let retry: Promise<void> | undefined;
+    if (!initialGeneration) {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      act(() => { retry = result.current.retryGenerationSection("issue"); });
+    }
+    await waitFor(() => expect(generateDocumentStream).toHaveBeenCalledTimes(1));
+
+    for (const ownerId of returnToFirstOwner ? ["user-2", "user-1"] : ["user-2"]) {
+      vi.mocked(useAuth).mockReturnValue(authValue(mockUser(ownerId)));
+      mockFetchDocumentByOutcomeId.mockResolvedValue({ ...dbDocument, id: `document-${ownerId}`, user_id: ownerId });
+      mockFetchSections.mockResolvedValue([
+        { ...dbSections[0]!, document_id: `document-${ownerId}`, user_id: ownerId, content: `${ownerId} current wording.` },
+      ]);
+      rerender();
+      await waitFor(() => expect(result.current.state?.sections[0]?.content).toBe(`${ownerId} current wording.`));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+    }
+    const currentState = result.current.state;
+    await act(async () => {
+      generation.reject(documentLimitError());
+      await retry;
+    });
+    expect(result.current.state).toEqual(currentState);
+    expect(result.current.generationIssues).toEqual([]);
+    expect(result.current.drafting).toBe(false);
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([null, 401, 402, "monthly-limit"] as const)(
     "keeps a reconciliation hold through editing and later status %s",
     async (laterStatus) => {
       vi.mocked(useAuth).mockReturnValue(authValue(mockUser("user-1")));
@@ -1579,9 +1825,9 @@ describe("useDocument — DB persistence wiring", () => {
         expect.objectContaining({ sectionId: "issue", retryable: false }),
       ]);
       if (laterStatus) {
-        vi.mocked(generateDocumentStream).mockRejectedValueOnce(
-          new ApiError(laterStatus, laterStatus === 401 ? "AUTH_REQUIRED" : "PAYWALL", {}),
-        );
+        vi.mocked(generateDocumentStream).mockRejectedValueOnce(laterStatus === "monthly-limit"
+          ? documentLimitError()
+          : new ApiError(laterStatus, laterStatus === 401 ? "AUTH_REQUIRED" : "PAYWALL", {}));
         await act(async () => {
           await result.current.retryGenerationSection("request");
         });
@@ -1589,6 +1835,11 @@ describe("useDocument — DB persistence wiring", () => {
         expect(result.current.generationIssues).toContainEqual(
           expect.objectContaining({ sectionId: "issue", retryable: false }),
         );
+        if (laterStatus === "monthly-limit") {
+          expect(result.current.generationIssues).toContainEqual(
+            expect.objectContaining({ sectionId: "__document_limit__", retryable: false }),
+          );
+        }
       }
       await act(async () => {
         await result.current.retryGenerationSection("issue");

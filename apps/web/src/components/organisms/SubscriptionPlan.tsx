@@ -15,7 +15,6 @@ interface SubscriptionPlanProps {
 
 function statusLine(
   plan: Plan,
-  status: SubscriptionStatus | null | undefined,
   periodEnd: string | null | undefined,
 ): string | null {
   if (plan === "free") return "Free plan — no billing period.";
@@ -25,8 +24,9 @@ function statusLine(
     month: "long",
     year: "numeric",
   });
-  if (status === "cancelled" || status === "expired") return `Access ends ${formatted}.`;
-  return `Renews ${formatted}.`;
+  // The access projection does not include auto-renewal state. Active access
+  // can continue after cancellation, and owner access is independent of billing.
+  return `Subscription period end: ${formatted}.`;
 }
 
 /**
@@ -37,20 +37,20 @@ export function SubscriptionPlan({
   plan,
   access,
   documentsThisMonth,
-  subscriptionStatus,
   currentPeriodEnd,
   onUpgrade,
 }: SubscriptionPlanProps) {
   const def = PLANS[plan];
   const usage = summariseUsage({ plan, documentsThisMonth, access });
   const isOwner = access?.accessProfile === "owner";
-  const featurePlan = PLANS[access?.effectivePlan ?? plan];
+  const effectivePlan = access?.effectivePlan ?? plan;
+  const featurePlan = PLANS[effectivePlan];
   const allowanceLabel = usage.cap === null ? "Unlimited documents" : `${usage.cap.toLocaleString("en-AU")} documents per month`;
   const features = [allowanceLabel, ...(isOwner
     ? ["AI editing", "Business features, including branding"]
     : featurePlan.features.slice(1))];
   const isUnlimited = usage.cap === null;
-  const renewal = statusLine(plan, subscriptionStatus, currentPeriodEnd);
+  const renewal = statusLine(plan, currentPeriodEnd);
 
   return (
     <section className={styles.card} aria-label="Subscription plan">
@@ -61,7 +61,7 @@ export function SubscriptionPlan({
           {isOwner && <p className={styles.renewal}>Subscription: {def.name}</p>}
           {renewal && <p className={styles.renewal}>{renewal}</p>}
         </div>
-        {!isOwner && plan !== "business" && onUpgrade && (
+        {!isOwner && effectivePlan !== "business" && onUpgrade && (
           <button type="button" className={styles.upgradeBtn} onClick={onUpgrade}>
             Upgrade
           </button>
@@ -97,13 +97,14 @@ export function SubscriptionPlan({
         )}
         {usage.atCap && (
           <p className={styles.capWarning} role="alert">
-            {isOwner ? "You've reached your monthly limit. New allowance becomes available next month."
+            {isOwner || effectivePlan === "business"
+              ? "You've reached your monthly limit. New allowance becomes available next month."
               : "You've reached your monthly limit. Upgrade to create more documents."}
           </p>
         )}
       </div>
 
-      <ul className={styles.features} aria-label={isOwner ? "Owner access features" : `${def.name} plan features`}>
+      <ul className={styles.features} aria-label={isOwner ? "Owner access features" : `${featurePlan.name} plan features`}>
         {features.map((f) => (
           <li key={f} className={styles.featureItem}>
             <span className={styles.check} aria-hidden="true">✓</span>

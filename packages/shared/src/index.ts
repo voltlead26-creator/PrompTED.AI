@@ -11,3 +11,4 @@ export * from "./plans";
 export * from "./artifacts";
 export * from "./document-operation";
 export * from "./brand-kit-operation";
+export * from "./manual-plans";

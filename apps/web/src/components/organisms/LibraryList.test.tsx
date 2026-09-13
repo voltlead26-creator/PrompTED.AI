@@ -1,19 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import type { LibraryItem } from "@/hooks/useLibrary";
 
 const library = vi.hoisted(() => ({
-  items: [
-    {
-      outcome: {
-        id: "one",
-        situation_text: "My document",
-        status: "draft",
-        is_saved: false,
-        updated_at: "2026-09-11T00:00:00Z",
-      },
-      documents: [],
-    },
-  ],
+  items: [] as LibraryItem[],
   loading: false,
   error: null as string | null,
   saveError: null as string | null,
@@ -26,6 +16,13 @@ vi.mock("@/hooks/useLibrary", () => ({ useLibrary: () => library }));
 import { LibraryList } from "./LibraryList";
 
 beforeEach(() => {
+  library.items = [{
+    outcome: {
+      id: "one", user_id: "owner", situation_text: "My document", status: "draft",
+      is_saved: false, updated_at: "2026-09-11T00:00:00Z",
+    },
+    documents: [],
+  }];
   library.load.mockReset();
   library.toggleSaved.mockReset();
   library.error = null;
@@ -71,4 +68,34 @@ it("prevents another bookmark while confirmation is pending", () => {
   library.savingIds = ["one"];
   render(<LibraryList userId="owner" />);
   expect(screen.getByRole("button", { name: "Save to library" })).toBeDisabled();
+});
+
+it("opens manual work in its editor with the authoritative title and keeps document links", () => {
+  const original = library.items[0]!;
+  library.items.push({
+    outcome: { ...original.outcome, id: "manual-outcome", situation_text: "Manual action plan" },
+    documents: [],
+    manualPlan: {
+      owner_id: "owner", plan_id: "device:plan.1", outcome_id: "manual-outcome", artifact_id: "artifact",
+      revision: 1, updated_at: "2026-09-11T00:00:00.123456Z", title: "My actual plan title",
+    },
+  });
+  render(<LibraryList userId="owner" />);
+  expect(screen.getByRole("link", { name: "Open My actual plan title" }))
+    .toHaveAttribute("href", "/plans?create=manual&plan=device%3Aplan.1");
+  expect(screen.getByRole("link", { name: "Open My document" })).toHaveAttribute("href", "/outcomes/one");
+  expect(screen.queryByText("Manual action plan")).not.toBeInTheDocument();
+  fireEvent.click(screen.getAllByRole("button", { name: "Save to library" })[1]!);
+  expect(library.toggleSaved).toHaveBeenCalledWith("manual-outcome", false);
+});
+
+it.each(["", " \t "])("gives a blank persisted manual title an accessible editor link: %j", (title) => {
+  library.items[0]!.manualPlan = {
+    owner_id: "owner", plan_id: "blank", outcome_id: "one", artifact_id: "artifact", revision: 1,
+    updated_at: "2026-09-11T00:00:00.123456Z", title,
+  };
+  render(<LibraryList userId="owner" />);
+  expect(screen.getByRole("link", { name: "Open Untitled plan" }))
+    .toHaveAttribute("href", "/plans?create=manual&plan=blank");
+  expect(screen.queryByRole("link", { name: "Open My document" })).not.toBeInTheDocument();
 });

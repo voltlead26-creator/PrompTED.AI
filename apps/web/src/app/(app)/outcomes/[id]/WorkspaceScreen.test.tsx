@@ -218,6 +218,71 @@ describe("WorkspaceScreen durable recovery", () => {
     },
   );
 
+  it.each([
+    {
+      sectionName: "Monthly document limit reached",
+      reason: "You've reached your document limit for this month. New allowance becomes available next month.",
+    },
+    {
+      sectionName: "Document generation paused",
+      reason: "PrompTED could not confirm the document limit details. New generation is paused. You can still edit your existing wording.",
+    },
+  ])("shows the $sectionName notice without an upgrade action", async ({ sectionName, reason }) => {
+    const retry = vi.fn();
+    mocks.useWorkspace.mockReturnValue({
+      loading: false,
+      title: "Synthetic complaint",
+      sections: [],
+      activeSectionId: "issue",
+      generationIssues: [{ sectionId: "__document_limit__", sectionName, reason, retryable: false, attempts: 0 }],
+      missingInfoQuestions: [],
+      syncStatus: "saved",
+      deviceSaveStatus: "saved",
+      currentRevision: 1,
+      approvedRevision: null,
+      drafting: false,
+      captured: false,
+      retryGenerationSection: retry,
+      dirtySectionCount: 0,
+      isAllApproved: false,
+    });
+    render(<WorkspaceScreen outcomeId={initialState.intake!.outcomeId} />);
+
+    await userEvent.click(screen.getByRole("button", { name: `Needs attention: ${sectionName}` }));
+    expect(screen.getByText((text) => text.includes(reason))).toBeVisible();
+    expect(screen.getByText(/read, edit and export/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: /view plans|update subscription|upgrade/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /try this section again|regenerate/i })).toBeNull();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("retains View plans for a lower-plan paywall", async () => {
+    mocks.useWorkspace.mockReturnValue({
+      loading: false,
+      title: "Synthetic complaint",
+      sections: [],
+      activeSectionId: "issue",
+      generationIssues: [{
+        sectionId: "__paywall__",
+        sectionName: "Out of document credits",
+        reason: "You've used all your document credits for this month. Update your subscription to keep using TED.",
+        attempts: 0,
+      }],
+      missingInfoQuestions: [],
+      syncStatus: "saved",
+      currentRevision: 1,
+      approvedRevision: null,
+      drafting: false,
+      captured: false,
+      dirtySectionCount: 0,
+      isAllApproved: false,
+    });
+    render(<WorkspaceScreen outcomeId={initialState.intake!.outcomeId} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Needs attention: Document credits used" }));
+    expect(screen.getByRole("link", { name: "View plans" })).toHaveAttribute("href", "/settings/account");
+  });
+
   it.each([true, false])(
     "shows the actual generation reason with retryable=%s",
     async (retryable) => {

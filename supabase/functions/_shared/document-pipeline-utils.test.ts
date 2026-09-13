@@ -51,14 +51,14 @@ Deno.test("affectedSectionKeys targets only named sections", () => {
   );
 });
 
-Deno.test("document-level audit issue targets the whole document", () => {
+Deno.test("document-level audit issue preserves the named repair scope", () => {
   const keys = affectedSectionKeys(
     [{ section_key: "summary" }, {}],
     ["intro", "summary", "next_steps"],
   );
   assert(
-    JSON.stringify(keys) === JSON.stringify(["intro", "summary", "next_steps"]),
-    "not all keys",
+    JSON.stringify(keys) === JSON.stringify(["summary"]),
+    "an unscoped finding expanded the named repair",
   );
 });
 
@@ -78,6 +78,21 @@ Deno.test("audit infrastructure warnings re-audit without rewriting good section
   );
 });
 
+Deno.test("regression: document-level structure findings cannot expand a factual repair into passing siblings", () => {
+  const keys = affectedSectionKeys([
+    { section_key: "summary", category: "fact", severity: "high" },
+    { category: "structure", severity: "high" },
+  ], ["intro", "summary", "next_steps"]);
+  assert(JSON.stringify(keys) === JSON.stringify(["summary"]),
+    "A document-level finding must be re-audited without rewriting passing sections");
+});
+
+Deno.test("regression: an unknown audit key never authorises rewriting every section", () => {
+  const keys = affectedSectionKeys([{ section_key: "not-an-admitted-section" }],
+    ["intro", "summary", "next_steps"]);
+  assert(keys.length === 0, "Unknown repair scope expanded into the whole document");
+});
+
 Deno.test("mergeByKey replaces sections without reordering the document", () => {
   const merged = mergeByKey(
     [
@@ -92,14 +107,14 @@ Deno.test("mergeByKey replaces sections without reordering the document", () => 
   assert(merged[0]?.content === "original a", "unaffected section changed");
 });
 
-Deno.test("unknown audit section key safely targets the whole document", () => {
+Deno.test("unknown audit section key leaves content unchanged for the quality gate", () => {
   const keys = affectedSectionKeys(
     [{ section_key: "invented-key" }],
     ["intro", "summary", "next_steps"],
   );
   assert(
-    JSON.stringify(keys) === JSON.stringify(["intro", "summary", "next_steps"]),
-    "did not fail safe",
+    keys.length === 0,
+    "an unknown section key must not authorise rewriting accepted content",
   );
 });
 

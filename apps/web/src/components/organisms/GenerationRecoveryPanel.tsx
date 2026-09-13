@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   AUTH_SECTION_ID,
+  DOCUMENT_LIMIT_SECTION_ID,
   PAYWALL_SECTION_ID,
   type GenerationIssue,
 } from "@/hooks/useDocument";
@@ -27,6 +28,20 @@ export function GenerationRecoveryPanel({
   const returnPath = `${pathname}${query ? `?${query}` : ""}`;
 
   if (issues.length === 0) return null;
+
+  const limit = issues.find((issue) => issue.sectionId === DOCUMENT_LIMIT_SECTION_ID);
+  if (limit) {
+    return (
+      <section className={styles.panel} aria-labelledby="generation-recovery-title">
+        <div>
+          <p className={styles.eyebrow}>Needs attention</p>
+          <h2 id="generation-recovery-title">{limit.sectionName}</h2>
+          <p>{limit.reason}</p>
+          <p>You can still read, edit and export your existing documents.</p>
+        </div>
+      </section>
+    );
+  }
 
   const paywall = issues.find((issue) => issue.sectionId === PAYWALL_SECTION_ID);
   if (paywall) {

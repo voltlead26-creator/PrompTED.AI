@@ -16,8 +16,7 @@ interface PaywallModalProps {
 }
 
 /**
- * PaywallModal — shown when user hits their plan cap.
- * Never shown before a completed draft (FR-012).
+ * Plan comparison opened from Account. The modal does not establish usage.
  * Prices are NOT shown here (read from RevenueCat in the parent).
  */
 export function PaywallModal({
@@ -62,7 +61,7 @@ export function PaywallModal({
         <p className={styles.sub}>
           {feature
             ? `${feature} is available on paid plans.`
-            : "You've reached the limit on your current plan. Upgrade to keep going."}
+            : "Compare plans to find the features and monthly document allowance you need."}
         </p>
         <p className={styles.notice} role="note">
           Online checkout isn&apos;t available yet on the web. You can compare plans here,

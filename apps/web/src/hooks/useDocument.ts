@@ -64,6 +64,7 @@ import {
   requestCapturedDocumentExport,
 } from "@/lib/api/captured-document-operations";
 import { sanitiseSectionContent } from "@/lib/sanitise";
+import { documentLimitNotice } from "@/lib/document-limit";
 import { useAuth } from "@/components/providers";
 import { useAutosave } from "./useAutosave";
 import {
@@ -566,7 +567,20 @@ function generationFailure(section: Section, error: unknown, attempts = 0): Gene
 }
 
 export const PAYWALL_SECTION_ID = "__paywall__";
+export const DOCUMENT_LIMIT_SECTION_ID = "__document_limit__";
 export const AUTH_SECTION_ID = "__auth__";
+
+function documentLimitIssue(err: unknown): GenerationIssue | null {
+  const notice = documentLimitNotice(err);
+  if (!notice) return null;
+  return {
+    sectionId: DOCUMENT_LIMIT_SECTION_ID,
+    sectionName: notice.heading,
+    reason: notice.reason,
+    attempts: 0,
+    retryable: false,
+  };
+}
 
 function isPaywallError(err: unknown): boolean {
   const e = err as {
@@ -672,7 +686,13 @@ export function useDocument(
   // A workspace observation has one owner/outcome lifetime. Accepted saves
   // may finish after unmount, but cannot adopt receipts into a reused hook.
   const resource = useMemo(
-    () => ({ outcomeId, ownerEpoch, observing: true, scopedGenerationPending: false }),
+    () => ({
+      outcomeId,
+      ownerEpoch,
+      observing: true,
+      scopedGenerationPending: false,
+      generationLimitBlocked: false,
+    }),
     [outcomeId, ownerEpoch],
   );
   const activeResourceRef = useRef(resource);
@@ -704,6 +724,7 @@ export function useDocument(
       : "unknown";
   useEffect(() => {
     resource.observing = true;
+    resource.generationLimitBlocked = false;
     setDrafting(false);
     setRegeneratingSectionId(null);
     setGenerationIssues([]);
@@ -1750,6 +1771,7 @@ export function useDocument(
         activeResourceRef.current !== resource ||
         renderedMutationEpoch !== localMutationEpochRef.current ||
         resource.scopedGenerationPending ||
+        resource.generationLimitBlocked ||
         regeneratingSectionId ||
         !cacheScope ||
         ownerMismatch ||
@@ -1798,7 +1820,15 @@ export function useDocument(
           !ownerDispatchIsCurrent(requestContext)
         )
           return;
-        if (isPaywallError(err)) {
+        const limitIssue = documentLimitIssue(err);
+        if (limitIssue) {
+          // Fence captured retry callbacks before the next React render.
+          resource.generationLimitBlocked = true;
+          setGenerationIssues((current) => [
+            ...current.filter((issue) => issue.retryable === false && issue.sectionId !== DOCUMENT_LIMIT_SECTION_ID),
+            limitIssue,
+          ]);
+        } else if (isPaywallError(err)) {
           setGenerationIssues((current) => [
             ...current.filter((issue) => issue.retryable === false),
             ...paywallIssues(),
@@ -1995,6 +2025,7 @@ export function useDocument(
       pending: PendingOutcome | null,
       adoptionBaseline: DocumentState = target,
     ): Promise<void> {
+      if (resource.generationLimitBlocked) return;
       if (!shouldGenerateInitialDraft(target, pending)) {
         if (!cancelled) {
           const next = applyRequiredSectionFallbacks(target);
@@ -2035,7 +2066,14 @@ export function useDocument(
           return;
         }
         if (!cancelled) {
-          if (isPaywallError(err)) {
+          const limitIssue = documentLimitIssue(err);
+          if (limitIssue) {
+            resource.generationLimitBlocked = true;
+            setGenerationIssues((current) => [
+              ...current.filter((issue) => issue.retryable === false && issue.sectionId !== DOCUMENT_LIMIT_SECTION_ID),
+              limitIssue,
+            ]);
+          } else if (isPaywallError(err)) {
             setGenerationIssues((current) => [
               ...current.filter((issue) => issue.retryable === false),
               ...paywallIssues(),

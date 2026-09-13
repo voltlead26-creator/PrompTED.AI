@@ -11,6 +11,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { useAuth } from "@/components/providers";
 import { ensureApiConfigured } from "@/lib/api";
 import { captureOwnerDispatch, ownerDispatchIsCurrent } from "@/lib/browser-principal-state";
+import { documentLimitNotice, type DocumentLimitNotice } from "@/lib/document-limit";
 import { fetchOutcome, updateOutcome } from "@/lib/api/outcomes";
 import { replaceOwnChecklist } from "@/lib/api/checklists";
 import { createOrReplayArtifact, fetchArtifactByOutcome } from "@/lib/api/artifacts";
@@ -23,6 +24,13 @@ import {
 import styles from "./InteractiveChecklistOutcome.module.css";
 
 const SECTION_SEPARATOR = "␟";
+
+interface PreparationLimitNotice {
+  attempt: number;
+  outcomeId: string;
+  userId: string;
+  notice: DocumentLimitNotice;
+}
 
 function normaliseDueDate(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -43,9 +51,16 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
   );
   const [preparationAttempt, setPreparationAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [documentLimit, setDocumentLimit] = useState<PreparationLimitNotice | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const preparationAttemptRef = useRef(0);
+  const blockedPreparationAttemptRef = useRef<number | null>(null);
+  const renderedPreparationAttempt = preparationAttemptRef.current;
+  const currentDocumentLimit = documentLimit?.attempt === renderedPreparationAttempt &&
+    documentLimit.outcomeId === outcomeId && documentLimit.userId === userId
+    ? documentLimit.notice
+    : null;
 
   useEffect(() => {
     if (authLoading) return;
@@ -53,8 +68,10 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
     const controller = new AbortController();
     const attempt = preparationAttemptRef.current + 1;
     preparationAttemptRef.current = attempt;
+    blockedPreparationAttemptRef.current = null;
     setPreparationState("loading");
     setError(null);
+    setDocumentLimit(null);
 
     async function prepare() {
       let requestContext: ReturnType<typeof captureOwnerDispatch> | null = null;
@@ -215,13 +232,21 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
         if (!cancelled && attempt === preparationAttemptRef.current) {
           setPreparationState("ready");
         }
-      } catch {
+      } catch (preparationError) {
         if (
           !cancelled &&
           attempt === preparationAttemptRef.current &&
           (!requestContext || ownerDispatchIsCurrent(requestContext))
         ) {
-          setError("TED couldn't load this plan safely. Your earlier information is still safe.");
+          const notice = requestContext ? documentLimitNotice(preparationError) : null;
+          if (notice && requestContext) {
+            // Retired Retry handlers cannot start another attempt after a cap.
+            blockedPreparationAttemptRef.current = attempt;
+            setDocumentLimit({ attempt, outcomeId, userId: requestContext.expectedUserId, notice });
+            setError(null);
+          } else {
+            setError("TED couldn't load this plan safely. Your earlier information is still safe.");
+          }
           setPreparationState("failed");
         }
       }
@@ -259,14 +284,21 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
     return (
       <main className={styles.page}>
         <section className={styles.errorCard} role="alert">
-          <p>{error ?? "TED couldn't load this plan safely."}</p>
-          <button
-            type="button"
-            className={styles.saveButton}
-            onClick={() => setPreparationAttempt((value) => value + 1)}
-          >
-            Retry
-          </button>
+          {currentDocumentLimit && <h1>{currentDocumentLimit.heading}</h1>}
+          <p>{currentDocumentLimit?.reason ?? error ?? "TED couldn't load this plan safely."}</p>
+          {!currentDocumentLimit && (
+            <button
+              type="button"
+              className={styles.saveButton}
+              onClick={() => {
+                if (renderedPreparationAttempt !== preparationAttemptRef.current ||
+                  blockedPreparationAttemptRef.current === preparationAttemptRef.current) return;
+                setPreparationAttempt((value) => value + 1);
+              }}
+            >
+              Retry
+            </button>
+          )}
           <Link href={`/outcomes/${outcomeId}/conversation`}>Back to conversation</Link>
         </section>
       </main>

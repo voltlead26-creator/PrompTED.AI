@@ -135,27 +135,75 @@ Deno.test("owner access admits creation after the Free cap using the exact accou
     observeAccess: payload => { requested = payload; } });
 });
 
-for (const plan of ["premium", "business"] as const) {
+for (const [plan, cap] of [["pro", 20], ["premium", 40], ["business", 50]] as const) {
   const paidAccess = { ...accessFixture(verifiedUser.id), subscription_plan: plan,
-    effective_plan: plan, subscription_status: "active", monthly_document_cap: 40,
+    effective_plan: plan, subscription_status: "active", monthly_document_cap: cap,
     ai_editing: true, business_features: plan === "business" };
-  Deno.test(`${plan} guard admits below the shared server allowance`, async () => {
+  Deno.test(`${plan} guard admits below its authoritative server allowance`, async () => {
     await withUser(verifiedUser, async () => {
       const auth = await guardRequest(request({ prompt: "hello" }));
       assertEquals(auth.plan, plan);
-      assertEquals(auth.monthlyDocumentCap, 40);
+      assertEquals(auth.monthlyDocumentCap, cap);
       assert(auth.access);
       assertEquals(auth.access.businessFeatures, plan === "business");
-    }, undefined, undefined, { access: paidAccess, usage: 39 });
+    }, undefined, undefined, { access: paidAccess, usage: cap - 1 });
   });
-  Deno.test(`${plan} guard stops at the shared server allowance`, async () => {
+  Deno.test(`${plan} guard stops at its authoritative server allowance`, async () => {
     await withUser(verifiedUser, async () => {
       const error = await assertRejects(() => guardRequest(request({})), AuthError);
       assertEquals(error.status, 402);
       assertEquals(error.code, "over_cap");
-    }, undefined, undefined, { access: paidAccess, usage: 40 });
+    }, undefined, undefined, { access: paidAccess, usage: cap });
   });
 }
+
+for (const [plan, cap, nextPlan] of [
+  ["free", 3, "pro"],
+  ["pro", 20, "premium"],
+  ["premium", 40, "business"],
+] as const) {
+  Deno.test(`${plan} guard cap rejection recommends only the next subscription plan`, async () => {
+    const access = { ...accessFixture(verifiedUser.id), subscription_plan: plan,
+      effective_plan: plan, subscription_status: plan === "free" ? null : "active",
+      monthly_document_cap: cap, ai_editing: plan !== "free" };
+    await withUser(verifiedUser, async () => {
+      const error = await assertRejects(() => guardRequest(request({})), AuthError);
+      assertEquals(error.status, 402);
+      assertEquals(error.code, "over_cap");
+      assertEquals(error.payload, { error: {
+        code: "PAYWALL",
+        message: "You've reached your document limit for this month. Upgrade to keep going.",
+        paywall_trigger: true,
+        current_plan: plan,
+        plan_required: nextPlan,
+      } });
+    }, undefined, undefined, { access, usage: cap });
+  });
+}
+
+Deno.test("business guard cap rejection reports the monthly limit without an upgrade", async () => {
+  const access = { ...accessFixture(verifiedUser.id), subscription_plan: "business",
+    effective_plan: "business", subscription_status: "active", monthly_document_cap: 50,
+    ai_editing: true, business_features: true };
+  await withUser(verifiedUser, async () => {
+    const error = await assertRejects(() => guardRequest(request({})), AuthError);
+    assertEquals(error.status, 402);
+    assertEquals(error.code, "over_cap");
+    const detail = error.payload.error as Record<string, unknown>;
+    assertEquals(detail.code, "DOCUMENT_LIMIT_REACHED");
+    assertEquals(error.payload, { error: {
+      code: "DOCUMENT_LIMIT_REACHED",
+      message: detail.message,
+      paywall_trigger: false,
+      current_plan: "business",
+    } });
+    assert(typeof detail.message === "string");
+    assert(detail.message.includes("month"));
+    assert(detail.message.includes("next month"));
+    assertEquals(/\bupgrade\b/i.test(detail.message), false);
+    assertEquals(Object.hasOwn(detail, "plan_required"), false);
+  }, undefined, undefined, { access, usage: 50 });
+});
 
 Deno.test("access service failure rejects admission instead of inventing a Free plan", async () => {
   await withUser(verifiedUser, async () => {
@@ -188,6 +236,13 @@ Deno.test("owner cap is finite and does not advertise an upgrade", async () => {
     assertEquals(detail.code, "DOCUMENT_LIMIT_REACHED");
     assertEquals(detail.paywall_trigger, false);
     assertEquals(detail.plan_required, undefined);
+    assertEquals(error.code, "over_cap");
+    assertEquals(error.payload, { error: {
+      code: "DOCUMENT_LIMIT_REACHED",
+      message: "You have used your 1,000 documents for this month. New allowance becomes available next month.",
+      paywall_trigger: false,
+      current_plan: "free",
+    } });
   }, undefined, undefined, { access: accessFixture(verifiedUser.id, true), usage: 1000 });
 });
 

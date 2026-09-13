@@ -54,6 +54,16 @@ export default function AccountPage() {
     setRead({ ...identity, status: "loading" });
     setPaywallOpen(false);
     const current = () => !disposed && ownerDispatchIsCurrent(lease);
+    const retireRead = () => {
+      if (disposed) return;
+      controller.abort();
+      setRead(null);
+      setPaywallOpen(false);
+      // The rendered user ID can be unchanged after a batched A -> B -> A.
+      // Retire this observation and capture the new principal epoch.
+      setAttempt((value) => value + 1);
+    };
+    lease.signal.addEventListener("abort", retireRead, { once: true });
     const timer = setTimeout(() => {
       if (current()) setRead({ ...identity, status: "error" });
       controller.abort();
@@ -69,6 +79,7 @@ export default function AccountPage() {
       .finally(() => clearTimeout(timer));
     return () => {
       disposed = true;
+      lease.signal.removeEventListener("abort", retireRead);
       clearTimeout(timer);
       controller.abort();
     };
@@ -112,7 +123,7 @@ export default function AccountPage() {
       {usageState && (
         <PaywallModal
           open={paywallOpen}
-          currentPlan={usageState.plan}
+          currentPlan={usageState.access?.effectivePlan ?? usageState.plan}
           onClose={() => setPaywallOpen(false)}
           onSelectPlan={() => {
             setPaywallOpen(false);

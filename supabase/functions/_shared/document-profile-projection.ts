@@ -217,7 +217,9 @@ export function resolveDocumentProfilePolicy(
       profile.informationContract,
     ).length === 0,
   );
-  if (!entry && sameKeys(selectedKeys, currentKeys)) return policy;
+  // Matching keys do not establish that authored prose describes the same
+  // section order. Every current execution uses this projection; only the
+  // explicit historical branch above retains the unprojected authored rules.
   if (scoped) {
     // A repair must ask only for facts in its accepted scope. Whole-document
     // prose requirements have no exact section identity and remain provenance
@@ -264,7 +266,7 @@ export function resolveDocumentProfilePolicy(
           ),
         ]
         : profile.quality.requiredStructure.map((rule) =>
-          `Authored content guidance, applied inside the current sections rather than as extra section identities: ${rule}`
+        `Authored content guidance only; this list's position does not prescribe section order. Apply inside the current sections without adding section identities: ${rule}`
         )),
       ...(policy.inactiveSourceSections.length
         ? [

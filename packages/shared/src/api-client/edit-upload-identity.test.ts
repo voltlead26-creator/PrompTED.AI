@@ -35,6 +35,12 @@ function requestContext(signal = new AbortController().signal): ApiRequestContex
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 function editSectionStream(
   input: Parameters<typeof editSectionStreamRequest>[0],
   onDelta: Parameters<typeof editSectionStreamRequest>[1],
@@ -456,6 +462,128 @@ describe("model request identity", () => {
       expect(attempt.headers.get("x-request-id")).toBe(requestId);
     }
   });
+
+  it.each([
+    {
+      name: "a confirmed monthly cap",
+      status: 402,
+      code: "DOCUMENT_LIMIT_REACHED",
+      detail: {
+        code: "DOCUMENT_LIMIT_REACHED",
+        message: "You've reached your document limit for this month. New allowance becomes available next month.",
+        paywall_trigger: false,
+        current_plan: "business",
+      },
+    },
+    {
+      name: "a genuine paywall",
+      status: 402,
+      code: "PAYWALL",
+      detail: { code: "PAYWALL", message: "Upgrade to keep going.", paywall_trigger: true, current_plan: "premium", plan_required: "business" },
+    },
+    {
+      name: "the explicit disabled cohort",
+      status: 404,
+      code: "TED_V2_DISABLED",
+      detail: { code: "TED_V2_DISABLED", message: "This workflow is using the current stable pipeline." },
+    },
+    { name: "a known cap with incomplete details", status: 402, code: "DOCUMENT_LIMIT_REACHED", detail: { code: "DOCUMENT_LIMIT_REACHED" } },
+    { name: "a disabled code with a mismatched status", status: 503, code: "TED_V2_DISABLED", detail: { code: "TED_V2_DISABLED" } },
+  ])("preserves $name at the artifact HTTP $status/$code boundary without replaying it", async ({ status, code, detail }) => {
+    const payload = { error: detail };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const receive = vi.fn();
+    const requestId = "77777777-7777-4777-8777-777777777777";
+    await expect(generateArtifactStream({
+      request_id: requestId,
+      outcome_id: "88888888-8888-4888-8888-888888888888",
+      kind: "action_plan",
+      situation: "Synthetic request",
+    }, receive)).rejects.toMatchObject({ status, code, payload });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(receive).not.toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({ request_id: requestId, generation_request_id: requestId });
+    expect(new Headers(init.headers).get("x-idempotency-key")).toBe(requestId);
+    expect(new Headers(init.headers).get("x-request-id")).toBe(requestId);
+  });
+
+  it.each([
+    { name: "null data", payload: null },
+    { name: "array data", payload: [] },
+    { name: "missing error", payload: { code: "TED_V2_DISABLED" } },
+    { name: "null error", payload: { error: null } },
+    { name: "array error", payload: { error: [{ code: "TED_V2_DISABLED" }] } },
+    { name: "numeric error code", payload: { error: { code: 404 } } },
+    { name: "object error code", payload: { error: { code: { value: "TED_V2_DISABLED" } } } },
+    { name: "unknown error code", payload: { error: { code: "SYNTHETIC" } } },
+  ])("keeps the generic artifact failure for $name", async ({ payload }) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const receive = vi.fn();
+    await expect(generateArtifactStream({
+      request_id: "77777777-7777-4777-8777-777777777777",
+      outcome_id: "88888888-8888-4888-8888-888888888888",
+      kind: "action_plan",
+      situation: "Synthetic request",
+    }, receive)).rejects.toMatchObject({ status: 404, code: "ARTIFACT_STREAM_FAILED", payload });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(receive).not.toHaveBeenCalled();
+  });
+
+  it.each(["cancel", "owner change", "owner A-B-A"])(
+    "rejects the retired artifact observation after %s while reading an HTTP error body",
+    async (change) => {
+      const controller = new AbortController();
+      const reading = deferred<void>();
+      const body = deferred<unknown>();
+      const retired = new Error(`Synthetic ${change}`);
+      let owner = USER_A;
+      let epoch = 1;
+      const context: ApiRequestContext = {
+        expectedUserId: USER_A,
+        principalEpoch: 1,
+        signal: controller.signal,
+        assertCurrent: () => {
+          if (controller.signal.aborted || owner !== USER_A || epoch !== 1) throw retired;
+        },
+      };
+      const response = new Response(null, { status: 402 });
+      vi.spyOn(response, "json").mockImplementation(() => {
+        reading.resolve();
+        return body.promise;
+      });
+      const fetchMock = vi.fn().mockResolvedValue(response);
+      vi.stubGlobal("fetch", fetchMock);
+      const receive = vi.fn();
+      const pending = generateArtifactStreamRequest({
+        request_id: "77777777-7777-4777-8777-777777777777",
+        outcome_id: "88888888-8888-4888-8888-888888888888",
+        kind: "action_plan",
+        situation: "Synthetic request",
+      }, receive, context);
+      const rejected = expect(pending).rejects.toBe(retired);
+      await reading.promise;
+      if (change === "cancel") controller.abort(retired);
+      else {
+        owner = USER_B;
+        epoch += 1;
+        if (change === "owner A-B-A") { owner = USER_A; epoch += 1; }
+      }
+      body.resolve({ error: { code: "DOCUMENT_LIMIT_REACHED" } });
+      await rejected;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(receive).not.toHaveBeenCalled();
+    },
+  );
 
   it("binds one fresh legacy export UUID across body, both headers, and one uncertain replay", async () => {
     const attempts: Array<{ body: Record<string, unknown>; headers: Headers }> = [];

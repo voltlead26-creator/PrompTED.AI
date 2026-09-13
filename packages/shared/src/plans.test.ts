@@ -56,17 +56,14 @@ describe("PLANS definitions", () => {
     expect(PLANS.free.monthlyDocumentCap).toBe(3);
   });
 
-  it("pro plan has a cap of 50", () => {
-    expect(PLANS.pro.monthlyDocumentCap).toBe(50);
-  });
-
-  it("premium plan has unlimited documents (null cap)", () => {
-    expect(PLANS.premium.monthlyDocumentCap).toBeNull();
-  });
-
-  it("business plan has unlimited documents (null cap)", () => {
-    expect(PLANS.business.monthlyDocumentCap).toBeNull();
-  });
+  it.each([["pro", 20], ["premium", 40], ["business", 50]] as const)(
+    "%s advertises its approved finite allowance of %i",
+    (plan, cap) => {
+      expect(PLANS[plan].monthlyDocumentCap).toBe(cap);
+      expect(PLANS[plan].features[0]).toBe(`${cap} documents per month`);
+      expect(PLANS[plan].features).not.toContain("Unlimited documents");
+    },
+  );
 
   it("free plan has no AI editing", () => {
     expect(PLANS.free.aiEditing).toBe(false);
@@ -113,12 +110,10 @@ describe("summariseUsage", () => {
     expect(s.percentUsed).toBe(100);
   });
 
-  it("premium plan — unlimited (null cap)", () => {
-    const s = summariseUsage({ plan: "premium", documentsThisMonth: 200 });
-    expect(s.cap).toBeNull();
-    expect(s.remaining).toBeNull();
-    expect(s.atCap).toBe(false);
-    expect(s.percentUsed).toBeNull();
+  it.each([["premium", 40, 97.5], ["business", 50, 98]] as const)("%s has one document remaining before its cap", (plan, cap, percentUsed) => {
+    expect(summariseUsage({ plan, documentsThisMonth: cap - 1 })).toMatchObject({
+      cap, used: cap - 1, remaining: 1, atCap: false, percentUsed,
+    });
   });
 
   it("does not exceed 100% on overages", () => {
@@ -141,10 +136,14 @@ describe("canCreateDocument", () => {
     expect(canCreateDocument({ plan: "free", documentsThisMonth: 10 })).toBe(false);
   });
 
-  it("always returns true for unlimited plans", () => {
-    expect(canCreateDocument({ plan: "premium", documentsThisMonth: 9999 })).toBe(true);
-    expect(canCreateDocument({ plan: "business", documentsThisMonth: 9999 })).toBe(true);
-  });
+  it.each([["pro", 20], ["premium", 40], ["business", 50]] as const)(
+    "%s stops new documents at its approved limit",
+    (plan, cap) => {
+      expect(canCreateDocument({ plan, documentsThisMonth: cap - 1 })).toBe(true);
+      expect(canCreateDocument({ plan, documentsThisMonth: cap })).toBe(false);
+      expect(canCreateDocument({ plan, documentsThisMonth: cap + 1 })).toBe(false);
+    },
+  );
 });
 
 describe("nextPlanUp", () => {

@@ -5,6 +5,8 @@
 // =====================================================
 // Env vars required:
 //   REVENUECAT_WEBHOOK_SECRET — shared secret from RevenueCat dashboard
+//   REVENUECAT_WEBHOOK_SOURCE_POLICY — JSON {environment, appIds}; one exact
+//     PRODUCTION or SANDBOX environment and the receiving integration's app IDs
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — protected RPC caller
 // =====================================================
 
@@ -36,6 +38,7 @@ Deno.serve(async (req) => {
 
   return await handleRevenueCatWebhook(req, {
     secret: Deno.env.get("REVENUECAT_WEBHOOK_SECRET"),
+    sourcePolicy: Deno.env.get("REVENUECAT_WEBHOOK_SOURCE_POLICY"),
     persistence,
   });
 });

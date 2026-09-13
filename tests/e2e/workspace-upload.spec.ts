@@ -5,6 +5,183 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { loadUploadBrowserFixture, type UploadFixture } from './workspace-upload-fixtures';
 
 const fixture = loadUploadBrowserFixture();
+const accountPlanTestName = 'account plan comparison uses confirmed Free access for historical Business';
+
+test('manual plans persist across devices with exact retry, recovery and conflict handling', async ({ page, context, browser }, info) => {
+  const slot = info.project.name === 'desktop-chromium' ? 0 : 1;
+  const checks: string[] = []; const errors: string[] = []; const external: string[] = [];
+  let complete = false; let failure: string | null = null; let planUrl = ''; let planId = '';
+  const observed: { snapshot: Record<string, unknown> | null; release: (() => void) | null; committedStatus: number | null } = { snapshot: null, release: null, committedStatus: null };
+  const receipts: Promise<void>[] = [];
+  const watch = (target: Page) => {
+    target.on('pageerror', error => errors.push(error.message));
+    target.on('response', response => {
+      if (!response.url().endsWith('/rest/v1/rpc/save_own_manual_plan_v1') || response.status() !== 200) return;
+      receipts.push(response.json().then(body => { if (body.snapshot) observed.snapshot = body.snapshot; }, error => { errors.push(String(error)); }));
+    });
+  };
+  watch(page); context.on('page', watch);
+  const restrict = async (surface: typeof context) => {
+    await surface.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      if (![fixture.webOrigin, fixture.supabaseOrigin].includes(url.origin)) {
+        external.push(url.origin + url.pathname); await route.abort('blockedbyclient');
+      } else await route.continue();
+    });
+    await surface.routeWebSocket('**/*', socket => { external.push(new URL(socket.url()).origin); socket.close(); });
+  };
+  await restrict(context);
+  const fresh = await browser.newContext({ baseURL: fixture.webOrigin, serviceWorkers: 'block', viewport: info.project.use.viewport });
+  await restrict(fresh); fresh.on('page', watch);
+  const saved = (target: Page) => expect(target.getByText('Saved to your account', { exact: true })).toBeVisible();
+  let interruptedCommand: unknown = null; let retriedCommand: unknown = null;
+  let recoveryProof: { originalUrl: string; originalId: string; accountVersionId: string } | null = null;
+
+  try {
+    await login(page, slot);
+    await page.goto('/plans');
+    await page.getByRole('link', { name: /Create manually/ }).click();
+    const title = `  Synthetic manual ${info.project.name}  `;
+    const wording = '  Call Renée\nKeep the agreed delivery date.  ';
+    await page.getByRole('textbox', { name: 'Plan title', exact: true }).fill(title);
+    await page.getByRole('textbox', { name: 'Action 1', exact: true }).fill(wording);
+    await page.getByText('Details', { exact: true }).click();
+    await page.getByLabel('Section / phase', { exact: true }).fill(' Before delivery ');
+    await page.getByRole('textbox', { name: 'Notes', exact: true }).fill('  Keep these notes\n日本語  ');
+    await page.getByLabel('Due date', { exact: true }).fill('2026-09-15');
+    await page.getByRole('checkbox', { name: 'Mark action 1 complete', exact: true }).check();
+    await saved(page);
+    planId = new URL(page.url()).searchParams.get('plan') ?? ''; expect(planId).toBeTruthy();
+    planUrl = `${fixture.webOrigin}/plans?create=manual&plan=${encodeURIComponent(planId)}`;
+    await page.getByRole('link', { name: 'Back to plans', exact: true }).click();
+    await page.getByRole('region', { name: 'Plans saved to your account', exact: true }).getByRole('link').filter({ hasText: title.trim() }).click();
+    await expect(page.getByRole('textbox', { name: 'Action 1', exact: true })).toHaveValue(wording);
+    await page.getByText('Details', { exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Plan title', exact: true })).toHaveValue(title);
+    await expect(page.getByLabel('Section / phase', { exact: true })).toHaveValue(' Before delivery ');
+    await expect(page.getByRole('textbox', { name: 'Notes', exact: true })).toHaveValue('  Keep these notes\n日本語  ');
+    await expect(page.getByLabel('Due date', { exact: true })).toHaveValue('2026-09-15');
+    await expect(page.getByRole('checkbox', { name: 'Mark action 1 incomplete', exact: true })).toBeChecked();
+    checks.push('all_fields_reopened');
+    await page.reload();
+    await expect(page.getByRole('textbox', { name: 'Action 1', exact: true })).toHaveValue(wording);
+    checks.push('reload');
+    await page.getByRole('link', { name: 'Back to plans', exact: true }).click();
+    await expect(page).toHaveURL(`${fixture.webOrigin}/plans`);
+    await page.goBack();
+    await expect(page.getByRole('textbox', { name: 'Action 1', exact: true })).toHaveValue(wording);
+    await page.goForward();
+    await expect(page).toHaveURL(`${fixture.webOrigin}/plans`);
+    await page.goto(planUrl);
+    checks.push('back_forward_direct_link');
+    await page.getByRole('button', { name: 'Add action', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Action 2', exact: true }).fill('  Preserve this sibling  ');
+    await page.getByRole('textbox', { name: 'Action 1', exact: true }).focus();
+    await page.route('**/api/edit-section', async route => {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body:
+        'data: {"type":"delta","text":"Contact Renée to confirm the agreed delivery date."}\n\n' +
+        'data: {"type":"changes","changes":[]}\n\ndata: [DONE]\n\n' });
+    });
+    await page.getByRole('button', { name: 'Expand', exact: true }).click();
+    await expect(page.getByText('Contact Renée to confirm the agreed delivery date.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Action 1', exact: true })).toHaveValue(wording);
+    await page.getByRole('button', { name: 'Apply', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('  Preserve this sibling  ');
+    await saved(page); checks.push('review_apply_preserves_sibling');
+
+    // Commit at real PostgREST, withhold its acknowledgement, then cancel. The
+    // browser must retain the command and later typing and retry that identity.
+    const held = new Promise<void>(resolve => { observed.release = resolve; });
+    await page.route('**/rest/v1/rpc/save_own_manual_plan_v1', async route => {
+      interruptedCommand = route.request().postDataJSON().p_command;
+      const response = await route.fetch(); observed.committedStatus = response.status();
+      if (response.status() !== 200) { await route.fulfill({ response }); return; }
+      const body = await response.json(); expect(body.status).toBe('saved');
+      observed.snapshot = body.snapshot; await held;
+      await route.abort('failed');
+    });
+    await page.getByRole('textbox', { name: 'Plan title', exact: true }).fill(`${title} first save`);
+    await expect.poll(() => observed.committedStatus).toBe(200);
+    await page.getByRole('button', { name: 'Cancel save request', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Retry account save', exact: true })).toBeVisible();
+    observed.release!(); observed.release = null;
+    await page.unroute('**/rest/v1/rpc/save_own_manual_plan_v1');
+    await page.getByRole('textbox', { name: 'Plan title', exact: true }).fill(`${title} newer typing`);
+    await page.route('**/rest/v1/rpc/save_own_manual_plan_v1', async route => {
+      if (retriedCommand === null) retriedCommand = route.request().postDataJSON().p_command;
+      await route.continue();
+    });
+    await page.getByRole('button', { name: 'Retry account save', exact: true }).click();
+    await saved(page); expect(retriedCommand).toEqual(interruptedCommand);
+    await expect(page.getByRole('textbox', { name: 'Plan title', exact: true })).toHaveValue(`${title} newer typing`);
+    checks.push('cancel_uncertain_save_exact_retry_preserves_typing');
+    await page.unroute('**/rest/v1/rpc/save_own_manual_plan_v1');
+
+    const other = await fresh.newPage(); await login(other, slot);
+    expect(await other.evaluate(() => Object.keys(localStorage).filter(key => key.includes('manual-plan')))).toEqual([]);
+    await other.goto(planUrl);
+    await expect(other.getByRole('textbox', { name: 'Action 1', exact: true })).toHaveValue('Contact Renée to confirm the agreed delivery date.');
+    await expect(other.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('  Preserve this sibling  ');
+    await expect(other.getByRole('textbox', { name: 'Plan title', exact: true })).toHaveValue(`${title} newer typing`);
+    checks.push('independent_browser_account_read');
+    await page.getByRole('textbox', { name: 'Plan title', exact: true }).fill(`${title} final`); await saved(page);
+    await other.getByRole('textbox', { name: 'Action 2', exact: true }).fill('Conflicting second-device draft');
+    await expect(other.getByRole('button', { name: 'Review account version', exact: true })).toBeVisible();
+    await expect(other.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('Conflicting second-device draft');
+    const recoveryUrl = new URL(other.url());
+    const recoveryId = recoveryUrl.searchParams.get('recovery');
+    expect(recoveryUrl.origin).toBe(fixture.webOrigin); expect(recoveryUrl.pathname).toBe('/plans');
+    expect(recoveryUrl.searchParams.get('plan')).toBe(planId);
+    expect(recoveryId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    await other.getByRole('button', { name: 'Review account version', exact: true }).click();
+    await other.getByText(`Account version: ${title.trim()} final`, { exact: true }).click();
+    await other.getByRole('button', { name: 'Use account version and keep device recovery copy', exact: true }).click();
+    await expect(other.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('  Preserve this sibling  ');
+    await expect(other.getByRole('textbox', { name: 'Plan title', exact: true })).toHaveValue(`${title} final`);
+    const accountVersionId = new URL(other.url()).searchParams.get('recovery');
+    expect(accountVersionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(accountVersionId).not.toBe(recoveryId);
+    assert.ok(recoveryId); assert.ok(accountVersionId);
+    recoveryProof = { originalUrl: recoveryUrl.href, originalId: recoveryId, accountVersionId };
+    // Reopen the exact abandoned record after leaving its editor. Reload must
+    // retain the conflicting draft, independently of the accepted account copy.
+    await other.goto('/plans'); await other.goto(recoveryUrl.href);
+    await expect(other.getByRole('status').filter({ hasText: 'A previous save is unconfirmed.' })).toBeVisible();
+    await expect(other.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('Conflicting second-device draft');
+    await other.reload();
+    await expect(other.getByRole('status').filter({ hasText: 'A previous save is unconfirmed.' })).toBeVisible();
+    await expect(other.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('Conflicting second-device draft');
+    await expect(other.getByRole('textbox', { name: 'Plan title', exact: true })).toHaveValue(`${title} newer typing`);
+    await page.goto(planUrl); await saved(page);
+    await expect(page.getByRole('textbox', { name: 'Action 1', exact: true })).toHaveValue('Contact Renée to confirm the agreed delivery date.');
+    await expect(page.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('  Preserve this sibling  ');
+    await expect(page.getByRole('textbox', { name: 'Plan title', exact: true })).toHaveValue(`${title} final`);
+    checks.push('stale_device_conflict_preserves_recovery');
+    await Promise.all(receipts); assert.ok(observed.snapshot);
+    const outcomeId = String(observed.snapshot.outcome_id);
+    for (const path of [`/outcomes/${outcomeId}`, `/outcomes/${outcomeId}/checklist`]) {
+      await other.goto(path); await expect(other.getByRole('textbox', { name: 'Action 1', exact: true })).toHaveValue('Contact Renée to confirm the agreed delivery date.');
+    }
+    await other.goto('/library');
+    await other.getByRole('link', { name: `Open ${title.trim()} final`, exact: true }).click();
+    await expect(other.getByRole('textbox', { name: 'Action 2', exact: true })).toHaveValue('  Preserve this sibling  ');
+    checks.push('my_work_and_outcome_routes');
+    await page.screenshot({ path: info.outputPath('manual-plan.png'), fullPage: true });
+    await page.goto('/sign-out'); await expect(page).toHaveURL(`${fixture.webOrigin}/home`);
+    await login(page, 1 - slot); await page.goto(planUrl);
+    await expect(page.getByRole('main').getByRole('alert')).toContainText('This plan is unavailable for this account.');
+    await expect(page.getByRole('textbox', { name: 'Plan title', exact: true })).toHaveCount(0);
+    checks.push('other_owner_unavailable');
+    expect(errors).toEqual([]); expect(external).toEqual([]); complete = true;
+  } catch (error) { failure = error instanceof Error ? error.message : String(error); throw error; }
+  finally {
+    observed.release?.(); await fresh.close();
+    writeFileSync(info.outputPath('manual-plan-browser-checks.json'), JSON.stringify({ project: info.project.name,
+      ownerId: fixture.users[slot]!.id, complete, failure, planId, finalSnapshot: observed.snapshot, interruptedCommand, retriedCommand, recoveryProof, checks, errors, external,
+      scope: 'Real local Auth/PostgREST and Next App Router; independent browser account persistence, cancelled acknowledgement, exact retry, stale-device conflict and controlled TED response. No hosted or live provider proof.' }, null, 2));
+  }
+});
+
 const master = (page: Page) => page.getByRole('region', { name: 'Master Workspace', exact: true });
 const panel = (page: Page) => page.getByRole('region', { name: 'Uploaded originals', exact: true });
 const profileValues = (slot: number) => ({
@@ -24,6 +201,240 @@ async function login(page: Page, slot: number) {
   await expect(page).toHaveURL(`${fixture.webOrigin}/workspace`);
   await expect(master(page)).toBeVisible();
 }
+
+type RoleBrowserItem = { id: string; label: string; description: string | null;
+  status: 'pending' | 'done' | 'skipped'; sort_order: number; mutation_token: string };
+type RoleBrowserRow = RoleBrowserItem & { user_id: string; saved_role_id: string };
+type RoleBrowserCommand = { p_item_id: string; p_expected_mutation_token: string; p_status: 'pending' | 'done' };
+type RoleBrowserMutation = { command: RoleBrowserCommand;
+  receipt: { status: 'committed'; affected_rows: 1; item: RoleBrowserItem } };
+const roleItemFields = ['id', 'label', 'description', 'status', 'sort_order', 'mutation_token'];
+const roleRowFields = [...roleItemFields, 'user_id', 'saved_role_id'];
+function roleBrowserRecord(value: unknown, fields: string[]): Record<string, unknown> {
+  assert.ok(value && typeof value === 'object' && !Array.isArray(value));
+  assert.deepEqual(Object.keys(value).sort(), [...fields].sort());
+  return value as Record<string, unknown>;
+}
+function roleBrowserUuid(value: unknown): string {
+  assert.ok(typeof value === 'string');
+  assert.match(value, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  return value;
+}
+function roleBrowserItem(value: unknown): RoleBrowserItem {
+  const row = roleBrowserRecord(value, roleItemFields);
+  assert.ok(typeof row.label === 'string' && row.label.length <= 256);
+  assert.ok(row.description === null || (typeof row.description === 'string' && row.description.length <= 2048));
+  assert.ok(row.status === 'pending' || row.status === 'done' || row.status === 'skipped');
+  assert.ok(typeof row.sort_order === 'number' && Number.isInteger(row.sort_order) && row.sort_order >= 0 && row.sort_order <= 5);
+  return { id: roleBrowserUuid(row.id), label: row.label, description: row.description,
+    status: row.status, sort_order: row.sort_order, mutation_token: roleBrowserUuid(row.mutation_token) };
+}
+function roleBrowserRows(value: unknown, ownerId: string, roleId: string): RoleBrowserRow[] {
+  assert.ok(Array.isArray(value)); assert.equal(value.length, 6);
+  const rows = value.map(value => {
+    const row = roleBrowserRecord(value, roleRowFields);
+    assert.equal(row.user_id, ownerId); assert.equal(row.saved_role_id, roleId);
+    const item = roleBrowserItem(Object.fromEntries(roleItemFields.map(key => [key, row[key]])));
+    return { ...item, user_id: ownerId, saved_role_id: roleId };
+  });
+  assert.equal(new Set(rows.map(row => row.id)).size, 6);
+  assert.deepEqual(rows.map(row => row.sort_order), [0, 1, 2, 3, 4, 5]);
+  return rows;
+}
+function roleBrowserMutation(commandValue: unknown, receiptValue: unknown): RoleBrowserMutation {
+  const command = roleBrowserRecord(commandValue, ['p_item_id', 'p_expected_mutation_token', 'p_status']);
+  assert.ok(command.p_status === 'pending' || command.p_status === 'done');
+  const receipt = roleBrowserRecord(receiptValue, ['status', 'affected_rows', 'item']);
+  assert.equal(receipt.status, 'committed'); assert.equal(receipt.affected_rows, 1);
+  const item = roleBrowserItem(receipt.item);
+  assert.equal(item.id, command.p_item_id); assert.equal(item.status, command.p_status);
+  assert.notEqual(item.mutation_token, command.p_expected_mutation_token);
+  return { command: { p_item_id: roleBrowserUuid(command.p_item_id),
+    p_expected_mutation_token: roleBrowserUuid(command.p_expected_mutation_token), p_status: command.p_status },
+    receipt: { status: 'committed', affected_rows: 1, item } };
+}
+
+test('role actions preserve newer saved state across late acknowledgements and reload', async ({ page, context, browser }, info) => {
+  const slot = info.project.name === 'desktop-chromium' ? 0 : 1;
+  const ownerId = fixture.users[slot]!.id; const otherOwnerId = fixture.users[1 - slot]!.id;
+  const title = `Synthetic action role ${info.project.name}`;
+  const employer = `${fixture.project}-${info.project.name}`;
+  const situation = `Synthetic local action acceptance for ${info.project.name}.`;
+  const checks: string[] = []; const errors: string[] = []; const external: string[] = [];
+  const jobMatchRequests = { primary: 0, second: 0 };
+  const saveRequests: Array<{ ownerId: string; roleId: string }> = [];
+  let complete = false; let failure: string | null = null; let roleId = ''; let itemId = '';
+  let initialRows: RoleBrowserRow[] = []; let refreshedRows: RoleBrowserRow[] = []; let finalRows: RoleBrowserRow[] = [];
+  let otherRoleId = ''; let otherRows: RoleBrowserRow[] = []; let readCount = 0;
+  const mutations: { held: RoleBrowserMutation | null; newer: RoleBrowserMutation | null; next: RoleBrowserMutation | null } = {
+    held: null, newer: null, next: null,
+  };
+  const heldHandlers: Promise<void>[] = [];
+  let releaseAcknowledgement: () => void = () => undefined;
+  const acknowledgementGate = new Promise<void>(resolve => { releaseAcknowledgement = resolve; });
+  const mutationPath = `${fixture.supabaseOrigin}/rest/v1/rpc/update_own_role_action_item`;
+  const safeError = (error: unknown) => fixture.users.reduce((value, user) => value.replaceAll(user.password, '[local credential redacted]'),
+    error instanceof Error ? error.message : String(error))
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[local JWT redacted]');
+  const watch = (target: Page) => target.on('pageerror', error => errors.push(safeError(error)));
+  watch(page); context.on('page', watch);
+  const restrict = async (surface: typeof context) => {
+    await surface.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      if (![fixture.webOrigin, fixture.supabaseOrigin].includes(url.origin)) {
+        external.push(url.origin + url.pathname); await route.abort('blockedbyclient');
+      } else await route.continue();
+    });
+    await surface.routeWebSocket('**/*', socket => { external.push(new URL(socket.url()).origin); socket.close(); });
+  };
+  const fresh = await browser.newContext({ baseURL: fixture.webOrigin, serviceWorkers: 'block', viewport: info.project.use.viewport });
+  fresh.on('page', watch);
+  async function controlSearch(target: Page, surface: keyof typeof jobMatchRequests) {
+    await target.route(`${fixture.webOrigin}/api/job-match`, async route => {
+      assert.equal(route.request().method(), 'POST');
+      const body: unknown = route.request().postDataJSON();
+      assert.ok(body && typeof body === 'object' && !Array.isArray(body));
+      const input = body as Record<string, unknown>;
+      assert.equal(input.situation, situation); assert.equal(input.distance, undefined); roleBrowserUuid(input.generation_request_id);
+      assert.ok(Object.keys(input).every(key => ['situation', 'experience', 'location', 'work_type', 'distance', 'role_focus', 'country_code', 'generation_request_id'].includes(key)));
+      jobMatchRequests[surface] += 1; assert.ok(jobMatchRequests[surface] <= (surface === 'primary' ? 3 : 1));
+      // Only discovery is controlled. This response never reaches the gateway or a provider.
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        need_more_context: false, summary: 'Synthetic role used only for local action acceptance.',
+        listings: [{ title, employer, location: 'Melbourne', fit_score: 90 }], role_ideas: [], live_search: false,
+      }) });
+    });
+  }
+  async function searchRole(target: Page) {
+    await target.getByLabel('Distance', { exact: true }).fill('');
+    await target.getByLabel('What should TED know before matching roles?', { exact: true }).fill(situation);
+    await target.getByRole('button', { name: 'Find roles', exact: true }).click();
+    await expect(target.getByRole('region', { name: 'Current openings', exact: true })).toContainText(title);
+  }
+  const checkbox = (target: Page) => target.getByRole('checkbox', { name: 'Review job requirements', exact: true });
+  async function assertVisibleRows(target: Page, rows: RoleBrowserRow[]) {
+    const plan = target.getByRole('heading', { name: 'Action plan', exact: true }).locator('..');
+    await expect(plan.getByRole('checkbox')).toHaveCount(6);
+    for (const row of rows) {
+      const item = plan.getByRole('checkbox', { name: row.label, exact: true });
+      if (row.status === 'done') await expect(item).toBeChecked();
+      else await expect(item).not.toBeChecked();
+    }
+  }
+  async function openPlan(target: Page, expectedOwnerId: string, expectedRoleId: string | null, saves: boolean) {
+    const [response, saved] = await Promise.all([
+      target.waitForResponse(response => response.request().method() === 'GET' &&
+        new URL(response.url()).origin === fixture.supabaseOrigin && new URL(response.url()).pathname === '/rest/v1/role_action_items'),
+      saves ? target.waitForResponse(response => response.request().method() === 'POST' &&
+        response.url() === `${fixture.supabaseOrigin}/rest/v1/rpc/save_own_role_with_default_actions`) : Promise.resolve(null),
+      target.getByRole('button', { name: 'Action plan', exact: true }).click(),
+    ]);
+    expect(response.status()).toBe(200);
+    const url = new URL(response.url());
+    expect([...url.searchParams.keys()].sort()).toEqual(['order', 'saved_role_id', 'select', 'user_id']);
+    expect(url.searchParams.get('select')?.split(',').sort()).toEqual([...roleRowFields].sort());
+    expect(url.searchParams.get('user_id')).toBe(`eq.${expectedOwnerId}`);
+    expect(url.searchParams.get('order')).toBe('sort_order.asc');
+    const filter = url.searchParams.get('saved_role_id'); assert.ok(typeof filter === 'string' && filter.startsWith('eq.'));
+    const actualRoleId = roleBrowserUuid(filter.slice(3));
+    if (expectedRoleId !== null) expect(actualRoleId).toBe(expectedRoleId);
+    if (saved) {
+      expect(saved.status()).toBe(200); expect(await saved.json()).toBe(actualRoleId);
+      expect(saved.request().postDataJSON()).toEqual({ p_role_title: title, p_company_name: employer,
+        p_location: 'Melbourne', p_match_percentage: 90, p_job_url: null, p_source_label: null,
+        p_contact_email: null, p_contact_source_status: 'needs_confirmation' });
+      saveRequests.push({ ownerId: expectedOwnerId, roleId: actualRoleId });
+    }
+    const rows = roleBrowserRows(await response.json(), expectedOwnerId, actualRoleId); readCount += 1;
+    await assertVisibleRows(target, rows);
+    return { roleId: actualRoleId, rows };
+  }
+  async function toggle(target: Page, expectedToken: string, status: 'pending' | 'done') {
+    const [response] = await Promise.all([
+      target.waitForResponse(response => response.request().method() === 'POST' && response.url() === mutationPath),
+      checkbox(target).click(),
+    ]);
+    expect(response.status()).toBe(200);
+    const mutation = roleBrowserMutation(response.request().postDataJSON(), await response.json());
+    expect(mutation.command).toEqual({ p_item_id: itemId, p_expected_mutation_token: expectedToken, p_status: status });
+    if (status === 'done') await expect(checkbox(target)).toBeChecked();
+    else await expect(checkbox(target)).not.toBeChecked();
+    await expect(checkbox(target)).toBeEnabled();
+    return mutation;
+  }
+  try {
+    await restrict(context); await restrict(fresh);
+    await controlSearch(page, 'primary'); await login(page, slot); await page.goto('/roles'); await searchRole(page);
+    const initial = await openPlan(page, ownerId, null, true); roleId = initial.roleId; initialRows = initial.rows;
+    expect(initialRows.every(row => row.status === 'pending')).toBe(true);
+    const initialItem = initialRows.find(row => row.label === 'Review job requirements'); assert.ok(initialItem); itemId = initialItem.id;
+    checks.push('owned_role_and_actions_opened');
+    const other = await fresh.newPage(); await controlSearch(other, 'second'); await login(other, slot); await other.goto('/roles'); await searchRole(other);
+    expect((await openPlan(other, ownerId, roleId, true)).rows).toEqual(initialRows);
+    checks.push('same_owner_second_context_opened');
+    await page.route(mutationPath, route => {
+      const requestNumber = heldHandlers.length + 1;
+      const task = (async () => {
+        assert.equal(requestNumber, 1); assert.equal(route.request().method(), 'POST');
+        const command: unknown = route.request().postDataJSON();
+        expect(command).toEqual({ p_item_id: itemId, p_expected_mutation_token: initialItem.mutation_token, p_status: 'done' });
+        const response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: 30000 });
+        try {
+          expect(response.status()).toBe(200);
+          mutations.held = roleBrowserMutation(command, await response.json());
+          expect(mutations.held.command).toEqual({ p_item_id: itemId, p_expected_mutation_token: initialItem.mutation_token, p_status: 'done' });
+          await acknowledgementGate;
+          await route.fulfill({ response });
+        } finally { await response.dispose(); }
+      })();
+      heldHandlers.push(task); return task;
+    });
+    await checkbox(page).click();
+    await expect.poll(() => mutations.held !== null).toBe(true); assert.ok(mutations.held);
+    await expect(checkbox(page)).toBeDisabled();
+    checks.push('first_commit_acknowledgement_held');
+    const committedRows = initialRows.map(row => row.id === itemId ? { ...row, ...mutations.held!.receipt.item } : row);
+    expect((await openPlan(other, ownerId, roleId, false)).rows).toEqual(committedRows);
+    mutations.newer = await toggle(other, mutations.held.receipt.item.mutation_token, 'pending');
+    checks.push('second_context_newer_commit_observed');
+    refreshedRows = (await openPlan(page, ownerId, roleId, false)).rows;
+    expect(refreshedRows).toEqual(initialRows.map(row => row.id === itemId ? { ...row, ...mutations.newer!.receipt.item } : row));
+    await expect(checkbox(page)).toBeDisabled();
+    releaseAcknowledgement(); await Promise.all(heldHandlers); await page.unroute(mutationPath);
+    await expect(checkbox(page)).toBeEnabled(); await assertVisibleRows(page, refreshedRows);
+    checks.push('newer_read_preserved_after_stale_acknowledgement');
+    mutations.next = await toggle(page, mutations.newer.receipt.item.mutation_token, 'done');
+    checks.push('next_toggle_uses_newer_token');
+    await page.reload(); await searchRole(page);
+    finalRows = (await openPlan(page, ownerId, roleId, true)).rows;
+    expect(finalRows).toEqual(initialRows.map(row => row.id === itemId ? { ...row, ...mutations.next!.receipt.item } : row));
+    checks.push('reload_preserves_exact_role_and_actions');
+    await page.screenshot({ path: info.outputPath('role-action.png'), fullPage: true });
+    await page.goto('/sign-out'); await expect(page).toHaveURL(`${fixture.webOrigin}/home`);
+    await login(page, 1 - slot); await page.goto('/roles'); await searchRole(page);
+    const isolated = await openPlan(page, otherOwnerId, null, true); otherRoleId = isolated.roleId; otherRows = isolated.rows;
+    expect(otherRoleId).not.toBe(roleId); expect(otherRows.every(row => row.status === 'pending')).toBe(true);
+    expect(otherRows.every(row => !initialRows.some(original => original.id === row.id))).toBe(true);
+    checks.push('other_owner_isolated');
+    expect(jobMatchRequests).toEqual({ primary: 3, second: 1 }); expect(readCount).toBe(6);
+    expect(saveRequests).toEqual([{ ownerId, roleId }, { ownerId, roleId }, { ownerId, roleId }, { ownerId: otherOwnerId, roleId: otherRoleId }]);
+    expect(errors).toEqual([]); expect(external).toEqual([]); complete = true;
+  } catch (error) { failure = safeError(error); throw error; }
+  finally {
+    releaseAcknowledgement();
+    const cleanup = await Promise.allSettled([...heldHandlers, fresh.close()]);
+    const cleanupFailure = cleanup.find(result => result.status === 'rejected');
+    const cleanupIsPrimary = cleanupFailure?.status === 'rejected' && failure === null;
+    if (cleanupIsPrimary && cleanupFailure?.status === 'rejected') { complete = false; failure = safeError(cleanupFailure.reason); }
+    try {
+      writeFileSync(info.outputPath('role-action-browser-checks.json'), JSON.stringify({ version: 'role-action-browser.1',
+        project: info.project.name, ownerId, otherOwnerId, title, employer, complete, failure, roleId, itemId,
+        initialRows, refreshedRows, finalRows, otherRoleId, otherRows, mutations, jobMatchRequests, saveRequests, readCount, checks, errors, external,
+        scope: 'Real local Auth/PostgREST role actions and CAS with controlled job-match discovery; desktop/narrow reload, stale acknowledgement and owner isolation. No provider or hosted proof.' }, null, 2));
+    } catch (error) { if (failure === null) throw error; console.error('Role action evidence could not be saved.'); }
+    if (cleanupIsPrimary && cleanupFailure?.status === 'rejected') throw cleanupFailure.reason;
+  }
+});
 
 test('real file chooser settles owned sources and reopens identical originals', async ({ page, context }, info) => {
   const errors: string[] = []; const external: string[] = [];
@@ -390,5 +801,143 @@ test('real file chooser settles owned sources and reopens identical originals', 
       // contains no receipt, authentication data or document wording.
       console.error('Partial upload evidence could not be saved:', error instanceof Error ? error.name : 'UnknownError');
     }
+  }
+});
+
+// Selected only by the runner's second browser phase, after all six original
+// cases and their independent proofs finish on the original subscription state.
+test(accountPlanTestName, async ({ page, context }, info) => {
+  test.setTimeout(120_000);
+  const slot = info.project.name === 'desktop-chromium' ? 0 : 1;
+  const statuses = ['expired', 'cancelled'] as const;
+  const periodEnds = ['2020-01-15T12:00:00+00:00', '2020-02-15T12:00:00+00:00'] as const;
+  const checks: string[] = []; const errors: string[] = []; const external: string[] = [];
+  const forbiddenDispatches: Array<{ method: string; path: string }> = [];
+  const observations: Array<{ stage: string; ownerId: string; access: unknown;
+    usage: { method: string; status: number; ownerId: string; eventType: string; monthStart: string; contentRange: string } }> = [];
+  let complete = false; let failure: string | null = null;
+  const safeError = (error: unknown) => fixture.users.reduce((value, user) => value.replaceAll(user.password, '[local credential redacted]'),
+    error instanceof Error ? error.message : String(error))
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[local JWT redacted]');
+  const watch = (target: Page) => target.on('pageerror', error => errors.push(safeError(error)));
+  watch(page); context.on('page', watch);
+  const accessPath = `${fixture.supabaseOrigin}/rest/v1/rpc/get_effective_product_access_v1`;
+  const readRpcPaths = ['/rest/v1/rpc/get_effective_product_access_v1', '/rest/v1/rpc/list_own_workspace_uploads_v1'];
+  await context.route('**/*', async route => {
+    const request = route.request(); const url = new URL(request.url()); const method = request.method();
+    if (![fixture.webOrigin, fixture.supabaseOrigin].includes(url.origin)) {
+      external.push(url.origin + url.pathname); await route.abort('blockedbyclient'); return;
+    }
+    const dataMutation = url.origin === fixture.supabaseOrigin && url.pathname.startsWith('/rest/v1/') &&
+      !['GET', 'HEAD', 'OPTIONS'].includes(method) && !(method === 'POST' && readRpcPaths.includes(url.pathname));
+    if (dataMutation || url.pathname.startsWith('/functions/v1/') ||
+      (url.origin === fixture.webOrigin && url.pathname.startsWith('/api/'))) {
+      forbiddenDispatches.push({ method, path: url.origin + url.pathname });
+      await route.abort('blockedbyclient'); return;
+    }
+    await route.continue();
+  });
+  await context.routeWebSocket('**/*', socket => { external.push(new URL(socket.url()).origin); socket.close(); });
+  const subscription = page.getByRole('region', { name: 'Subscription plan', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Upgrade your plan', exact: true });
+  const monthStartNow = () => {
+    const now = new Date(); return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  };
+  async function openAccount(stage: string, ownerSlot: number, navigate: () => Promise<unknown>) {
+    const owner = fixture.users[ownerSlot]; assert.ok(owner);
+    const firstMonthStart = monthStartNow();
+    const accessResponse = page.waitForResponse(response => response.url() === accessPath && response.request().method() === 'POST');
+    const usageResponse = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.origin === fixture.supabaseOrigin && url.pathname === '/rest/v1/usage_ledger' &&
+        response.request().method() === 'HEAD' && url.searchParams.get('user_id') === `eq.${owner.id}`;
+    });
+    const [accessRead, usageRead] = await Promise.all([accessResponse, usageResponse, navigate()]);
+    expect(accessRead.status()).toBe(200); expect(accessRead.request().postDataJSON()).toEqual({});
+    const access: unknown = await accessRead.json();
+    expect(access).toEqual({ contract_version: 'product-access.1', user_id: owner.id,
+      subscription_plan: 'business', effective_plan: 'free', subscription_status: statuses[ownerSlot],
+      current_period_end: periodEnds[ownerSlot], access_profile: 'subscription', monthly_document_cap: 3,
+      ai_editing: false, business_features: false });
+    expect(usageRead.status()).toBe(200);
+    const usageUrl = new URL(usageRead.url());
+    expect([...usageUrl.searchParams.keys()].sort()).toEqual(['created_at', 'event_type', 'select', 'user_id']);
+    expect(usageUrl.searchParams.get('select')).toBe('id');
+    expect(usageUrl.searchParams.get('event_type')).toBe('eq.document_created');
+    const monthStart = usageUrl.searchParams.get('created_at')?.replace(/^gte\./, ''); assert.ok(monthStart);
+    expect([firstMonthStart, monthStartNow()]).toContain(monthStart);
+    const contentRange = usageRead.headers()['content-range']; assert.ok(typeof contentRange === 'string');
+    expect(contentRange).toBe('*/0');
+    await expect(page).toHaveURL(`${fixture.webOrigin}/settings/account`);
+    await expect(page.getByRole('main').getByText(owner.email, { exact: true })).toBeVisible();
+    await expect(subscription.getByRole('heading', { name: 'Business', exact: true })).toBeVisible();
+    await expect(subscription.getByRole('list', { name: 'Free plan features', exact: true })).toContainText('3 documents per month');
+    await expect(subscription.getByRole('list', { name: 'Business plan features', exact: true })).toHaveCount(0);
+    await expect(subscription.getByLabel('Document usage this month', { exact: true })).toContainText('0 / 3');
+    await expect(subscription.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
+    const periodEnd = periodEnds[ownerSlot]; assert.ok(periodEnd);
+    const periodLabel = await page.evaluate(value => new Date(value).toLocaleDateString(undefined,
+      { day: 'numeric', month: 'long', year: 'numeric' }), periodEnd);
+    await expect(subscription.getByText(`Subscription period end: ${periodLabel}.`, { exact: true })).toBeVisible();
+    await expect(subscription.getByRole('button', { name: 'Upgrade', exact: true })).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    observations.push({ stage, ownerId: owner.id, access,
+      usage: { method: 'HEAD', status: usageRead.status(), ownerId: owner.id, eventType: 'document_created', monthStart,
+        contentRange } });
+  }
+  async function comparePlans() {
+    await subscription.getByRole('button', { name: 'Upgrade', exact: true }).click();
+    await expect(dialog).toBeVisible();
+    for (const name of ['Pro', 'Premium', 'Business']) {
+      await expect(dialog.getByRole('button', { name: `Select ${name} plan`, exact: true })).toBeVisible();
+    }
+    await expect(dialog.getByRole('button', { name: /^Select .+ plan$/ })).toHaveCount(3);
+    await expect(dialog.getByText(/reached.*limit|upgrade to keep going/i)).toHaveCount(0);
+    await expect(dialog.getByText('Compare plans to find the features and monthly document allowance you need.', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('note')).toContainText("Online checkout isn't available yet on the web.");
+    await expect(dialog.getByRole('note')).toContainText('selecting one does not send an upgrade request or change your current plan.');
+  }
+  try {
+    await login(page, slot);
+    await openAccount('initial', slot, () => page.goto('/settings/account'));
+    checks.push('real_owned_access_and_usage_observed');
+    await comparePlans();
+    await page.screenshot({ path: info.outputPath('account-plan-comparison.png'), fullPage: true });
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toHaveCount(0); checks.push('historical_business_compares_all_paid_plans');
+    await openAccount('reload', slot, () => page.reload());
+    checks.push('reload_preserves_effective_free_and_billing_history');
+    await comparePlans(); await dialog.getByRole('button', { name: 'Select Business plan', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('status').filter({ hasText:
+      "Online checkout isn't available yet. No upgrade request was sent, and your plan is unchanged." })).toBeVisible();
+    await expect(subscription.getByRole('heading', { name: 'Business', exact: true })).toBeVisible();
+    await expect(subscription.getByRole('list', { name: 'Free plan features', exact: true })).toContainText('3 documents per month');
+    checks.push('selection_reports_unavailable_without_upgrade');
+    await openAccount('after_selection_reload', slot, () => page.reload());
+    checks.push('selection_reload_preserves_saved_access');
+    await comparePlans();
+    await page.goto('/sign-out'); await expect(page).toHaveURL(`${fixture.webOrigin}/home`);
+    await expect(dialog).toHaveCount(0);
+    await login(page, 1 - slot);
+    await openAccount('other_owner', 1 - slot, () => page.goto('/settings/account'));
+    await expect(page.getByRole('main').getByText(fixture.users[slot]!.email, { exact: true })).toHaveCount(0);
+    await comparePlans(); await dialog.getByRole('button', { name: 'Not now', exact: true }).click();
+    await expect(dialog).toHaveCount(0); checks.push('real_owner_switch_retires_modal_and_uses_other_access');
+    await page.goto('/sign-out'); await expect(page).toHaveURL(`${fixture.webOrigin}/home`);
+    await login(page, slot);
+    await openAccount('original_owner_return', slot, () => page.goto('/settings/account'));
+    checks.push('returning_owner_reads_own_saved_access');
+    await page.screenshot({ path: info.outputPath('account-plan-history-and-access.png'), fullPage: true });
+    expect(errors).toEqual([]); expect(external).toEqual([]); expect(forbiddenDispatches).toEqual([]);
+    checks.push('no_billing_mutation_or_provider_dispatch'); complete = true;
+  } catch (error) { failure = safeError(error); throw error; }
+  finally {
+    try {
+      writeFileSync(info.outputPath('account-plan-browser-checks.json'), JSON.stringify({ version: 'account-plan-browser.1',
+        project: info.project.name, ownerId: fixture.users[slot]!.id, otherOwnerId: fixture.users[1 - slot]!.id,
+        complete, failure, observations, checks, errors, external, forbiddenDispatches,
+        scope: 'Real local Auth, effective-access RPC, usage read and Account UI with historical subscription fixtures; comparison, reload and real owner navigation. No purchase, webhook delivery, same-render principal race or hosted proof.' }, null, 2));
+    } catch (error) { if (failure === null) throw error; console.error('Account plan evidence could not be saved.'); }
   }
 });

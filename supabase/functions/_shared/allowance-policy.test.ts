@@ -386,11 +386,76 @@ Deno.test("allowance policy reader cancels actual SDK transport and keeps the or
   assertEquals(test.calls.length, 1);
 });
 
+for (const [plan, cap, nextPlan] of [
+  ["free", 3, "pro"],
+  ["pro", 20, "premium"],
+  ["premium", 40, "business"],
+] as const) {
+  Deno.test(`${plan} policy reservation cap rejection recommends only the next subscription plan`, async () => {
+    const test = fixture(() => Response.json({ message: "ALLOWANCE_CAP_REACHED", code: "P0001" }, { status: 400 }));
+    const error = await assertRejects(
+      () => reserveDocumentAllowance(test.admin, { ...reserve(), plan, monthlyCap: cap }),
+      AllowanceReservationError,
+    );
+    assertEquals(test.calls.length, 1);
+    assertEquals(test.calls[0].path, "/rest/v1/rpc/reserve_document_allowance_with_policy");
+    assertEquals(test.calls[0].args.p_user_id, OWNER);
+    assertEquals(test.calls[0].args.p_plan, plan);
+    assertEquals(test.calls[0].args.p_monthly_cap, cap);
+    assertEquals(error.status, 402);
+    assertEquals(error.code, "PAYWALL");
+    assertEquals(error.payload, { error: {
+      code: "PAYWALL",
+      message: "You've reached your document limit for this month. Upgrade to keep going.",
+      paywall_trigger: true,
+      current_plan: plan,
+      plan_required: nextPlan,
+    } });
+  });
+}
+
+Deno.test("business policy reservation cap rejection reports the monthly limit without an upgrade", async () => {
+  const test = fixture(() => Response.json({ message: "ALLOWANCE_CAP_REACHED", code: "P0001" }, { status: 400 }));
+  const error = await assertRejects(
+    () => reserveDocumentAllowance(test.admin, { ...reserve(), plan: "business", monthlyCap: 50 }),
+    AllowanceReservationError,
+  );
+  assertEquals(test.calls.length, 1);
+  assertEquals(test.calls[0].path, "/rest/v1/rpc/reserve_document_allowance_with_policy");
+  assertEquals(test.calls[0].args.p_user_id, OWNER);
+  assertEquals(test.calls[0].args.p_plan, "business");
+  assertEquals(test.calls[0].args.p_monthly_cap, 50);
+  assertEquals(error.status, 402);
+  assertEquals(error.code, "DOCUMENT_LIMIT_REACHED");
+  const detail = error.payload.error as Record<string, unknown>;
+  assertEquals(error.payload, { error: {
+    code: "DOCUMENT_LIMIT_REACHED",
+    message: detail.message,
+    paywall_trigger: false,
+    current_plan: "business",
+  } });
+  assert(typeof detail.message === "string");
+  assert(detail.message.includes("month"));
+  assert(detail.message.includes("next month"));
+  assertEquals(/\bupgrade\b/i.test(detail.message), false);
+  assertEquals(Object.hasOwn(detail, "plan_required"), false);
+});
+
 Deno.test("policy reservation cap rejection preserves owner-specific limit messaging", async () => {
   const test = fixture(() => Response.json({ message: "ALLOWANCE_CAP_REACHED", code: "P0001" }, { status: 400 }));
   const error = await assertRejects(() => reserveDocumentAllowance(test.admin, { ...reserve(), accessProfile: "owner" }), AllowanceReservationError);
   assertEquals(error.status, 402);
   assertEquals(error.code, "DOCUMENT_LIMIT_REACHED");
   assertEquals((error.payload.error as Record<string, unknown>).paywall_trigger, false);
+  assertEquals(error.payload, { error: {
+    code: "DOCUMENT_LIMIT_REACHED",
+    message: "You have used your 1,000 documents for this month. New allowance becomes available next month.",
+    paywall_trigger: false,
+    current_plan: "business",
+  } });
   assertEquals(test.calls.length, 1);
+  assertEquals(test.calls[0].path, "/rest/v1/rpc/reserve_document_allowance_with_policy");
+  assertEquals(test.calls[0].args.p_user_id, OWNER);
+  assertEquals(test.calls[0].args.p_plan, "business");
+  assertEquals(test.calls[0].args.p_monthly_cap, 1000);
 });

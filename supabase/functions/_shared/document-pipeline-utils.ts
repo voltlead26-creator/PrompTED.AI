@@ -270,10 +270,10 @@ function isAuditInfrastructureIssue(issue: SectionIssueLike): boolean {
 }
 
 /**
- * A document-level audit issue has no section key and therefore requires a
- * full rewrite. Otherwise rewrite only the named, valid sections. Audit
- * infrastructure warnings do not ask the writer to rewrite good prose: the
- * same draft is re-audited instead.
+ * Only exact, admitted section identities authorise a content rewrite.
+ * Document-level findings and unknown keys do not identify safe targets:
+ * retain them for re-audit and the final quality gate instead of rewriting
+ * passing siblings. Infrastructure warnings likewise re-audit the same text.
  */
 export function affectedSectionKeys(
   issues: readonly SectionIssueLike[],
@@ -283,8 +283,6 @@ export function affectedSectionKeys(
     !isAuditInfrastructureIssue(issue)
   );
   if (actionable.length === 0) return [];
-  if (actionable.some((issue) => !issue.section_key)) return [...allKeys];
-
   const requested = new Set(
     actionable
       .map((issue) => issue.section_key)
@@ -292,10 +290,7 @@ export function affectedSectionKeys(
         typeof key === "string" && key.length > 0
       ),
   );
-  const valid = allKeys.filter((key) => requested.has(key));
-  // An auditor should use canonical keys, but a malformed/unknown key must
-  // degrade safely to a full repair rather than silently skipping correction.
-  return valid.length > 0 ? valid : [...allKeys];
+  return allKeys.filter((key) => requested.has(key));
 }
 
 /** Merge rewritten sections into the original draft without changing order. */

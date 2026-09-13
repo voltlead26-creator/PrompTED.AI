@@ -9,8 +9,13 @@ import assert from "node:assert/strict";
 // and db-20260911160044438-88b41118 (recorded hosted); 54 files / 2,761 assertions.
 // These pins identify the reviewed input; every later run must execute again.
 export const reviewedReleaseSqlExtension = Object.freeze({
+  "supabase/migrations/20260914005000_business_checkout_reservations.sql": "75602984fed80db28ee3379f1d082b905ce69b8908041e521bc33aea77c8ad5b",
+  "supabase/tests/business_checkout_reservations.test.sql": "641abce338a76fa0d9296549f803876d303cca8fb5d8e9c37501acb353e22420",
+  "supabase/migrations/20260913094000_manual_plan_persistence.sql": "c430f0e1a5525ed87f2af43b75624042e3835a2430ab5182d90a24d8553508ea",
+  "supabase/tests/manual_plan_persistence.test.sql": "01eb097c720ff7239a9a1adaf73800aebf7228c84c8dba19a2113cc3364a2e77",
+  "supabase/migrations/20260912070100_business_fifty_document_allowance.sql": "0b89f4f520778b750fcc3b27b949766441ef4cd16e832574717219ab0b190242",
   "supabase/migrations/20260911174506_business_matches_premium_allowance.sql": "80ca9922ebcc2a187b5cf9e9b0996cf34271be070952607006be5c713bf678e7",
-  "supabase/tests/business_premium_allowance.test.sql": "7ad23b287c21af7c967e5d8483c3d2435bccf33327cff9cdc561893a3c4b13f9",
+  "supabase/tests/business_premium_allowance.test.sql": "98310ba760c9f3ee1e78d69d53e34e6ed2a7e6c5c0ab25767970eeab16aa11bf",
   "supabase/migrations/20260911165152_reconcile_artifact_outcome_read_privileges.sql": "9e3a2c67049e45ada0a8f8020fb0eaf9144df5969993d9c61971a8667d2ce75b",
   "supabase/tests/artifact_outcome_read_privileges.test.sql": "720665f34c89883edd837120de7df05cdd085794eb20f39a6d519d8ad3e3647d",
   "supabase/tests/owner_rpc_execute_privileges.test.sql": "f5be5201c1d709d4b37ac96930339f8ec640489c345597c6733c6dde6449ae1c",

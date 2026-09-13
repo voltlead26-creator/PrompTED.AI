@@ -20,6 +20,56 @@ export function uploadProxyTarget(rawPath, method) {
   return uploadOrigins.supabase + rawPath;
 }
 
+export function createUploadProxyLifetime(req, res, timeoutMs = 90000) {
+  assert.ok(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 90000);
+  const controller = new AbortController();
+  let abortCause = null; let abortSource = null; let abortReason;
+  let disposed = false; let responseClosed = false; let clientDisconnected = false;
+  const abort = (cause, source) => {
+    if (disposed || controller.signal.aborted) return;
+    // Preserve the first observed cause and its exact reason object. An error
+    // merely named AbortError does not prove that the browser cancelled it.
+    abortCause = cause; abortSource = source;
+    abortReason = new DOMException(cause === 'client_disconnect'
+      ? 'Local acceptance client disconnected' : 'Local acceptance transport deadline exceeded',
+    cause === 'client_disconnect' ? 'AbortError' : 'TimeoutError');
+    controller.abort(abortReason);
+  };
+  const requestAborted = () => {
+    clientDisconnected = true; abort('client_disconnect', 'request_aborted');
+  };
+  const responseClose = () => {
+    responseClosed = true;
+    if (!res.writableFinished) {
+      clientDisconnected = true; abort('client_disconnect', 'response_closed');
+    }
+  };
+  req.once('aborted', requestAborted); res.once('close', responseClose);
+  const timer = setTimeout(() => abort('deadline', 'timer'), timeoutMs);
+  if (req.aborted) requestAborted();
+  if (res.destroyed || res.closed) responseClose();
+  return {
+    signal: controller.signal,
+    failure(error) {
+      const abortMatched = controller.signal.aborted && error === abortReason && error === controller.signal.reason;
+      const detail = { abortCause, abortSource, abortMatched };
+      if (abortCause === 'client_disconnect' && abortMatched) return { cancelled: true, ...detail };
+      // Even an unknown thrown value must keep the final failed-check gate red.
+      const name = typeof error?.name === 'string' && error.name.trim() ? error.name : 'TransportError';
+      return { failed: name, ...detail };
+    },
+    canRespond() {
+      return !clientDisconnected && !responseClosed && !req.aborted && !res.destroyed && !res.closed &&
+        !res.writableEnded && !res.writableFinished;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true; clearTimeout(timer);
+      req.off('aborted', requestAborted); res.off('close', responseClose);
+    },
+  };
+}
+
 export async function readUploadProbeBody(stream, maximumBytes, signal) {
   assert.ok(Number.isSafeInteger(maximumBytes) && maximumBytes > 0 && maximumBytes <= 16 * 1024 * 1024);
   signal.throwIfAborted();
@@ -37,6 +87,7 @@ export async function readUploadProbeBody(stream, maximumBytes, signal) {
     for (let reads = 0; ; reads++) {
       signal.throwIfAborted(); assert.ok(reads < 10000, 'Transfer read bound exceeded');
       const next = await reader.read(); signal.throwIfAborted(); if (next.done) break;
+      assert.ok(next.value instanceof Uint8Array, 'Transfer chunk must be bytes');
       length += next.value.byteLength; assert.ok(length <= maximumBytes, 'Transfer byte bound exceeded');
       chunks.push(next.value);
     }

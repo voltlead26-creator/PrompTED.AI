@@ -56,7 +56,46 @@ export interface RevenueCatPersistence {
 
 export interface RevenueCatWebhookDependencies {
   secret: string | undefined;
+  /** Exact receiver environment and app allowlist, supplied by server configuration. */
+  sourcePolicy?: string;
   persistence: RevenueCatPersistence;
+}
+
+interface RevenueCatSourcePolicy {
+  environment: "PRODUCTION" | "SANDBOX";
+  appIds: string[];
+}
+
+function parseSourcePolicy(value: unknown): RevenueCatSourcePolicy | null {
+  if (typeof value !== "string" || value.length > 32_768) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 2 ||
+    (record.environment !== "PRODUCTION" && record.environment !== "SANDBOX") ||
+    !Array.isArray(record.appIds) || record.appIds.length === 0 ||
+    record.appIds.length > MAX_IDENTIFIER_COUNT
+  ) return null;
+  const appIds: string[] = [];
+  for (const appId of record.appIds) {
+    if (
+      typeof appId !== "string" || appId.length === 0 ||
+      appId.length > MAX_IDENTIFIER_LENGTH ||
+      /\s/.test(appId) || appIds.includes(appId)
+    ) return null;
+    for (const character of appId) {
+      const code = character.charCodeAt(0);
+      if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return null;
+    }
+    appIds.push(appId);
+  }
+  return { environment: record.environment, appIds };
 }
 
 function response(body: string, status: number): Response {
@@ -270,7 +309,11 @@ function parseTransferEvent(
 }
 
 function parseEvent(payload: unknown):
-  | { kind: "supported"; event: NormalizedRevenueCatEvent }
+  | {
+    kind: "supported";
+    event: NormalizedRevenueCatEvent;
+    source: { appId: unknown; environment: unknown };
+  }
   | { kind: "unsupported" }
   | { kind: "invalid" } {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -296,7 +339,16 @@ function parseEvent(payload: unknown):
   } else {
     event = parseTransferEvent(parsed.record, parsed.common);
   }
-  return event ? { kind: "supported", event } : { kind: "invalid" };
+  return event
+    ? {
+      kind: "supported",
+      event,
+      source: {
+        appId: parsed.record.app_id,
+        environment: parsed.record.environment,
+      },
+    }
+    : { kind: "invalid" };
 }
 
 function persistenceErrorMessage(error: unknown): string {
@@ -305,11 +357,26 @@ function persistenceErrorMessage(error: unknown): string {
   return typeof record.message === "string" ? record.message : "";
 }
 
-function isValidPersistenceResult(value: unknown): boolean {
+function isValidPersistenceResult(
+  value: unknown,
+  expectedEventId: string,
+  expectedEventType: string,
+): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const outcome = (value as Record<string, unknown>).outcome;
-  return outcome === "applied" || outcome === "duplicate" ||
-    outcome === "stale" || outcome === "recorded";
+  const receipt = value as Record<string, unknown>;
+  if (
+    receipt.eventId !== expectedEventId ||
+    typeof receipt.stateApplied !== "boolean"
+  ) return false;
+
+  // The atomic RPC reports this delivery's effect. A duplicate never applies
+  // state again, even when its original immutable receipt records an application.
+  if (receipt.outcome === "duplicate") return receipt.stateApplied === false;
+  if (AUDIT_ONLY_EVENTS.has(expectedEventType)) {
+    return receipt.outcome === "recorded" && receipt.stateApplied === false;
+  }
+  return (receipt.outcome === "applied" && receipt.stateApplied === true) ||
+    (receipt.outcome === "stale" && receipt.stateApplied === false);
 }
 
 export async function handleRevenueCatWebhook(
@@ -332,6 +399,18 @@ export async function handleRevenueCatWebhook(
   if (parsed.kind === "unsupported") return response("Unsupported event", 422);
   if (parsed.kind === "invalid") return response("Invalid event", 400);
 
+  const { id: expectedEventId, type: expectedEventType } = parsed.event;
+  if (!AUDIT_ONLY_EVENTS.has(expectedEventType)) {
+    const policy = parseSourcePolicy(dependencies.sourcePolicy);
+    if (!policy) return response("Service unavailable", 503);
+    if (
+      parsed.source.environment !== policy.environment ||
+      typeof parsed.source.appId !== "string" ||
+      !policy.appIds.includes(parsed.source.appId)
+    ) return response("Event source not allowed", 403);
+  }
+  // Source admission also applies to duplicate deliveries and transfers.
+  // Keep it outside the immutable normalized payload used by existing RPC hashes.
   try {
     const result = await dependencies.persistence.applyEvent(parsed.event);
     if (result.error) {
@@ -349,7 +428,9 @@ export async function handleRevenueCatWebhook(
       }
       return response("Persistence unavailable", 503);
     }
-    if (!isValidPersistenceResult(result.data)) {
+    if (
+      !isValidPersistenceResult(result.data, expectedEventId, expectedEventType)
+    ) {
       return response("Persistence unavailable", 503);
     }
   } catch {
