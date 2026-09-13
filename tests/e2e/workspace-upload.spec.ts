@@ -6,6 +6,7 @@ import { loadUploadBrowserFixture, type UploadFixture } from './workspace-upload
 
 const fixture = loadUploadBrowserFixture();
 const accountPlanTestName = 'account plan comparison uses confirmed Free access for historical Business';
+const generationLimitTestName = 'controlled generation-limit responses pause checklist preparation safely';
 
 test('manual plans persist across devices with exact retry, recovery and conflict handling', async ({ page, context, browser }, info) => {
   const slot = info.project.name === 'desktop-chromium' ? 0 : 1;
@@ -939,5 +940,180 @@ test(accountPlanTestName, async ({ page, context }, info) => {
         complete, failure, observations, checks, errors, external, forbiddenDispatches,
         scope: 'Real local Auth, effective-access RPC, usage read and Account UI with historical subscription fixtures; comparison, reload and real owner navigation. No purchase, webhook delivery, same-render principal race or hosted proof.' }, null, 2));
     } catch (error) { if (failure === null) throw error; console.error('Account plan evidence could not be saved.'); }
+  }
+});
+
+// The third phase reuses an independently verified imported-document outcome.
+// Only generation HTTP responses are controlled; Auth and saved reads stay real.
+test(generationLimitTestName, async ({ page, context }, info) => {
+  const slot = info.project.name === 'desktop-chromium' ? 0 : 1;
+  const owner = fixture.users[slot]; assert.ok(owner);
+  const ownerId = owner.id;
+  const imported = fixture.files.filter(file => file.importText); assert.equal(imported.length, 1);
+  const importedFile = imported[0]; assert.ok(importedFile);
+  const title = `${info.project.name}-${importedFile.name.replace(/\.[^.]+$/, '')}`;
+  const stages = ['lower_plan', 'artifact_null', 'legacy_null', 'business', 'business_reload',
+    'non_billing', 'non_billing_retry'] as const;
+  type Stage = typeof stages[number];
+  const scope = 'Controlled generation HTTP responses in the real local checklist UI with real Auth and owned saved reads; reload, safe Retry and unchanged document wording. No actual quota admission, provider dispatch, WorkspaceScreen limit UI or hosted proof.';
+  const checks: string[] = []; const errors: string[] = []; const external: string[] = [];
+  const forbiddenDispatches: Array<{ method: string; path: string }> = [];
+  const requests: Array<{ stage: Stage; path: string; status: number; requestId: string; bodySha256: string }> = [];
+  const observations: Array<{ stage: Stage; ownerId: string; outcomeId: string;
+    artifactAbsent: true; checklistCount: 0; heading: string | null; accountReview: boolean; retry: boolean }> = [];
+  let activeStage: Stage | null = null; let outcomeId = ''; let complete = false; let failure: string | null = null;
+  const safeError = (error: unknown) => fixture.users.reduce((value, user) => value.replaceAll(user.password, '[local credential redacted]'),
+    error instanceof Error ? error.message : String(error))
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[local JWT redacted]').slice(0, 2048);
+  const readRpcPaths = ['/rest/v1/rpc/get_effective_product_access_v1', '/rest/v1/rpc/list_own_workspace_uploads_v1',
+    '/rest/v1/rpc/get_own_manual_plan_v1', '/rest/v1/rpc/get_workspace_snapshot_v1',
+    '/rest/v1/rpc/get_workspace_section_body_v1', '/rest/v1/rpc/get_latest_legacy_section_edit'];
+  const watch = (target: Page) => target.on('pageerror', error => errors.push(safeError(error)));
+  watch(page); context.on('page', watch);
+  await context.route('**/*', async route => {
+    const request = route.request(); const url = new URL(request.url()); const method = request.method();
+    if (![fixture.webOrigin, fixture.supabaseOrigin].includes(url.origin)) {
+      external.push(url.origin + url.pathname); await route.abort('blockedbyclient'); return;
+    }
+    if (url.origin === fixture.webOrigin && ['/api/generate-artifact', '/api/generate-checklist'].includes(url.pathname) && activeStage) {
+      try {
+        assert.equal(method, 'POST'); assert.equal(url.search, ''); assert.ok(outcomeId);
+        const stage = activeStage; const raw = request.postData(); assert.ok(raw && raw.length <= 128 * 1024);
+        const body: unknown = request.postDataJSON(); assert.ok(body && typeof body === 'object' && !Array.isArray(body));
+        const input = body as Record<string, unknown>; const requestId = input.generation_request_id;
+        assert.equal(typeof requestId, 'string'); assert.match(requestId as string, /^gen-[0-9a-f]{64}$/);
+        assert.equal(request.headers()['x-idempotency-key'], requestId);
+        assert.equal(request.headers()['x-request-id'], requestId);
+        assert.ok(typeof input.situation === 'string' && input.situation.length > 0);
+        let status = 402; let responseBody: unknown = null;
+        if (url.pathname === '/api/generate-artifact') {
+          assert.equal(input.outcome_id, outcomeId); assert.equal(input.request_id, requestId);
+          assert.ok(input.kind === 'checklist' || input.kind === 'action_plan');
+          assert.ok(Object.keys(input).every(key => ['request_id', 'outcome_id', 'kind', 'template_id', 'situation',
+            'conversation_context', 'upload_context', 'locale', 'timezone', 'generation_request_id'].includes(key)));
+          if (stage === 'lower_plan') responseBody = { error: { code: 'PAYWALL', message: 'CONTROLLED_LIMIT_DIAGNOSTIC',
+            paywall_trigger: true, current_plan: 'free', plan_required: 'pro' } };
+          else if (stage === 'legacy_null') {
+            status = 404; responseBody = { error: { code: 'TED_V2_DISABLED', message: 'CONTROLLED_LIMIT_DIAGNOSTIC' } };
+          } else if (stage === 'business' || stage === 'business_reload') {
+            responseBody = { error: { code: 'DOCUMENT_LIMIT_REACHED', message: 'CONTROLLED_LIMIT_DIAGNOSTIC',
+              paywall_trigger: false, current_plan: 'business' } };
+          } else if (stage === 'non_billing' || stage === 'non_billing_retry') {
+            status = 502; responseBody = { error: { code: 'SYNTHETIC_NON_BILLING_FAILURE', message: 'CONTROLLED_LIMIT_DIAGNOSTIC' } };
+          } else assert.equal(stage, 'artifact_null');
+        } else {
+          assert.equal(stage, 'legacy_null');
+          assert.deepEqual(Object.keys(input).sort(), ['generation_request_id', 'situation']);
+          assert.equal(requests.filter(row => row.stage === stage && row.path === '/api/generate-artifact' && row.status === 404).length, 1);
+        }
+        assert.equal(requests.filter(row => row.stage === stage && row.path === url.pathname).length, 0,
+          'An unexpected automatic generation retry was attempted');
+        requests.push({ stage, path: url.pathname, status, requestId: requestId as string,
+          bodySha256: createHash('sha256').update(raw).digest('hex') });
+        assert.ok(requests.length <= 8);
+        // Never forward either controlled generation request to Next, Edge or a provider.
+        await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(responseBody) });
+      } catch (error) {
+        errors.push(safeError(error)); await route.abort('blockedbyclient');
+      }
+      return;
+    }
+    const dataMutation = url.origin === fixture.supabaseOrigin && url.pathname.startsWith('/rest/v1/') &&
+      !['GET', 'HEAD', 'OPTIONS'].includes(method) && !(method === 'POST' && readRpcPaths.includes(url.pathname));
+    if (dataMutation || url.pathname.startsWith('/functions/v1/') ||
+      (url.origin === fixture.webOrigin && url.pathname.startsWith('/api/'))) {
+      forbiddenDispatches.push({ method, path: url.origin + url.pathname });
+      await route.abort('blockedbyclient'); return;
+    }
+    await route.continue();
+  });
+  await context.routeWebSocket('**/*', socket => { external.push(new URL(socket.url()).origin); socket.close(); });
+  const alert = page.getByRole('alert');
+  async function observe(stage: Stage, navigate: () => Promise<unknown>) {
+    activeStage = stage;
+    const read = (path: string, method: string, key: string) => page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.origin === fixture.supabaseOrigin && url.pathname === path && response.request().method() === method &&
+        url.searchParams.get(key) === `eq.${outcomeId}`;
+    });
+    const [outcomeRead, artifactRead, countRead] = await Promise.all([
+      read('/rest/v1/outcomes', 'GET', 'id'), read('/rest/v1/ted_artifacts', 'GET', 'outcome_id'),
+      read('/rest/v1/checklist_items', 'HEAD', 'outcome_id'), navigate(),
+    ]);
+    for (const response of [outcomeRead, artifactRead, countRead]) expect(response.status()).toBe(200);
+    const outcomeBody: unknown = await outcomeRead.json();
+    if (Array.isArray(outcomeBody)) expect(outcomeBody).toHaveLength(1);
+    // maybeSingle adapts a one-row JSON array to an object in the browser SDK.
+    const outcome: unknown = Array.isArray(outcomeBody) ? outcomeBody[0] : outcomeBody;
+    assert.ok(outcome && typeof outcome === 'object' && !Array.isArray(outcome));
+    expect((outcome as Record<string, unknown>).id).toBe(outcomeId);
+    expect((outcome as Record<string, unknown>).user_id).toBe(ownerId);
+    const artifact: unknown = await artifactRead.json();
+    expect(artifact === null || (Array.isArray(artifact) && artifact.length === 0)).toBe(true);
+    expect(countRead.headers()['content-range']).toBe('*/0');
+    const retry = stage === 'non_billing' || stage === 'non_billing_retry';
+    const accountReview = stage === 'lower_plan';
+    const heading = retry ? null : stage === 'artifact_null' || stage === 'legacy_null'
+      ? 'Document generation paused' : 'Monthly document limit reached';
+    await expect(alert).toBeVisible();
+    if (heading) await expect(alert.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    else await expect(alert.getByRole('heading')).toHaveCount(0);
+    const reason = retry ? "TED couldn't load this plan safely. Your earlier information is still safe."
+      : heading === 'Document generation paused'
+        ? 'PrompTED could not confirm the document limit details. New generation is paused. You can still edit your existing wording.'
+        : "You've reached your document limit for this month. New allowance becomes available next month.";
+    await expect(alert.getByText(reason, { exact: true })).toBeVisible();
+    await expect(alert.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(retry ? 1 : 0);
+    await expect(alert.getByRole('link', { name: 'Review plan and allowance', exact: true })).toHaveCount(accountReview ? 1 : 0);
+    if (accountReview) await expect(alert.getByRole('link', { name: 'Review plan and allowance', exact: true })).toHaveAttribute('href', '/settings/account');
+    await expect(alert).not.toContainText('CONTROLLED_LIMIT_DIAGNOSTIC');
+    expect(requests.filter(row => row.stage === stage).map(row => ({ path: row.path, status: row.status }))).toEqual(
+      stage === 'legacy_null' ? [{ path: '/api/generate-artifact', status: 404 }, { path: '/api/generate-checklist', status: 402 }]
+        : [{ path: '/api/generate-artifact', status: retry ? 502 : 402 }]);
+    observations.push({ stage, ownerId, outcomeId, artifactAbsent: true, checklistCount: 0,
+      heading, accountReview, retry });
+  }
+  try {
+    await login(page, slot); await page.goto('/library');
+    const saved = page.getByRole('link', { name: `Open ${title}`, exact: true }); await expect(saved).toBeVisible();
+    const href = await saved.getAttribute('href'); assert.ok(href); assert.match(href, /^\/outcomes\/[0-9a-f-]{36}$/);
+    outcomeId = roleBrowserUuid(href.slice('/outcomes/'.length)); checks.push('real_owned_import_selected');
+    const checklistPath = `${href}/checklist`;
+    await observe('lower_plan', () => page.goto(checklistPath)); checks.push('confirmed_lower_plan_review_without_retry');
+    await observe('artifact_null', () => page.reload()); checks.push('artifact_null_402_safe_hold');
+    await page.screenshot({ path: info.outputPath('generation-limit-paused.png'), fullPage: true });
+    await observe('legacy_null', () => page.reload()); checks.push('explicit_disabled_then_legacy_null_402_safe_hold');
+    await observe('business', () => page.reload()); checks.push('business_limit_without_upgrade_or_retry');
+    await observe('business_reload', () => page.reload());
+    const business = requests.find(row => row.stage === 'business'); const reloaded = requests.find(row => row.stage === 'business_reload');
+    assert.ok(business && reloaded); expect(reloaded.requestId).toBe(business.requestId); expect(reloaded.bodySha256).toBe(business.bodySha256);
+    checks.push('reload_preserves_limit_and_exact_request');
+    await observe('non_billing', () => page.reload());
+    await observe('non_billing_retry', () => alert.getByRole('button', { name: 'Retry', exact: true }).click());
+    const nonBilling = requests.find(row => row.stage === 'non_billing'); const retried = requests.find(row => row.stage === 'non_billing_retry');
+    assert.ok(nonBilling && retried); expect(retried.requestId).toBe(nonBilling.requestId); expect(retried.bodySha256).toBe(nonBilling.bodySha256);
+    checks.push('non_billing_retry_retains_exact_request'); activeStage = null;
+    await page.goto(href);
+    const tour = page.getByRole('dialog', { name: 'Quick tour', exact: true });
+    // This fresh browser context has not dismissed the real first-visit tour.
+    await expect(tour).toBeVisible(); await tour.getByRole('button', { name: 'Skip tour', exact: true }).click();
+    await expect(page.getByRole('article', { name: `Edit ${title}`, exact: true })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Edit Overview', exact: true })).toContainText('Updated This is synthetic wording for the upload acceptance test.');
+    await expect(page.getByRole('textbox', { name: 'Edit Overview', exact: true })).toContainText('The owner checks this paragraph before saving.');
+    await page.getByRole('combobox', { name: 'Choose a section', exact: true }).selectOption({ index: 1 });
+    await expect(page.getByRole('textbox', { name: 'Edit Next steps', exact: true })).toContainText('Reopen the saved document.');
+    checks.push('saved_edited_and_sibling_wording_reopened');
+    expect(observations.map(row => row.stage)).toEqual(stages);
+    expect(requests.filter(row => row.path === '/api/generate-artifact')).toHaveLength(7);
+    expect(requests.filter(row => row.path === '/api/generate-checklist')).toHaveLength(1);
+    expect(errors).toEqual([]); expect(external).toEqual([]); expect(forbiddenDispatches).toEqual([]);
+    checks.push('no_uncontrolled_generation_or_data_mutation'); complete = true;
+  } catch (error) { failure = safeError(error); throw error; }
+  finally {
+    try {
+      writeFileSync(info.outputPath('generation-limit-browser-checks.json'), JSON.stringify({ version: 'generation-limit-browser.1',
+        project: info.project.name, ownerId: owner.id, outcomeId, title, complete, failure, observations, requests,
+        checks, errors, external, forbiddenDispatches, scope }, null, 2));
+    } catch (error) { if (failure === null) throw error; console.error('Generation limit evidence could not be saved.'); }
   }
 });

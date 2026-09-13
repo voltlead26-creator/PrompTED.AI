@@ -1052,3 +1052,74 @@ RevenueCat prices/currency and hosted deployment remain separate unfinished
 items. The map pins this application-source commit; a subsequent documentation
 commit records the verified recovery and gate results. CI must be inspected
 for that publication, independently of this local evidence.
+
+
+## Final paid allowance correction — owner instructions, 12 September 2026
+
+The final instruction supersedes both Business/Premium equality and the interim
+40-document Business selection: **Pro 20, Premium 40, Business 50 documents per
+user per month; Business US$50 per user per month**, including branding and
+additional business features. Owner access remains the separate 1,000-document
+overlay. The user explicitly confirmed USD. The earlier equality evidence above
+is historical, not the selected release contract.
+
+Current implementation work adds the forward-only
+`20260912070100_business_fifty_document_allowance.sql` migration to the existing
+private effective-access authority, retaining function signature, privileges,
+subscription truth, old 1,000- and 40-cap reservations, and usage. Shared plan
+limits and comparison/account labels now use 20/40/50. Business at its cap no
+longer receives an impossible upgrade-for-more-documents message. No billing
+price is hard-coded into the capability definitions: RevenueCat remains the
+billing authority, and its real US$50 product/seat configuration and checkout
+are still unfinished.
+
+Focused tests reproduced the final Business mismatch (three failures against
+40) before the correction. The corrected shared plan tests pass 50/50; account,
+paywall and usage tests pass 23/23. Migration validation passes 91 files and the
+current-release manifest tests pass 13/13. The release contract requires the new
+migration for both shared Edge admission and browser access. The revised SQL
+regression preserves historical reservations, verifies Pro/Premium/Business
+and owner access, and rejects a 51st concurrent Business admission.
+
+Full Edge checks and both isolated 68-to-91 and 79-to-91 database upgrade gates,
+including full web lint, types, tests and production builds, are pending at this
+entry. Publication, updated brain-map evidence, hosted migration/function
+rollout, production workflow exercise and billing configuration must be reported
+separately after their actual results. No hosted mutations were performed for
+this correction at this point.
+
+### Allowance verification follow-up — 13 September 2026
+
+CPJ `job-mtyi2xxj-ffd80340` stopped at the full web test gate. The forward resolver regression, Edge type checking, all 1,623 Edge tests (220 steps), and the isolated observed-hosted-ledger upgrade to the 91-migration source passed. Both fresh and upgraded SQL runs passed 57 files / 2,845 assertions. Disposable database cleanup exited successfully.
+
+The web suite reported 1,169 passes and one failure: `accounts.test.tsx` still required unlimited Premium usage. The approved Premium allowance is 40. The test now asserts that cap and the 37.5 percent progress meter for 15 used documents. The account, subscription and paywall focused suites pass all 36 tests. This changes an obsolete product expectation; no production assertion or validation was disabled.
+
+The earlier run did not reach the production build or the workspace-core upgrade. Retry both isolated upgrade paths with their full web gates; unchanged Edge and resolver results remain separate evidence. This is local dirty-overlay verification, with no hosted allowance or checkout claim.
+
+### Stable-source acceptance dependency — 13 September 2026, 01:00 AEST
+
+Retry `job-mtyie8k9-6a8ce273` completed the isolated observed-ledger upgrade and every invoked check successfully, including `pnpm verify:web`: all 1,170 web tests, type checking, linting, production build and progressive bundle gate. Fresh and upgraded SQL suites passed; disposable database cleanup succeeded. Evidence: `../web-operational-readiness/db-20260912145725386-4247f015/summary.json` and `web-gate.log`.
+
+The overall result correctly remains FAILED. `source-failure.txt` identifies three concurrent provider-repair changes during verification: `provider-router.ts`, `provider-router.test.ts` and newly added `openai-output-schema.ts`. The active backend repair owns those changes. The final source equality assertion was retained. These successful commands therefore cannot establish acceptance of one unchanged integrated revision, and the fail-fast helper did not run the workspace-core upgrade. No allowance source file was reported changed during this run.
+
+The paid allowance diff has been reviewed separately; the other repair is preserved and excluded from this task's reviewed change set. Publication and final source acceptance depend on a stable reviewed provider-repair boundary, followed by the outstanding workspace-core upgrade and an unchanged-source integrated verification. There is no native cross-task messaging tool in this runtime, so the dependency is recorded on this task's coordination claim; no peer command or stop request was sent. No new automated retry is launched against a known moving checkout. No hosted deployment, account entitlement grant or billing setup is established by this run.
+
+### Explicit production deployment request — 13 September 2026, 02:50 AEST
+
+The owner explicitly requests production deployment. The active targets remain Netlify `f278cbcf-0161-43f7-a132-fd224aef2d9f` / `https://ted.littlemissscarlett.co` and Supabase `jjsykocqpjlekgsbylkd`. Existing recovery evidence is retained; database changes must remain forward compatible and frontend rollback must preserve backend history.
+
+Fresh Netlify API evidence supersedes the earlier publication observation: production deploy `6aa47382a06f6a070a2eedf4` serves committed `1c79f48d81e9da132b3f0251beb2e85ef68fe5d0`, published `2026-09-11T23:12:47.695Z`, locked. Repository branch and publish directory match the local release contract. The new allowance and provider patches remain uncommitted.
+
+The other provider repair completed Edge entrypoint type checks, all Edge tests and the full web gate between 02:45 and 02:47 AEST with unchanged source. Its before-manifest still exactly matches current source at this refresher. The prior source-mutation dependency is resolved for this verification attempt; no claim of ownership transfer or provider-repair completion is inferred.
+
+Fresh production SQL confirms 68 applied migrations, latest `20260906010846`. All four production capacity and routing attestation routes still return `configured:false` and null fingerprints. GitHub secret-name inventory confirms the twelve required configuration/evaluation inputs remain absent. The latest production workflow remains the historical failed run; dispatching it unchanged cannot close these prerequisites. The exact ledger gap and function lifecycle discrepancies documented by backend review remain release gates. No replacement fingerprints or evaluation claims were created.
+
+Continue with both complete 91-migration upgrade acceptance paths against stable source. Then pin reviewed source and close actual hosted release prerequisites before production publication. No new production mutation has occurred in this refresher.
+
+### Plans navigation integration collision — 13 September 2026, 02:55 AEST
+
+Production prerequisite run `job-mtymj3df-0c1508e8` passed both fresh and observed-ledger upgraded SQL, and cleaned up the disposable database. Evidence: `../web-operational-readiness/db-20260912165310404-99dcdf4b/summary.json`. During execution the other active repair changed `apps/web/src/app/(app)/plans/page.tsx` and added `page.test.tsx`. The source equality guard correctly failed again.
+
+The web suite also failed one of 1,174 tests: the existing destination-loading test mocked `next/navigation` without the newly consumed `useSearchParams`. This task claimed only the adjacent `PrimaryDestinationLoading.test.tsx` and supplied empty search params in its navigation mock. All existing loading-state assertions remain. The destination-loading and Plans navigation suites then passed all eight tests. The Plans implementation and its new tests remain owned by the other repair; no such file was edited here.
+
+The production build and workspace-core upgrade were not reached by this failed run. Final integrated source verification remains dependent on completion of concurrent source changes. Repeating the full upgrade while those changes continue would produce more mixed-source evidence, so no further broad retry is launched in this completion turn. Production remains unchanged; missing routing/capacity/evaluation records and exact migration-ledger handling remain independent release prerequisites.

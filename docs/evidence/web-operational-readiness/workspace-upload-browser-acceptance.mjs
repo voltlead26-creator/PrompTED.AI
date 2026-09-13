@@ -16,6 +16,7 @@ import { createDenoExecutionBoundary } from '../../../scripts/deno-execution-bou
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const literal = text => `'${String(text).replaceAll("'", "''")}'`;
 const accountPlanTestName = 'account plan comparison uses confirmed Free access for historical Business';
+const generationLimitTestName = 'controlled generation-limit responses pause checklist preparation safely';
 export async function exerciseNewWorkspaceUploads({ root, project, workdir, env, evidence, checkTarget, save, sql, sqlSessionCommand }) {
   checkTarget(); assert.equal(root, realpathSync(fileURLToPath(new URL('../../../', import.meta.url))));
   assert.match(project, /^prompted-db-\d{17}-[0-9a-f]{8}$/); assert.ok(workdir.includes(`${project}-`));
@@ -350,7 +351,7 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
       'start', '--hostname', '127.0.0.1', '--port', '58323'], webEnv, join(root, 'apps/web'));
     await ready(web, `${origins.web}/_next/static/${buildId}/_buildManifest.js`, 200);
     await command('new-upload-playwright', process.execPath, [resolveAcceptancePlaywright(root), 'test', '--config', 'tests/e2e/upload.playwright.config.ts',
-      '--grep-invert', accountPlanTestName],
+      '--grep-invert', `${accountPlanTestName}|${generationLimitTestName}`],
       { ...env, PROMPTED_UPLOAD_E2E_FIXTURE: privatePaths[1], PLAYWRIGHT_BROWSERS_PATH: join(root, 'node_modules/.cache/playwright') });
     const reports = []; const manualReports = []; const roleReports = [];
     const visit = path => { for (const name of readdirSync(path)) {
@@ -858,6 +859,174 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
     save('account-plan-independent-proofs.json', { passed: true, proofs: accountProofs, seededState: accountSeededState,
       finalState: accountAfter, earlierBrowserReports: [...originalBrowserReports].map(([path, sha256]) => ({ path, sha256 })),
       scope: 'Independent authenticated effective-access and full subscription reads plus SQL after actual Account UI; exact seeded rows and prior workflow counts unchanged, foreign-owner reads denied. No purchase or webhook delivery proof.' });
+
+    // All eight original cases and independent proofs are complete. This phase
+    // controls only generation error responses and cannot modify their fixtures.
+    const preservedLimitEvidence = new Map(originalBrowserReports);
+    const retainAccountReports = directory => { for (const name of readdirSync(directory)) {
+      const path = join(directory, name); const stat = lstatSync(path); assert.ok(!stat.isSymbolicLink());
+      if (stat.isDirectory()) retainAccountReports(path);
+      else if (name === 'account-plan-browser-checks.json') {
+        assert.ok(stat.isFile() && stat.size > 0 && stat.size <= 128 * 1024);
+        preservedLimitEvidence.set(path, sha(readFileSync(path)));
+      }
+    } }; retainAccountReports(accountOutput); assert.equal(preservedLimitEvidence.size, 9);
+    for (const name of ['manual-plan-account-browser-summary.json', 'manual-plan-independent-proofs.json',
+      'role-action-browser-summary.json', 'role-action-independent-proofs.json', 'new-upload-independent-proofs.json',
+      'profile-browser-independent-proofs.json', 'account-plan-browser-summary.json', 'account-plan-independent-proofs.json']) {
+      const path = join(evidence, name); const stat = lstatSync(path);
+      assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.size > 0 && stat.size <= 8 * 1024 * 1024);
+      preservedLimitEvidence.set(path, sha(readFileSync(path)));
+    }
+    const limitScope = 'Controlled generation HTTP responses in the real local checklist UI with real Auth and owned saved reads; reload, safe Retry and unchanged document wording. No actual quota admission, provider dispatch, WorkspaceScreen limit UI or hosted proof.';
+    const limitTables = ['public.outcomes', 'public.documents', 'public.sections', 'public.checklist_items',
+      'public.ted_artifacts', 'public.ted_artifact_blocks', 'public.ted_artifact_references', 'public.ted_artifact_versions',
+      'public.uploads', 'public.subscriptions', 'public.usage_ledger', 'public.revenuecat_webhook_events',
+      'public.profiles', 'public.saved_roles', 'public.role_action_items', 'public.role_outcomes',
+      'private.manual_plan_save_receipts', 'private.checklist_replacement_receipts', 'private.legacy_workspace_save_receipts',
+      'private.outcome_conversation_save_receipts', 'private.ted_artifact_mutation_receipts', 'private.legacy_pdf_export_receipts',
+      'private.guest_workspace_imports', 'private.legacy_model_attempt_admissions', 'private.legacy_model_call_results',
+      'private.openai_capacity_leases', 'private.user_external_egress_dispatches', 'private.user_storage_dispatches',
+      'private.ted_generation_runs', 'private.business_checkout_attempts', 'private.document_generation_snapshots',
+      'private.captured_document_operations', 'private.captured_document_operation_events', 'private.captured_document_provider_attempts',
+      'private.captured_document_revisions', 'private.captured_document_approvals', 'private.captured_document_exports',
+      'private.captured_document_allowances'];
+    const limitState = label => {
+      const state = JSON.parse(sql(label, `select jsonb_build_object(${limitTables.map(table =>
+        `${literal(table)},(select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb) from ${table} r)`
+      ).join(',')});`));
+      accountKeys(state, limitTables);
+      for (const table of limitTables) assert.ok(Array.isArray(state[table]) && state[table].length <= 1000, table);
+      save(`${label}.json`, state); return state;
+    };
+    const limitBefore = limitState('generation-limit-state-before');
+    const limitTargets = users.map((user, slot) => {
+      const owned = proofs.filter(proof => proof.ownerId === user.id && proof.documentId !== null);
+      assert.equal(owned.length, 1); const proof = owned[0];
+      const document = limitBefore['public.documents'].filter(row => row.id === proof.documentId);
+      const outcome = limitBefore['public.outcomes'].filter(row => row.id === proof.outcomeId);
+      assert.equal(document.length, 1); assert.equal(outcome.length, 1);
+      assert.equal(document[0].user_id, user.id); assert.equal(document[0].outcome_id, proof.outcomeId);
+      assert.equal(outcome[0].user_id, user.id);
+      assert.equal(outcome[0].recommendation_payload?.manual_plan, undefined);
+      assert.equal(limitBefore['public.ted_artifacts'].filter(row => row.outcome_id === proof.outcomeId).length, 0);
+      assert.equal(limitBefore['public.checklist_items'].filter(row => row.outcome_id === proof.outcomeId).length, 0);
+      const sections = limitBefore['public.sections'].filter(row => row.document_id === proof.documentId)
+        .sort((left, right) => left.order_index - right.order_index);
+      assert.equal(sections.length, 2);
+      assert.ok(sections.every(row => row.user_id === user.id));
+      assert.deepEqual(sections.map(row => ({ name: row.name, content: row.content, status: row.status })), [
+        { name: 'Overview', content: '<p>Updated This is synthetic wording for the upload acceptance test.</p><p>The owner checks this paragraph before saving.</p>', status: 'edited' },
+        { name: 'Next steps', content: '- Keep the original.\n\n- Reopen the saved document.', status: 'draft' },
+      ]);
+      return { project: slot === 0 ? 'desktop-chromium' : 'narrow-chromium', ownerId: user.id,
+        outcomeId: proof.outcomeId, documentId: proof.documentId, title: document[0].title };
+    });
+    const readLimitState = async () => {
+      const result = [];
+      for (const [slot, target] of limitTargets.entries()) {
+        const user = users[slot]; const foreign = limitTargets[1 - slot];
+        const session = await request('/auth/v1/token?grant_type=password', { token: config.ANON_KEY,
+          body: { email: user.email, password: user.password } });
+        assert.equal(session.user.id, target.ownerId); assert.equal(session.user.is_anonymous, false);
+        const options = { token: session.access_token, method: 'GET' };
+        const outcome = await request(`/rest/v1/outcomes?select=*&id=eq.${target.outcomeId}&user_id=eq.${target.ownerId}`, options);
+        const document = await request(`/rest/v1/documents?select=*&id=eq.${target.documentId}&user_id=eq.${target.ownerId}`, options);
+        const sections = await request(`/rest/v1/sections?select=*&document_id=eq.${target.documentId}&user_id=eq.${target.ownerId}&order=order_index.asc`, options);
+        const access = await request('/rest/v1/rpc/get_effective_product_access_v1', { token: session.access_token, body: {} });
+        assert.deepEqual(outcome, limitBefore['public.outcomes'].filter(row => row.id === target.outcomeId));
+        assert.deepEqual(document, limitBefore['public.documents'].filter(row => row.id === target.documentId));
+        assert.deepEqual(sections, limitBefore['public.sections'].filter(row => row.document_id === target.documentId)
+          .sort((left, right) => left.order_index - right.order_index));
+        assert.deepEqual(access, accountExpectedAccess[slot]);
+        for (const table of ['ted_artifacts', 'checklist_items']) {
+          assert.deepEqual(await request(`/rest/v1/${table}?select=*&outcome_id=eq.${target.outcomeId}`, options), []);
+        }
+        assert.deepEqual(await request(`/rest/v1/documents?select=*&id=eq.${foreign.documentId}`, options), []);
+        result.push({ ...target, outcome: outcome[0], document: document[0], sections, access,
+          artifactAbsent: true, checklistAbsent: true, foreignDocumentAbsent: true });
+      }
+      return result;
+    };
+    const limitReadsBefore = await readLimitState();
+    save('generation-limit-fixture-prerequisites.json', { targets: limitTargets, reads: limitReadsBefore,
+      priorEightWorkflowProofsCompleted: true, fixtureContentChanged: false, scope: limitScope });
+    const limitOutput = join(outputDir, 'generation-limit-phase'); const limitProxyStart = proxyChecks.length;
+    await command('generation-limit-playwright', process.execPath, [resolveAcceptancePlaywright(root), 'test',
+      '--config', 'tests/e2e/upload.playwright.config.ts', '--grep', generationLimitTestName,
+      '--output', limitOutput, '--reporter', 'line'],
+      { ...env, PROMPTED_UPLOAD_E2E_FIXTURE: privatePaths[1], PLAYWRIGHT_BROWSERS_PATH: join(root, 'node_modules/.cache/playwright') });
+    for (const [path, digest] of preservedLimitEvidence) assert.equal(sha(readFileSync(path)), digest, 'An original workflow result or proof changed');
+    const limitReports = [];
+    const visitLimits = directory => { for (const name of readdirSync(directory)) {
+      const path = join(directory, name); const stat = lstatSync(path); assert.ok(!stat.isSymbolicLink());
+      if (stat.isDirectory()) visitLimits(path);
+      else if (name === 'generation-limit-browser-checks.json') {
+        assert.ok(stat.isFile() && stat.size > 0 && stat.size <= 128 * 1024);
+        limitReports.push(JSON.parse(readFileSync(path, 'utf8')));
+      }
+    } }; visitLimits(limitOutput);
+    assert.equal(limitReports.length, 2);
+    assert.deepEqual(limitReports.map(report => report.project).sort(), ['desktop-chromium', 'narrow-chromium']);
+    const limitStages = ['lower_plan', 'artifact_null', 'legacy_null', 'business', 'business_reload', 'non_billing', 'non_billing_retry'];
+    for (const report of limitReports) {
+      accountKeys(report, ['version', 'project', 'ownerId', 'outcomeId', 'title', 'complete', 'failure', 'observations',
+        'requests', 'checks', 'errors', 'external', 'forbiddenDispatches', 'scope']);
+      const target = limitTargets.find(value => value.project === report.project); assert.ok(target);
+      assert.equal(report.version, 'generation-limit-browser.1'); assert.equal(report.scope, limitScope);
+      for (const key of ['project', 'ownerId', 'outcomeId', 'title']) assert.equal(report[key], target[key]);
+      assert.equal(report.complete, true); assert.equal(report.failure, null);
+      for (const key of ['errors', 'external', 'forbiddenDispatches']) assert.deepEqual(report[key], []);
+      assert.deepEqual(report.checks, ['real_owned_import_selected', 'confirmed_lower_plan_review_without_retry',
+        'artifact_null_402_safe_hold', 'explicit_disabled_then_legacy_null_402_safe_hold', 'business_limit_without_upgrade_or_retry',
+        'reload_preserves_limit_and_exact_request', 'non_billing_retry_retains_exact_request',
+        'saved_edited_and_sibling_wording_reopened', 'no_uncontrolled_generation_or_data_mutation']);
+      assert.ok(Array.isArray(report.observations)); assert.equal(report.observations.length, 7);
+      assert.ok(Array.isArray(report.requests)); assert.equal(report.requests.length, 8);
+      for (const [index, observation] of report.observations.entries()) {
+        accountKeys(observation, ['stage', 'ownerId', 'outcomeId', 'artifactAbsent', 'checklistCount', 'heading', 'accountReview', 'retry']);
+        const stage = limitStages[index]; const retry = stage.startsWith('non_billing');
+        assert.deepEqual(observation, { stage, ownerId: target.ownerId, outcomeId: target.outcomeId,
+          artifactAbsent: true, checklistCount: 0, heading: retry ? null : stage.endsWith('_null')
+            ? 'Document generation paused' : 'Monthly document limit reached', accountReview: stage === 'lower_plan', retry });
+      }
+      for (const entry of report.requests) {
+        accountKeys(entry, ['stage', 'path', 'status', 'requestId', 'bodySha256']);
+        assert.ok(limitStages.includes(entry.stage)); assert.match(entry.requestId, /^gen-[0-9a-f]{64}$/);
+        assert.match(entry.bodySha256, /^[0-9a-f]{64}$/);
+      }
+      assert.deepEqual(report.requests.map(({ stage, path, status }) => ({ stage, path, status })), limitStages.flatMap(stage =>
+        stage === 'legacy_null' ? [{ stage, path: '/api/generate-artifact', status: 404 }, { stage, path: '/api/generate-checklist', status: 402 }]
+          : [{ stage, path: '/api/generate-artifact', status: stage.startsWith('non_billing') ? 502 : 402 }]));
+      const artifactRequests = report.requests.filter(entry => entry.path === '/api/generate-artifact');
+      assert.equal(artifactRequests.length, 7);
+      assert.equal(new Set(artifactRequests.map(entry => entry.requestId)).size, 1);
+      assert.equal(new Set(artifactRequests.map(entry => entry.bodySha256)).size, 1);
+      assert.notEqual(report.requests.find(entry => entry.path === '/api/generate-checklist').requestId, artifactRequests[0].requestId);
+    }
+    const limitProxy = proxyChecks.slice(limitProxyStart);
+    const limitReadRpcs = ['/rest/v1/rpc/get_effective_product_access_v1', '/rest/v1/rpc/list_own_workspace_uploads_v1',
+      '/rest/v1/rpc/get_own_manual_plan_v1', '/rest/v1/rpc/get_workspace_snapshot_v1',
+      '/rest/v1/rpc/get_workspace_section_body_v1', '/rest/v1/rpc/get_latest_legacy_section_edit'];
+    for (const row of limitProxy) {
+      assert.equal(row.failed, undefined, 'Unexpected local proxy failure');
+      assert.ok(!row.path.startsWith('/functions/v1/'), 'Controlled generation escaped the browser');
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(row.method) && !row.path.startsWith('/auth/v1/')) {
+        assert.equal(row.method, 'POST'); assert.ok(limitReadRpcs.includes(row.path), 'Controlled limit phase dispatched a mutation');
+      }
+    }
+    const limitReadsAfter = await readLimitState(); assert.deepEqual(limitReadsAfter, limitReadsBefore);
+    const limitAfter = limitState('generation-limit-state-after');
+    assert.deepEqual(limitAfter, limitBefore, 'Controlled generation limits changed existing persisted state');
+    assert.deepEqual(accountState('generation-limit-account-state-after'), accountSeededState);
+    const limitDispatches = children.find(child => child.label === 'ingest-upload').output.split('\n')
+      .filter(line => line.startsWith('{"event":"synthetic-responses"')).map(line => JSON.parse(line));
+    assert.deepEqual(limitDispatches, []);
+    save('generation-limit-browser-summary.json', { passed: true, reports: limitReports, proxyChecks: limitProxy, scope: limitScope });
+    save('generation-limit-independent-proofs.json', { passed: true, readsBefore: limitReadsBefore, readsAfter: limitReadsAfter,
+      unchangedTables: limitTables, stateBeforeSha256: sha(JSON.stringify(limitBefore)), stateAfterSha256: sha(JSON.stringify(limitAfter)),
+      earlierEvidence: [...preservedLimitEvidence].map(([path, sha256]) => ({ path, sha256 })), dispatches: limitDispatches,
+      scope: 'Full stored rows and receipts unchanged across controlled checklist HTTP errors, with independent authenticated owner reads and foreign document absence. Original eight workflow reports and proofs preserved. No actual quota rejection, purchase, provider or WorkspaceScreen limit UI proof.' });
     checkTarget(); passed = true;
   } catch (error) {
     primaryError = error;
@@ -904,7 +1073,7 @@ export async function exerciseNewWorkspaceUploads({ root, project, workdir, env,
       const path = join(directory, name); const stat = lstatSync(path); assert.ok(!stat.isSymbolicLink());
       if (stat.isDirectory()) sanitize(path);
       else if (['playwright-results.json', 'error-context.md', 'upload-browser-checks.json', 'manual-plan-browser-checks.json',
-        'role-action-browser-checks.json', 'account-plan-browser-checks.json'].includes(name)) writeFileSync(path, redact(readFileSync(path, 'utf8')));
+        'role-action-browser-checks.json', 'account-plan-browser-checks.json', 'generation-limit-browser-checks.json'].includes(name)) writeFileSync(path, redact(readFileSync(path, 'utf8')));
     } }; await clean('browser diagnostic redaction', () => { if (lstatSync(outputDir, { throwIfNoEntry: false })) sanitize(outputDir); });
     const childResults = children.map(({ label, kind, result, failure, shutdownRequested, forcedTermination }) =>
       ({ label, kind, result, failure, shutdownRequested, forcedTermination }));

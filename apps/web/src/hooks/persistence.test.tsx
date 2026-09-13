@@ -568,6 +568,18 @@ function documentLimitError(currentPlan = "business", message = monthlyDocumentL
   });
 }
 
+function coherentPaywallError(currentPlan = "premium", requiredPlan = "business") {
+  return new ApiError(402, "PAYWALL", {
+    error: {
+      code: "PAYWALL",
+      message: "Private diagnostic; upgrade at synthetic-untrusted.example",
+      paywall_trigger: true,
+      current_plan: currentPlan,
+      plan_required: requiredPlan,
+    },
+  });
+}
+
 afterEach(() => recordBrowserPrincipal(undefined));
 
 describe("useDocument — DB persistence wiring", () => {
@@ -1690,27 +1702,164 @@ describe("useDocument — DB persistence wiring", () => {
     expect(JSON.stringify(result.current.generationIssues)).not.toContain(unsafeMessage);
   });
 
+  // Previously every HTTP402, including malformed PAYWALL details, was
+  // presented as an upgrade. Only coherent server allowance evidence can
+  // offer that recovery; uncertainty must pause without inventing a plan.
   it.each([
-    {
-      name: "a lower-plan PAYWALL",
-      code: "PAYWALL",
-      payload: { error: { code: "PAYWALL", paywall_trigger: true, current_plan: "premium", plan_required: "business" } },
-    },
-    { name: "a legacy HTTP 402", code: "LEGACY_LIMIT", payload: {} },
-    {
-      name: "an unrelated non-upgrade flag",
-      code: "PAYWALL",
-      payload: { error: { code: "PAYWALL", paywall_trigger: false, current_plan: "free" } },
-    },
-  ])("retains existing paywall handling for $name", async ({ code, payload }) => {
-    prepareDocumentLimitWorkspace(true);
-    vi.mocked(generateDocumentStream).mockRejectedValue(new ApiError(402, code, payload));
+    { path: "initial", currentPlan: "free", requiredPlan: "pro" },
+    { path: "section retry", currentPlan: "free", requiredPlan: "pro" },
+    { path: "initial", currentPlan: "pro", requiredPlan: "premium" },
+    { path: "section retry", currentPlan: "pro", requiredPlan: "premium" },
+    { path: "initial", currentPlan: "premium", requiredPlan: "business" },
+    { path: "section retry", currentPlan: "premium", requiredPlan: "business" },
+  ])("retains confirmed $currentPlan PAYWALL recovery and blocks repeated $path generation", async ({ path, currentPlan, requiredPlan }) => {
+    const initialGeneration = path === "initial";
+    const approvedSibling = prepareDocumentLimitWorkspace(initialGeneration);
+    vi.mocked(generateDocumentStream).mockRejectedValue(coherentPaywallError(currentPlan, requiredPlan));
+    const { result, rerender } = renderHook(() => useDocument("outcome-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    if (!initialGeneration) {
+      expect(generateDocumentStream).not.toHaveBeenCalled();
+      await act(async () => { await result.current.retryGenerationSection("issue"); });
+    }
+
+    expect(result.current.generationIssues).toEqual([
+      expect.objectContaining({ sectionId: "__paywall__", retryable: false }),
+    ]);
+    expect(JSON.stringify(result.current.generationIssues)).not.toMatch(/private diagnostic|synthetic-untrusted/i);
+    expect(result.current.state?.sections.find((section) => section.id === "request")).toEqual(approvedSibling);
+    expect(result.current.drafting).toBe(false);
+    expect(result.current.regeneratingSectionId).toBeNull();
+
+    act(() => {
+      result.current.setSections((sections) => sections.map((section) => section.id === "issue"
+        ? { ...section, content: "Owner-entered wording while allowance is exhausted.", status: "edited" as const }
+        : section));
+    });
+    const saveCount = mockSaveLegacyWorkspaceV1.mock.calls.length;
+    rerender();
+    await act(async () => {
+      await result.current.retryGenerationSection("issue");
+      await result.current.retryGenerationSection("request");
+      await result.current.retryGenerationSection("__paywall__");
+    });
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+    expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalledTimes(saveCount);
+    expect(result.current.generationIssues).toContainEqual(
+      expect.objectContaining({ sectionId: "__paywall__", retryable: false }),
+    );
+    expect(result.current.state?.sections.find((section) => section.id === "issue")?.content).toBe(
+      "Owner-entered wording while allowance is exhausted.",
+    );
+    expect(result.current.state?.sections.find((section) => section.id === "request")).toEqual(approvedSibling);
+  });
+
+  it.each([
+    { name: "missing PAYWALL details", error: new ApiError(402, "PAYWALL", {}) },
+    { name: "a legacy HTTP402", error: new ApiError(402, "LEGACY_LIMIT", {}) },
+    { name: "a false upgrade flag", error: new ApiError(402, "PAYWALL", { error: { code: "PAYWALL", message: "Diagnostic", paywall_trigger: false, current_plan: "free" } }) },
+    { name: "a top-plan upgrade", error: coherentPaywallError("business", "business") },
+    { name: "a contradictory next plan", error: coherentPaywallError("free", "business") },
+    { name: "a mismatched outer code", error: new ApiError(402, "REQUEST_FAILED", coherentPaywallError().payload) },
+    { name: "a missing message", error: new ApiError(402, "PAYWALL", { error: { code: "PAYWALL", paywall_trigger: true, current_plan: "premium", plan_required: "business" } }) },
+    { name: "an unexpected status", error: new ApiError(503, "PAYWALL", coherentPaywallError().payload) },
+  ].flatMap((testCase) => [
+    { ...testCase, path: "initial" },
+    { ...testCase, path: "section retry" },
+  ]))("pauses $path generation after $name without inventing upgrade eligibility", async ({ path, error }) => {
+    const initialGeneration = path === "initial";
+    const approvedSibling = prepareDocumentLimitWorkspace(initialGeneration);
+    vi.mocked(generateDocumentStream).mockRejectedValue(error);
     const { result } = renderHook(() => useDocument("outcome-1"));
     await waitFor(() => expect(result.current.loading).toBe(false));
+    if (!initialGeneration) await act(async () => { await result.current.retryGenerationSection("issue"); });
+
     expect(result.current.generationIssues).toEqual([
-      expect.objectContaining({ sectionId: "__paywall__", reason: expect.stringContaining("Update your subscription") }),
+      expect.objectContaining({
+        sectionId: "__document_limit__",
+        sectionName: "Document generation paused",
+        reason: unconfirmedDocumentLimitMessage,
+        retryable: false,
+      }),
     ]);
-    expect(result.current.generationIssues.some((issue) => issue.sectionId === "__document_limit__")).toBe(false);
+    expect(JSON.stringify(result.current.generationIssues)).not.toMatch(/upgrade|next month|private diagnostic|synthetic-untrusted/i);
+    expect(result.current.state?.sections.find((section) => section.id === "request")).toEqual(approvedSibling);
+    const saveCount = mockSaveLegacyWorkspaceV1.mock.calls.length;
+    await act(async () => {
+      await result.current.retryGenerationSection("issue");
+      await result.current.retryGenerationSection("request");
+    });
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+    expect(mockSaveLegacyWorkspaceV1).toHaveBeenCalledTimes(saveCount);
+    expect(result.current.drafting).toBe(false);
+    expect(result.current.regeneratingSectionId).toBeNull();
+  });
+
+  it.each([
+    { name: "confirmed PAYWALL", error: coherentPaywallError(), sectionId: "__paywall__" },
+    { name: "unconfirmed HTTP402", error: new ApiError(402, "LEGACY_LIMIT", {}), sectionId: "__document_limit__" },
+  ])("blocks a retained generation callback immediately after $name", async ({ error, sectionId }) => {
+    prepareDocumentLimitWorkspace(false);
+    const generation = deferred<void>();
+    vi.mocked(generateDocumentStream).mockImplementationOnce(() => generation.promise);
+    const { result } = renderHook(() => useDocument("outcome-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const previousRetry = result.current.retryGenerationSection;
+    let attempt: Promise<void> | undefined;
+    act(() => { attempt = previousRetry("issue"); });
+    await waitFor(() => expect(generateDocumentStream).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      generation.reject(error);
+      await attempt;
+      await previousRetry("issue");
+      await previousRetry("request");
+    });
+
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
+    expect(result.current.generationIssues).toContainEqual(
+      expect.objectContaining({ sectionId, retryable: false }),
+    );
+    expect(result.current.state?.sections.find((section) => section.id === "issue")?.content).toBe(
+      "I was charged $10 twice for the same purchase.",
+    );
+  });
+
+  it.each([
+    { path: "initial", error: coherentPaywallError() },
+    { path: "section retry", error: coherentPaywallError() },
+    { path: "initial", error: new ApiError(402, "LEGACY_LIMIT", {}) },
+    { path: "section retry", error: new ApiError(402, "LEGACY_LIMIT", {}) },
+  ])("fences a late $path billing response after an owner A-B-A change", async ({ path, error }) => {
+    const initialGeneration = path === "initial";
+    prepareDocumentLimitWorkspace(initialGeneration);
+    const generation = deferred<void>();
+    vi.mocked(generateDocumentStream).mockImplementationOnce(() => generation.promise);
+    const { result, rerender } = renderHook(() => useDocument("outcome-1"));
+    let retry: Promise<void> | undefined;
+    if (!initialGeneration) {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      act(() => { retry = result.current.retryGenerationSection("issue"); });
+    }
+    await waitFor(() => expect(generateDocumentStream).toHaveBeenCalledTimes(1));
+
+    for (const ownerId of ["user-2", "user-1"]) {
+      vi.mocked(useAuth).mockReturnValue(authValue(mockUser(ownerId)));
+      mockFetchDocumentByOutcomeId.mockResolvedValue({ ...dbDocument, id: `document-${ownerId}`, user_id: ownerId });
+      mockFetchSections.mockResolvedValue([
+        { ...dbSections[0]!, document_id: `document-${ownerId}`, user_id: ownerId, content: `${ownerId} current wording.` },
+      ]);
+      rerender();
+      await waitFor(() => expect(result.current.state?.sections[0]?.content).toBe(`${ownerId} current wording.`));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+    }
+    const currentState = result.current.state;
+    await act(async () => { generation.reject(error); await retry; });
+
+    expect(result.current.state).toEqual(currentState);
+    expect(result.current.generationIssues).toEqual([]);
+    expect(result.current.drafting).toBe(false);
+    expect(generateDocumentStream).toHaveBeenCalledTimes(1);
   });
 
   it.each([

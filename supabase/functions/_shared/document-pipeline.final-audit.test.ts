@@ -7,6 +7,10 @@ import { createHash } from "node:crypto";
 import { bindModelCallContext, setModelCallCheckpointContext } from "./model-call-context.ts";
 import { isProviderReconciliationRequired } from "./allowance-reservations.ts";
 import type { QualityAuditIssue } from "./document-output-contracts.ts";
+import { buildSystemPrompt } from "./prompt-builder.ts";
+import { resolveTemplate } from "./template-engine.ts";
+import { resolveDocumentProfilePolicy } from "./document-profile-projection.ts";
+import { createDocumentPlaceholderToken } from "./document-placeholder-policy.ts";
 
 const originalWording = "I was charged $10 twice.";
 const siblingWording = "Please review the duplicate charge.";
@@ -39,7 +43,10 @@ type Options = {
   unverifiableInitial?: boolean;
   finalQuality?: "approve" | "reject" | "malformed" | "uncertain";
   abortOnFinalReceipt?: boolean;
-  onProviderRequest?: (schema: string | undefined) => void;
+  onProviderRequest?: (schema: string | undefined, body: Record<string, unknown>) => void;
+  sectionTokenDemand?: number;
+  groundingTokenDemand?: number;
+  missingInformation?: Record<string, string[]>;
   auditBindingResponse?: "missing" | "malformed" | "changed";
   deniedRepair?: { stage: string; code: string; message: string };
   qualityIssuesByRound?: QualityAuditIssue[][];
@@ -256,7 +263,18 @@ async function withPipeline(
         : body.text.format.schema.properties.units.items.properties.unit_id;
       assertEquals(itemSchema.enum, expectedRoster);
     }
-    options.onProviderRequest?.(schema);
+    options.onProviderRequest?.(schema, body);
+    const tokenDemand = schema === undefined ? options.sectionTokenDemand
+      : schema === "prompted_document_grounding_audit" ? options.groundingTokenDemand : undefined;
+    if (tokenDemand && body.max_output_tokens < tokenDemand) {
+      return Promise.resolve(Response.json({
+        id: "resp_synthetic_incomplete_" + ++responses,
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output_text: "Partial checklist; remaining actions were not generated",
+        usage: { input_tokens: 20, output_tokens: body.max_output_tokens },
+      }));
+    }
     let output: unknown;
     switch (schema) {
       case "prompted_document_intent_brief":
@@ -271,18 +289,18 @@ async function withPipeline(
           known_facts: [originalWording],
           safe_assumptions: [],
           missing_critical_information: [],
-          section_readiness: template.sections.map(({ key }) => ({
+          section_readiness: input.template.sections.map(({ key }) => ({
             key,
-            ready: true,
-            missing_information: [],
-            missing_information_keys: [],
+            ready: !options.missingInformation?.[key]?.length,
+            missing_information: options.missingInformation?.[key] ?? [],
+            missing_information_keys: options.missingInformation?.[key] ?? [],
           })),
           confidence: 1,
         };
         break;
       case "prompted_document_section_plan":
         output = {
-          section_context: template.sections.map(({ key, label }) => ({
+          section_context: input.template.sections.map(({ key, label }) => ({
             key,
             relevant_content: originalWording,
             display_label: label,
@@ -459,6 +477,172 @@ Deno.test("supported final rewrite is returned exactly as audited without anothe
   });
 });
 
+Deno.test("checklist sections have bounded room for reasoning and complete action wording", async () => {
+  await withPipeline({ initial: originalWording, sectionTokenDemand: 3200 }, async (fixture) => {
+    fixture.input.template.structureType = "checklist";
+    fixture.input.template.sections.splice(1);
+    const result = await fixture.run();
+    assertEquals(result.sections.map(section => section.content), [originalWording]);
+    assertEquals(result.unresolvedPlaceholders, []);
+    assertEquals(fixture.writes.length, 1);
+  });
+});
+
+Deno.test("checklist output exceeding its finite budget still fails before audit or success", async () => {
+  await withPipeline({ initial: originalWording, sectionTokenDemand: 5000 }, async (fixture) => {
+    fixture.input.template.structureType = "checklist";
+    fixture.input.template.sections.splice(1);
+    await assertRejects(fixture.run, Error, "OPENAI_INCOMPLETE_RESPONSE");
+    assertEquals(fixture.qualityDrafts.length, 0);
+    assertEquals(fixture.groundingDrafts.length, 0);
+  });
+});
+
+Deno.test("writer requests the plain text format consumed by preview and export", async () => {
+  const writers: Record<string, unknown>[] = [];
+  await withPipeline({ initial: originalWording + " TODO", replacement: originalWording,
+    onProviderRequest: (schema, body) => {
+    if (schema !== undefined) return;
+    writers.push(structuredClone(body));
+  } }, async (fixture) => {
+    fixture.input.systemPrompt = buildSystemPrompt({ task: "document", domain: "personal" });
+    await fixture.run();
+    assertEquals(writers.length, 3, "Initial sections and the cleanup repair use the same format");
+    for (const body of writers) {
+      assertEquals(body.max_output_tokens, 2600, "Non-checklist sections retain their existing budget");
+      assert(/plain text/i.test(String(body.instructions)),
+        "The provider must receive the actual consumer format");
+      assert(!/Return (?:only ready-to-use|clean, export-ready) markdown/i.test(JSON.stringify(body)),
+        "A writer instruction must not contradict the profile and plain-text renderer");
+    }
+  });
+});
+
+Deno.test("writer and quality review preserve source authority over model-derived instructions", async () => {
+  const requests: Array<{ schema: string | undefined; body: Record<string, unknown> }> = [];
+  await withPipeline({ onProviderRequest: (schema, body) => {
+    if (schema === undefined || schema === "prompted_document_quality_audit") {
+      requests.push({ schema, body: structuredClone(body) });
+    }
+  } }, async (fixture) => {
+    await fixture.run();
+    assert(requests.some(request => request.schema === "prompted_document_quality_audit"));
+    assert(requests.some(request => request.schema === undefined));
+    for (const { body } of requests) {
+      const prompt = JSON.stringify(body);
+      assert(!/approved outcome brief/i.test(prompt),
+        "A generated brief has no user approval and cannot supply missing facts or intent");
+      assert(/model-derived planning brief/i.test(prompt));
+      assert(/unknown ownership does not mean unassigned/i.test(prompt),
+        "Writer and reviewer must not convert an unknown owner into a factual assignment state");
+    }
+  });
+});
+
+Deno.test("missing declared tokens are repaired before the final integrity boundary", async () => {
+  const resume = resolveTemplate("resume")!;
+  const profile = resolveDocumentProfilePolicy(resume)!.profile;
+  assert(profile?.informationContract);
+  const item = profile.informationContract!.sections.find(section => section.sectionKey === "experience")!
+    .requiredInformation.find(item => item.key === "employment_dates")!;
+  const token = createDocumentPlaceholderToken("resume.experience.employment_dates", item.placeholderLabel);
+  await withPipeline({ initial: originalWording, replacement: originalWording + "\n" + token,
+    finalGrounding: "approve", missingInformation: { experience: [item.key] } }, async fixture => {
+    fixture.input.resolvedProfile = profile;
+    fixture.input.template.sections[0].key = "experience";
+    const result = await fixture.run();
+    assertEquals(result.sections[0].content, originalWording + "\n" + token);
+    assertEquals(result.unresolvedPlaceholders.map(item => item.id), ["resume.experience.employment_dates"]);
+    assertEquals(fixture.writes.filter(text => text === siblingWording).length, 1,
+      "A missing marker must not regenerate the passing sibling");
+    assertEquals(fixture.groundingDrafts.length, 2, "The replacement must receive a fresh factual audit");
+  });
+});
+
+Deno.test("unrepaired missing tokens isolate the section and retain exact audit evidence", async () => {
+  const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
+  assert(profile?.informationContract);
+  await withPipeline({ initial: originalWording, replacement: originalWording,
+    finalGrounding: "approve", assessmentPolicy,
+    missingInformation: { experience: ["employment_dates"] } }, async fixture => {
+    fixture.input.resolvedProfile = profile;
+    fixture.input.template.sections[0].key = "experience";
+    const result = await fixture.run();
+    assertEquals(result.sections[1].content, siblingWording);
+    assertEquals(result.unresolvedPlaceholders.map(item => item.id), ["resume.experience.section_content"]);
+    assert(result.sections[0].content.includes("resume.experience.section_content"));
+    assert(result.wordingAssessment?.review.quality.deterministicIssues.some(issue =>
+      issue.section_key === "experience" && issue.finding.includes("employment_dates")));
+    assertEquals(result.wordingAssessment?.sections[0].requiredFacts, "blocked");
+    assertEquals(result.wordingAssessment?.sections[1].disposition, "assessed_generated");
+  });
+});
+
+Deno.test("invented placeholder identities cannot escape the declared resolution roster", async () => {
+  const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
+  assert(profile?.informationContract);
+  const item = profile.informationContract.sections.find(section => section.sectionKey === "experience")!
+    .requiredInformation.find(item => item.key === "employment_dates")!;
+  const token = createDocumentPlaceholderToken("resume.experience.employment_dates", item.placeholderLabel);
+  const valid = originalWording + "\n" + token;
+  const invented = "{{TED_PLACEHOLDER:resume.experience.earlier.role_title:earlier role title}}";
+  await withPipeline({ initial: valid + "\n" + invented, replacement: valid,
+    finalGrounding: "approve", missingInformation: { experience: [item.key] } }, async fixture => {
+    fixture.input.resolvedProfile = profile;
+    fixture.input.template.sections[0].key = "experience";
+    const result = await fixture.run();
+    assertEquals(result.sections[0].content, valid);
+    assertEquals(result.unresolvedPlaceholders.length, 1);
+    assertEquals(fixture.groundingDrafts.length, 2);
+  });
+});
+
+Deno.test("both reviewers receive only the resolved section's exact neutral fallback", async () => {
+  const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
+  assert(profile?.informationContract);
+  const expected = profile.informationContract.sections.find(section => section.sectionKey === "referees")!
+    .requiredInformation.find(item => item.automaticFallback)!;
+  const contracts: Array<Record<string, unknown>> = [];
+  await withPipeline({ initial: originalWording, onProviderRequest: (schema, body) => {
+    if (schema !== "prompted_document_grounding_audit" && schema !== "prompted_document_quality_audit") return;
+    const contract = String(body.instructions).split("APPLICATION RESOLUTION CONTRACT — supplied by the resolved template, not user facts:\n")[1];
+    assert(contract, "Factual and quality review need the same canonical missing-fact policy");
+    contracts.push(JSON.parse(contract.split("\n")[0]));
+    assert(contract.includes("It is not evidence for any added claim"));
+  } }, async fixture => {
+    fixture.input.resolvedProfile = profile;
+    fixture.input.template.sections[1].key = "referees";
+    await fixture.run();
+    assertEquals(contracts.length, 2);
+    for (const contract of contracts) {
+      assertEquals(contract.automatic_fallbacks, [{ section_key: "referees",
+        information_key: expected.key, text: expected.automaticFallback!.trim() }]);
+      assertEquals(contract.declared_tokens, []);
+    }
+  });
+});
+
+Deno.test("factual review can return the complete roster for a longer document", async () => {
+  const initial = Array.from({ length: 100 }, () => originalWording).join("\n");
+  await withPipeline({ initial, groundingTokenDemand: 6000 }, async (fixture) => {
+    fixture.input.template.sections.splice(1);
+    const result = await fixture.run();
+    assertEquals(result.sections[0].content, initial);
+    assertEquals(result.unresolvedPlaceholders, []);
+    assertEquals(fixture.groundingDrafts[0].split("\n").length, 100,
+      "Every factual unit must still be reviewed; do not truncate the roster to fit the budget");
+  });
+});
+
+Deno.test("oversized factual review remains a failure instead of partial approval", async () => {
+  const initial = Array.from({ length: 400 }, () => originalWording).join("\n");
+  await withPipeline({ initial, groundingTokenDemand: 20000 }, async (fixture) => {
+    fixture.input.template.sections.splice(1);
+    await assertRejects(fixture.run, Error, "OPENAI_INCOMPLETE_RESPONSE");
+    assertEquals(fixture.writes.length, 1, "Incomplete review does not authorise a rewrite");
+  });
+});
+
 Deno.test("unchanged audited wording does not dispatch another audit or repair", async () => {
   await withPipeline({ initial: originalWording }, async (fixture) => {
     const result = await fixture.run();
@@ -486,6 +670,22 @@ Deno.test("regression: later document-level review preserves the factual repair 
     const repairPrompt = fixture.prompts.filter((prompt) => prompt.includes('section titled "Issue"')).at(-1)!;
     assert(repairPrompt.includes(JSON.stringify({ key: "issue", label: "Issue", content: inventedWording })),
       "The named repair needs its exact prior draft as reference, separate from source evidence");
+  });
+});
+
+Deno.test("factual repair receives the exact rejected clause, not only generic correction wording", async () => {
+  const unsupported = "Status: Not started.";
+  await withPipeline({ initial: `${originalWording} ${unsupported}`,
+    replacement: originalWording, unsupportedText: unsupported,
+  }, async (fixture) => {
+    const result = await fixture.run();
+    assertEquals(result.sections.map(section => section.content), [originalWording, siblingWording]);
+    const repair = fixture.prompts.filter(prompt => prompt.includes('section titled "Issue"')).at(-1)!;
+    const corrections = repair.split("Required audit corrections:\n")[1]?.split("\n\n")[0] ?? "";
+    assert(corrections.includes("Source grounding failed for: Status: Not started."),
+      "The writer must receive the finding that identifies the rejected factual clause");
+    assert(corrections.includes("Remove only the unsupported factual clause"));
+    assertEquals(fixture.writes.length, 3, "The passing sibling is not rewritten");
   });
 });
 

@@ -4,6 +4,7 @@ import {
   configureApiClient,
   editSectionStream as editSectionStreamRequest,
   generateArtifactStream as generateArtifactStreamRequest,
+  generateChecklist as generateChecklistRequest,
   ingestUpload as ingestUploadRequest,
   jobMatch as jobMatchRequest,
   renderExport as renderExportRequest,
@@ -394,6 +395,71 @@ describe("model request identity", () => {
       }),
     ).rejects.toMatchObject({ status: 400, code: "INVALID" } satisfies Partial<ApiError>);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { name: "JSON null allowance response", status: 402, wire: "null", payload: null },
+    { name: "malformed authentication response", status: 401, wire: "{", payload: {} },
+    { name: "malformed permission response", status: 403, wire: "{", payload: {} },
+    { name: "malformed server response", status: 500, wire: "{", payload: {} },
+  ])("retains HTTP$status for a checklist $name without another generation", async ({ status, wire, payload }) => {
+    const httpResponse = new Response(wire, {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(httpResponse);
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "33333333-3333-4333-8333-333333333333";
+    const lease = requestContext();
+    const request = generateChecklistRequest({
+      situation: "Prepare a synthetic moving checklist.",
+      generation_request_id: requestId,
+    }, lease);
+
+    await expect(request).rejects.toBeInstanceOf(ApiError);
+    await expect(request).rejects.toMatchObject({ status, code: "REQUEST_FAILED", payload });
+    expect(httpResponse.bodyUsed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/generate-checklist");
+    expect(init.signal).toBe(lease.signal);
+    expect(JSON.parse(String(init.body)).generation_request_id).toBe(requestId);
+    expect(new Headers(init.headers).get("x-idempotency-key")).toBe(requestId);
+    expect(new Headers(init.headers).get("x-request-id")).toBe(requestId);
+  });
+
+  it.each<{ name: string; code: unknown }>([
+    { name: "an object with a non-callable toString", code: { toString: null } },
+    { name: "an empty object", code: {} },
+    { name: "an array", code: [] },
+    { name: "a number", code: 42 },
+    { name: "a boolean", code: false },
+  ])("retains HTTP402 and the original checklist payload when its error code is $name", async ({ code }) => {
+    const payload = { error: { code, message: "Synthetic allowance response." } };
+    const httpResponse = new Response(JSON.stringify(payload), {
+      status: 402,
+      headers: { "Content-Type": "application/json" },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(httpResponse);
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "33333333-3333-4333-8333-333333333333";
+    const lease = requestContext();
+    const request = generateChecklistRequest({
+      situation: "Prepare a synthetic moving checklist.",
+      generation_request_id: requestId,
+    }, lease);
+
+    await expect(request).rejects.toBeInstanceOf(ApiError);
+    await expect(request).rejects.toMatchObject({ status: 402, code: "REQUEST_FAILED" });
+    await expect(request).rejects.toHaveProperty("payload", payload);
+    expect(httpResponse.bodyUsed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/generate-checklist");
+    expect(init.signal).toBe(lease.signal);
+    expect(JSON.parse(String(init.body)).generation_request_id).toBe(requestId);
+    expect(new Headers(init.headers).get("x-idempotency-key")).toBe(requestId);
+    expect(new Headers(init.headers).get("x-request-id")).toBe(requestId);
   });
 
   it("replays a truncated successful JSON acknowledgement with the same identity", async () => {

@@ -230,8 +230,8 @@ async function postModelJson<
     }
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      const error = (data as Record<string, unknown>).error as Record<string, unknown> | undefined;
-      throw new ApiError(response.status, String(error?.code ?? "REQUEST_FAILED"), data);
+      const error = isRecord(data) && isRecord(data.error) ? data.error : null;
+      throw new ApiError(response.status, typeof error?.code === "string" ? error.code : "REQUEST_FAILED", data);
     }
     try {
       const result = (await response.json()) as T;
@@ -1075,8 +1075,8 @@ export async function generateDocumentStream(
 
     if (!res.ok || !res.body) {
       const data = await res.json().catch(() => ({}));
-      const err = (data as Record<string, unknown>).error as Record<string, unknown> | undefined;
-      throw new ApiError(res.status, String(err?.code ?? "STREAM_FAILED"), data);
+      const err = isRecord(data) && isRecord(data.error) ? data.error : null;
+      throw new ApiError(res.status, typeof err?.code === "string" ? err.code : "STREAM_FAILED", data);
     }
     return res;
   };

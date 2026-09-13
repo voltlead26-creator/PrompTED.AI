@@ -19,7 +19,6 @@ declare
   v_text text;
   v_code integer;
   v_units integer := 0;
-  v_index integer;
 begin
   if pg_catalog.jsonb_typeof(p_value) is distinct from 'string' then
     return false;

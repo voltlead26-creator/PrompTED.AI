@@ -64,7 +64,7 @@ import {
   requestCapturedDocumentExport,
 } from "@/lib/api/captured-document-operations";
 import { sanitiseSectionContent } from "@/lib/sanitise";
-import { documentLimitNotice } from "@/lib/document-limit";
+import { generationLimitNotice } from "@/lib/document-limit";
 import { useAuth } from "@/components/providers";
 import { useAutosave } from "./useAutosave";
 import {
@@ -571,38 +571,15 @@ export const DOCUMENT_LIMIT_SECTION_ID = "__document_limit__";
 export const AUTH_SECTION_ID = "__auth__";
 
 function documentLimitIssue(err: unknown): GenerationIssue | null {
-  const notice = documentLimitNotice(err);
+  const notice = generationLimitNotice(err);
   if (!notice) return null;
   return {
-    sectionId: DOCUMENT_LIMIT_SECTION_ID,
+    sectionId: notice.action === "review_account" ? PAYWALL_SECTION_ID : DOCUMENT_LIMIT_SECTION_ID,
     sectionName: notice.heading,
     reason: notice.reason,
     attempts: 0,
     retryable: false,
   };
-}
-
-function isPaywallError(err: unknown): boolean {
-  const e = err as {
-    status?: number;
-    code?: string;
-    payload?: { error?: { code?: string } };
-  } | null;
-  return Boolean(
-    e && (e.status === 402 || e.code === "PAYWALL" || e.payload?.error?.code === "PAYWALL"),
-  );
-}
-
-function paywallIssues(): GenerationIssue[] {
-  return [
-    {
-      sectionId: PAYWALL_SECTION_ID,
-      sectionName: "Out of document credits",
-      reason:
-        "You've used all your document credits for this month. Update your subscription to keep using TED.",
-      attempts: 0,
-    },
-  ];
 }
 
 function isAuthError(err: unknown): boolean {
@@ -1825,13 +1802,9 @@ export function useDocument(
           // Fence captured retry callbacks before the next React render.
           resource.generationLimitBlocked = true;
           setGenerationIssues((current) => [
-            ...current.filter((issue) => issue.retryable === false && issue.sectionId !== DOCUMENT_LIMIT_SECTION_ID),
+            ...current.filter((issue) => issue.retryable === false &&
+              issue.sectionId !== DOCUMENT_LIMIT_SECTION_ID && issue.sectionId !== PAYWALL_SECTION_ID),
             limitIssue,
-          ]);
-        } else if (isPaywallError(err)) {
-          setGenerationIssues((current) => [
-            ...current.filter((issue) => issue.retryable === false),
-            ...paywallIssues(),
           ]);
         } else if (isAuthError(err)) {
           setGenerationIssues((current) => [
@@ -2070,13 +2043,9 @@ export function useDocument(
           if (limitIssue) {
             resource.generationLimitBlocked = true;
             setGenerationIssues((current) => [
-              ...current.filter((issue) => issue.retryable === false && issue.sectionId !== DOCUMENT_LIMIT_SECTION_ID),
+              ...current.filter((issue) => issue.retryable === false &&
+                issue.sectionId !== DOCUMENT_LIMIT_SECTION_ID && issue.sectionId !== PAYWALL_SECTION_ID),
               limitIssue,
-            ]);
-          } else if (isPaywallError(err)) {
-            setGenerationIssues((current) => [
-              ...current.filter((issue) => issue.retryable === false),
-              ...paywallIssues(),
             ]);
           } else if (isAuthError(err)) {
             setGenerationIssues((current) => [

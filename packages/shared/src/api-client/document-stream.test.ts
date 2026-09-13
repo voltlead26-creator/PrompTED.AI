@@ -71,6 +71,79 @@ afterEach(() => {
 });
 
 describe("legacy document stream acceptance", () => {
+  it.each([
+    { name: "JSON null allowance response", status: 402, wire: "null", payload: null },
+    { name: "malformed authentication response", status: 401, wire: "{", payload: {} },
+    { name: "malformed permission response", status: 403, wire: "{", payload: {} },
+    { name: "malformed server response", status: 500, wire: "{", payload: {} },
+  ])("retains HTTP$status for a $name without publishing a document", async ({ status, wire, payload }) => {
+    const httpResponse = new Response(wire, {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(httpResponse);
+    vi.stubGlobal("fetch", fetchMock);
+    const onSection = vi.fn();
+    const onDesign = vi.fn();
+    const onMissing = vi.fn();
+    const onUnresolved = vi.fn();
+    const onDraft = vi.fn();
+    const lease = context();
+    const request = generateDocumentStream(input, onSection, lease, onDesign, onMissing, onUnresolved, onDraft);
+
+    await expect(request).rejects.toBeInstanceOf(ApiError);
+    await expect(request).rejects.toMatchObject({ status, code: "STREAM_FAILED", payload });
+    expect(httpResponse.bodyUsed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onSection).not.toHaveBeenCalled();
+    expect(onDesign).not.toHaveBeenCalled();
+    expect(onMissing).not.toHaveBeenCalled();
+    expect(onUnresolved).not.toHaveBeenCalled();
+    expect(onDraft).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/generate-document");
+    expect(init.signal).toBe(lease.signal);
+    expect(JSON.parse(String(init.body)).generation_request_id).toBe(input.generation_request_id);
+  });
+
+  it.each<{ name: string; code: unknown }>([
+    { name: "an object with a non-callable toString", code: { toString: null } },
+    { name: "an empty object", code: {} },
+    { name: "an array", code: [] },
+    { name: "a number", code: 42 },
+    { name: "a boolean", code: false },
+  ])("retains HTTP402 and the original payload when the document error code is $name", async ({ code }) => {
+    const payload = { error: { code, message: "Synthetic allowance response." } };
+    const httpResponse = new Response(JSON.stringify(payload), {
+      status: 402,
+      headers: { "Content-Type": "application/json" },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(httpResponse);
+    vi.stubGlobal("fetch", fetchMock);
+    const onSection = vi.fn();
+    const onDesign = vi.fn();
+    const onMissing = vi.fn();
+    const onUnresolved = vi.fn();
+    const onDraft = vi.fn();
+    const lease = context();
+    const request = generateDocumentStream(input, onSection, lease, onDesign, onMissing, onUnresolved, onDraft);
+
+    await expect(request).rejects.toBeInstanceOf(ApiError);
+    await expect(request).rejects.toMatchObject({ status: 402, code: "STREAM_FAILED" });
+    await expect(request).rejects.toHaveProperty("payload", payload);
+    expect(httpResponse.bodyUsed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onSection).not.toHaveBeenCalled();
+    expect(onDesign).not.toHaveBeenCalled();
+    expect(onMissing).not.toHaveBeenCalled();
+    expect(onUnresolved).not.toHaveBeenCalled();
+    expect(onDraft).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/generate-document");
+    expect(init.signal).toBe(lease.signal);
+    expect(JSON.parse(String(init.body))).toEqual(input);
+  });
+
   it("delivers supported nested clarification metadata after the complete section set", async () => {
     const missing = {
       type: "missing_info",

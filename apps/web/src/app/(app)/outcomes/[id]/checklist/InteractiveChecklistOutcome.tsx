@@ -11,7 +11,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { useAuth } from "@/components/providers";
 import { ensureApiConfigured } from "@/lib/api";
 import { captureOwnerDispatch, ownerDispatchIsCurrent } from "@/lib/browser-principal-state";
-import { documentLimitNotice, type DocumentLimitNotice } from "@/lib/document-limit";
+import { generationLimitNotice, type DocumentLimitNotice } from "@/lib/document-limit";
 import { fetchOutcome, updateOutcome } from "@/lib/api/outcomes";
 import { replaceOwnChecklist } from "@/lib/api/checklists";
 import { createOrReplayArtifact, fetchArtifactByOutcome } from "@/lib/api/artifacts";
@@ -238,7 +238,7 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
           attempt === preparationAttemptRef.current &&
           (!requestContext || ownerDispatchIsCurrent(requestContext))
         ) {
-          const notice = requestContext ? documentLimitNotice(preparationError) : null;
+          const notice = requestContext ? generationLimitNotice(preparationError) : null;
           if (notice && requestContext) {
             // Retired Retry handlers cannot start another attempt after a cap.
             blockedPreparationAttemptRef.current = attempt;
@@ -286,6 +286,9 @@ export function InteractiveChecklistOutcome({ outcomeId }: { outcomeId: string }
         <section className={styles.errorCard} role="alert">
           {currentDocumentLimit && <h1>{currentDocumentLimit.heading}</h1>}
           <p>{currentDocumentLimit?.reason ?? error ?? "TED couldn't load this plan safely."}</p>
+          {currentDocumentLimit?.action === "review_account" && (
+            <Link href="/settings/account">Review plan and allowance</Link>
+          )}
           {!currentDocumentLimit && (
             <button
               type="button"

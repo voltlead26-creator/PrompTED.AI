@@ -103,6 +103,18 @@ function monthlyLimitError(currentPlan = "business", message = MONTHLY_LIMIT_MES
   });
 }
 
+function paywallError(currentPlan = "premium", requiredPlan = "business") {
+  return new ApiError(402, "PAYWALL", {
+    error: {
+      code: "PAYWALL",
+      message: "Private diagnostic; upgrade at synthetic-untrusted.example",
+      paywall_trigger: true,
+      current_plan: currentPlan,
+      plan_required: requiredPlan,
+    },
+  });
+}
+
 function rejectPreparationGeneration(path: "artifact" | "legacy checklist", error: ApiError) {
   mocks.withOwnerSupabase.mockResolvedValue({ count: 0, error: null });
   if (path === "artifact") mocks.generateArtifactStream.mockRejectedValue(error);
@@ -329,17 +341,179 @@ describe("InteractiveChecklistOutcome authoritative preparation", () => {
     expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
   });
 
-  it("keeps the existing genuine PAYWALL failure separate from a monthly-cap notice", async () => {
-    rejectPreparationGeneration("artifact", new ApiError(402, "PAYWALL", {
-      error: { code: "PAYWALL", paywall_trigger: true, current_plan: "premium", plan_required: "business" },
-    }));
+  // This replaces the earlier generic-Retry expectation for PAYWALL. The
+  // allowance service has already refused generation; a reload or repeated
+  // generation is not evidence that the account's allowance has changed.
+  it.each([
+    { path: "artifact" as const, plan: "free", requiredPlan: "pro" },
+    { path: "legacy checklist" as const, plan: "free", requiredPlan: "pro" },
+    { path: "artifact" as const, plan: "pro", requiredPlan: "premium" },
+    { path: "legacy checklist" as const, plan: "pro", requiredPlan: "premium" },
+    { path: "artifact" as const, plan: "premium", requiredPlan: "business" },
+    { path: "legacy checklist" as const, plan: "premium", requiredPlan: "business" },
+  ])("offers Account recovery for the confirmed $plan PAYWALL from $path", async ({ path, plan, requiredPlan }) => {
+    rejectPreparationGeneration(path, paywallError(plan, requiredPlan));
+    const { rerender } = render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(screen.getByRole("heading", { name: "Monthly document limit reached" })).toBeVisible();
+    expect(alert).not.toHaveTextContent(/couldn.t load this plan|private diagnostic|synthetic-untrusted/i);
+    expect(screen.getByRole("link", { name: "Review plan and allowance" })).toHaveAttribute("href", "/settings/account");
+    expect(screen.getByRole("link", { name: "Back to conversation" })).toHaveAttribute("href", `/outcomes/${OUTCOME_ID}/conversation`);
+    expect(screen.queryByRole("button", { name: /^Retry$/i })).toBeNull();
+    expect(screen.queryByText("Loaded plan")).toBeNull();
+
+    rerender(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).toHaveBeenCalledTimes(path === "artifact" ? 0 : 1);
+    expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
+    expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { path: "artifact" as const, name: "wrong HTTP status", error: new ApiError(503, "PAYWALL", paywallError().payload) },
+    { path: "legacy checklist" as const, name: "missing details", error: new ApiError(402, "PAYWALL", {}) },
+    { path: "artifact" as const, name: "null details", error: new ApiError(402, "PAYWALL", { error: null }) },
+    { path: "legacy checklist" as const, name: "array details", error: new ApiError(402, "PAYWALL", { error: [] }) },
+    { path: "artifact" as const, name: "mismatched nested code", error: new ApiError(402, "PAYWALL", { error: { code: "REQUEST_FAILED", message: "Diagnostic", paywall_trigger: true, current_plan: "premium", plan_required: "business" } }) },
+    { path: "legacy checklist" as const, name: "mismatched outer code", error: new ApiError(402, "REQUEST_FAILED", paywallError().payload) },
+    { path: "artifact" as const, name: "a false paywall flag", error: new ApiError(402, "PAYWALL", { error: { code: "PAYWALL", message: "Diagnostic", paywall_trigger: false, current_plan: "premium", plan_required: "business" } }) },
+    { path: "legacy checklist" as const, name: "a top-plan upgrade", error: paywallError("business", "business") },
+    { path: "artifact" as const, name: "missing message", error: new ApiError(402, "PAYWALL", { error: { code: "PAYWALL", paywall_trigger: true, current_plan: "premium", plan_required: "business" } }) },
+    { path: "legacy checklist" as const, name: "a blank message", error: new ApiError(402, "PAYWALL", { error: { code: "PAYWALL", message: "  ", paywall_trigger: true, current_plan: "premium", plan_required: "business" } }) },
+    { path: "artifact" as const, name: "an unknown current plan", error: paywallError("enterprise", "business") },
+    { path: "legacy checklist" as const, name: "a contradictory next plan", error: paywallError("free", "business") },
+  ])("pauses an unconfirmed $path PAYWALL with $name without proposing an upgrade", async ({ path, error }) => {
+    rejectPreparationGeneration(path, error);
     render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(UNCONFIRMED_LIMIT_MESSAGE);
+    expect(screen.getByRole("heading", { name: "Document generation paused" })).toBeVisible();
+    expect(screen.queryByText(/next month|private diagnostic|synthetic-untrusted/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Retry$/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /review plan|upgrade|view plans|update subscription/i })).toBeNull();
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).toHaveBeenCalledTimes(path === "artifact" ? 0 : 1);
+    expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
+    expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it.each(["artifact", "legacy checklist"] as const)("retires a previous Retry control after the %s PAYWALL", async (path) => {
+    mocks.fetchOutcome.mockRejectedValueOnce(new Error("Read unavailable"));
+    rejectPreparationGeneration(path, paywallError());
+    const { rerender } = render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn.t load this plan/i);
-    expect(screen.getByRole("button", { name: /^Retry$/i })).toBeVisible();
-    expect(screen.queryByText(/next month|document generation paused/i)).toBeNull();
+    const previousRetry = screen.getByRole("button", { name: /^Retry$/i });
+    fireEvent.click(previousRetry);
+    expect(await screen.findByRole("link", { name: "Review plan and allowance" })).toHaveAttribute("href", "/settings/account");
+
+    fireEvent.click(previousRetry);
+    rerender(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("button", { name: /^Retry$/i })).toBeNull();
+    expect(mocks.fetchOutcome).toHaveBeenCalledTimes(2);
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).toHaveBeenCalledTimes(path === "artifact" ? 0 : 1);
+    expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
+    expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it.each(["outcome", "owner"] as const)("clears a displayed PAYWALL when a saved plan changes %s", async (kind) => {
+    rejectPreparationGeneration("artifact", paywallError());
+    const { rerender } = render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+    expect(await screen.findByRole("link", { name: "Review plan and allowance" })).toBeVisible();
+
+    const nextUserId = kind === "owner" ? OTHER_USER_ID : USER_ID;
+    if (kind === "owner") {
+      recordBrowserPrincipal(nextUserId);
+      mocks.useAuth.mockReturnValue({ user: { id: nextUserId }, loading: false });
+    }
+    mocks.fetchOutcome.mockResolvedValue({ ...savedOutcome(), id: OTHER_OUTCOME_ID, user_id: nextUserId });
+    mocks.fetchArtifactByOutcome.mockResolvedValue({
+      id: "e3000000-0000-4000-8000-000000000002", outcome_id: OTHER_OUTCOME_ID, user_id: nextUserId, kind: "action_plan",
+    });
+    rerender(<InteractiveChecklistOutcome outcomeId={OTHER_OUTCOME_ID} />);
+
+    expect(await screen.findByText("Loaded plan")).toHaveAttribute("data-outcome-id", OTHER_OUTCOME_ID);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Review plan and allowance" })).toBeNull();
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
     expect(mocks.generateChecklist).not.toHaveBeenCalled();
     expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
     expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { path: "artifact" as const, change: "outcome" },
+    { path: "legacy checklist" as const, change: "outcome" },
+    { path: "artifact" as const, change: "principal A-B-A" },
+    { path: "legacy checklist" as const, change: "principal A-B-A" },
+  ])("ignores the late $path PAYWALL after $change", async ({ path, change }) => {
+    const generation = deferred<never>();
+    mocks.withOwnerSupabase.mockResolvedValue({ count: 0, error: null });
+    if (path === "artifact") mocks.generateArtifactStream.mockReturnValue(generation.promise);
+    else {
+      mocks.generateArtifactStream.mockRejectedValue(new ApiError(404, "TED_V2_DISABLED", {}));
+      mocks.generateChecklist.mockReturnValue(generation.promise);
+    }
+    const { rerender } = render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+    const generator = path === "artifact" ? mocks.generateArtifactStream : mocks.generateChecklist;
+    await waitFor(() => expect(generator).toHaveBeenCalledTimes(1));
+    const lease = generator.mock.calls[0]?.[path === "artifact" ? 2 : 1] as OwnerDispatchLease;
+
+    if (change === "principal A-B-A") {
+      recordBrowserPrincipal(OTHER_USER_ID);
+      recordBrowserPrincipal(USER_ID);
+    } else {
+      mocks.fetchOutcome.mockResolvedValue({ ...savedOutcome(), id: OTHER_OUTCOME_ID });
+      mocks.fetchArtifactByOutcome.mockResolvedValue({
+        id: "e3000000-0000-4000-8000-000000000002", outcome_id: OTHER_OUTCOME_ID, user_id: USER_ID, kind: "action_plan",
+      });
+      rerender(<InteractiveChecklistOutcome outcomeId={OTHER_OUTCOME_ID} />);
+      expect(await screen.findByText("Loaded plan")).toHaveAttribute("data-outcome-id", OTHER_OUTCOME_ID);
+    }
+    expect(lease.signal.aborted).toBe(true);
+    await act(async () => {
+      generation.reject(paywallError());
+      await generation.promise.catch(() => undefined);
+    });
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Review plan and allowance" })).toBeNull();
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).toHaveBeenCalledTimes(path === "artifact" ? 0 : 1);
+    expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
+    expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it.each(["artifact", "legacy checklist"] as const)("pauses an unconfirmed %s HTTP 402 without inventing upgrade eligibility", async (path) => {
+    rejectPreparationGeneration(path, new ApiError(402, "REQUEST_FAILED", {
+      error: { code: "REQUEST_FAILED", message: "Private diagnostic; upgrade at synthetic-untrusted.example" },
+    }));
+    render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(UNCONFIRMED_LIMIT_MESSAGE);
+    expect(screen.getByRole("heading", { name: "Document generation paused" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Retry$/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Review plan and allowance" })).toBeNull();
+    expect(screen.queryByText(/next month|private diagnostic|synthetic-untrusted/i)).toBeNull();
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).toHaveBeenCalledTimes(path === "artifact" ? 0 : 1);
+    expect(mocks.createOrReplayArtifact).not.toHaveBeenCalled();
+    expect(mocks.replaceOwnChecklist).not.toHaveBeenCalled();
+  });
+
+  it.each(["business", "free"] as const)("keeps the existing %s no-upgrade monthly limit separate from PAYWALL recovery", async (plan) => {
+    rejectPreparationGeneration("artifact", monthlyLimitError(plan));
+    render(<InteractiveChecklistOutcome outcomeId={OUTCOME_ID} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(MONTHLY_LIMIT_MESSAGE);
+    expect(screen.getByRole("heading", { name: "Monthly document limit reached" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /review plan|upgrade|view plans|update subscription/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Retry$/i })).toBeNull();
+    expect(mocks.generateArtifactStream).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChecklist).not.toHaveBeenCalled();
   });
 
   it("does not fall back or persist after artifact settlement uncertainty", async () => {
