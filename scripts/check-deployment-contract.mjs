@@ -625,7 +625,14 @@ export function validateProductionWorkflow(workflowText) {
     );
     const inventoryValidationIndex = functionsJob.indexOf("SUPABASE_PROBE_MODE: inventory");
     const linkIndex = functionsJob.indexOf("supabase link");
-    const databasePushIndex = functionsJob.indexOf("supabase db push");
+    const databasePushIndex = functionsJob.indexOf(
+      "node scripts/backend-release-baseline.mjs apply",
+    );
+    if (/\bsupabase\s+db\s+push\b/.test(functionsJob)) {
+      failures.push(
+        "Production database push must use the guarded backend baseline apply command.",
+      );
+    }
     const mutationIndexes = [
       linkIndex,
       databasePushIndex,
@@ -710,6 +717,7 @@ export function validateProductionWorkflow(workflowText) {
       [baselineCaptureStep, "capture"],
       [baselineVerifyStep, "verify"],
       [baselineReportStep, "report"],
+      [nextStep, "apply"],
     ].every(
       ([step, mode]) =>
         exactBaselineCommand(mode).test(step) &&
@@ -726,7 +734,7 @@ export function validateProductionWorkflow(workflowText) {
       baselineCaptureIndex > linkIndex ||
       baselineVerifyIndex < linkIndex ||
       baselineVerifyIndex > databasePushIndex ||
-      !nextStep.includes("supabase db push --linked")
+      !exactBaselineCommand("apply").test(nextStep)
     ) {
       failures.push(
         "Production backend mutation must use one immutable backend release baseline captured before link and revalidated immediately before database push.",

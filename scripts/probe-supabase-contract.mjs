@@ -44,6 +44,10 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import {
+  loadReviewedHostedMigrationTransition,
+  isReviewedHostedMigrationTransition,
+} from "./reviewed-hosted-migration-transition.mjs";
 
 const execFileAsync = promisify(execFile);
 const CONTRACT_PATH = "supabase/deployment-contract.json";
@@ -1150,6 +1154,7 @@ export function validateHostedInventory({
   inventory,
   hostedFunctions,
   phase = "pre_migration",
+  reviewedMigrationTransition = null,
 }) {
   const contract = assertInventoryContract(manifest);
   const failures = [];
@@ -1162,8 +1167,20 @@ export function validateHostedInventory({
     (localVersions.length > 0 &&
       (remoteVersions.length > localVersions.length ||
         remoteVersions.some((version, index) => version !== localVersions[index])));
-  inventoryCheck(checks, "MIGRATION_LEDGER_PREFIX", !ledgerDiverged, "observed");
-  if (ledgerDiverged) {
+  const reviewedTransition =
+    ledgerDiverged &&
+    isReviewedHostedMigrationTransition(
+      reviewedMigrationTransition,
+      manifest.projectRef,
+      migrationLedger,
+      phase,
+    );
+  if (reviewedTransition) {
+    inventoryCheck(checks, "MIGRATION_LEDGER_REVIEWED_TRANSITION", true, "exact_reviewed_upgrade");
+  } else {
+    inventoryCheck(checks, "MIGRATION_LEDGER_PREFIX", !ledgerDiverged, "observed");
+  }
+  if (ledgerDiverged && !reviewedTransition) {
     inventoryFailure(
       failures,
       "MIGRATION_LEDGER_DIVERGED",
@@ -1453,6 +1470,7 @@ async function runInventoryProbe({ manifest, projectRef, repoRoot, phase }) {
   let migrationLedger;
   let inventory;
   let hostedFunctions;
+  let reviewedMigrationTransition = null;
   try {
     [migrationLedger, inventory, hostedFunctions] = await Promise.all([
       fetchPreMigrationLedger({ projectRef }),
@@ -1460,6 +1478,13 @@ async function runInventoryProbe({ manifest, projectRef, repoRoot, phase }) {
       fetchHostedFunctionInventory({ projectRef }),
     ]);
     migrationLedger.localVersions = await localMigrationVersions(repoRoot);
+    if (phase === "pre_migration") {
+      reviewedMigrationTransition = await loadReviewedHostedMigrationTransition({
+        repoRoot,
+        projectRef,
+        migrationLedger,
+      });
+    }
   } catch (error) {
     console.error(`Hosted release inventory failed: ${error.message}`);
     process.exitCode = 1;
@@ -1471,6 +1496,7 @@ async function runInventoryProbe({ manifest, projectRef, repoRoot, phase }) {
     inventory,
     hostedFunctions,
     phase,
+    reviewedMigrationTransition,
   });
   for (const check of result.checks) {
     console.log(`[${check.ok ? "pass" : "fail"}] ${check.code}: ${check.state}`);

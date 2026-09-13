@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  loadReviewedHostedMigrationTransition,
+  isReviewedHostedMigrationTransition,
+  isExactMigrationPrefix,
+} from "./reviewed-hosted-migration-transition.mjs";
+const execFileAsync = promisify(execFile);
 import { chmod, lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 
@@ -331,12 +339,18 @@ export async function collectBackendReleaseEvidence({
   ]);
   const localVersions = repository.migrations.map((entry) => entry.name.slice(0, 14));
   const fullLedger = { ...migrationLedger, localVersions };
+  const reviewedMigrationTransition = await loadReviewedHostedMigrationTransition({
+    repoRoot,
+    projectRef,
+    migrationLedger: fullLedger,
+  });
   const validation = validateHostedInventory({
     manifest,
     migrationLedger: fullLedger,
     inventory,
     hostedFunctions,
     phase: "pre_migration",
+    reviewedMigrationTransition,
   });
   return {
     evidence: createBackendReleaseEvidence({
@@ -349,6 +363,8 @@ export async function collectBackendReleaseEvidence({
       hostedFunctions,
     }),
     inventoryFailureCodes: validation.failures.map((failure) => failure.code),
+    migrationLedger: fullLedger,
+    reviewedMigrationTransition,
   };
 }
 
@@ -391,10 +407,129 @@ async function readBaseline(path) {
   return assertBaseline(parsed);
 }
 
+export function migrationApplyArguments({ baseline, collected, linkedProjectRef }) {
+  const result = verifyBackendReleaseBaseline(baseline, collected.evidence);
+  if (
+    !result.ok ||
+    !Array.isArray(collected.inventoryFailureCodes) ||
+    collected.inventoryFailureCodes.length > 0
+  ) {
+    throw new Error("Backend release baseline or inventory changed; refusing database mutation.");
+  }
+  if (linkedProjectRef !== collected.evidence.project_ref) {
+    throw new Error("Linked project does not match the captured backend target.");
+  }
+  const ledgerHash = canonicalSha256({
+    local_versions: collected.migrationLedger?.localVersions,
+    remote_versions: collected.migrationLedger?.remoteVersions,
+  });
+  if (ledgerHash !== collected.evidence.migration_ledger_sha256) {
+    throw new Error("Migration history does not match its captured evidence.");
+  }
+  const transition = isReviewedHostedMigrationTransition(
+    collected.reviewedMigrationTransition,
+    collected.evidence.project_ref,
+    collected.migrationLedger,
+  );
+  if (
+    transition &&
+    collected.reviewedMigrationTransition.migrationSourcesSha256 !==
+      collected.evidence.migration_sources_sha256
+  ) {
+    throw new Error("Migration source does not match the reviewed transition.");
+  }
+  if (!transition && !isExactMigrationPrefix(collected.migrationLedger)) {
+    throw new Error("Migration apply has no exact prefix or reviewed transition.");
+  }
+  return [
+    "db",
+    "push",
+    "--linked",
+    "--skip-vault",
+    "--yes",
+    ...(transition ? ["--include-all"] : []),
+  ];
+}
+
+export async function applyBackendReleaseMigrations({
+  repoRoot,
+  baseline,
+  collected,
+  execFileImpl = execFileAsync,
+}) {
+  const linkedPath = `${repoRoot}/supabase/.temp/project-ref`;
+  const metadata = await lstat(linkedPath);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 100) {
+    throw new Error("Linked project identity file is invalid.");
+  }
+  const args = migrationApplyArguments({
+    baseline,
+    collected,
+    linkedProjectRef: (await readFile(linkedPath, "utf8")).trim(),
+  });
+  const head = await execFileImpl("git", ["rev-parse", "HEAD"], {
+    cwd: repoRoot,
+    shell: false,
+    timeout: 10000,
+    maxBuffer: 1024,
+  });
+  if (head.stdout.trim() !== collected.evidence.git_sha) {
+    throw new Error("Checkout revision does not match the captured backend release.");
+  }
+  const releaseState = await execFileImpl(
+    "git",
+    [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--",
+      "supabase/migrations",
+      "supabase/tests",
+      "supabase/deployment-contract.json",
+      "scripts",
+      ".github/workflows",
+      "package.json",
+      "docs/evidence/web-operational-readiness",
+    ],
+    {
+      cwd: repoRoot,
+      shell: false,
+      timeout: 10000,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  if (releaseState.stdout.trim() !== "") {
+    throw new Error("Release inputs contain uncommitted changes; refusing database mutation.");
+  }
+  const source = await repositoryReleaseInputs(repoRoot);
+  if (
+    sha256(source.deploymentContract) !== collected.evidence.deployment_contract_sha256 ||
+    canonicalSha256(normalizedMigrations(source.migrations)) !==
+      collected.evidence.migration_sources_sha256
+  ) {
+    throw new Error("Migration source changed after the backend baseline check.");
+  }
+  try {
+    await execFileImpl("supabase", args, {
+      cwd: repoRoot,
+      shell: false,
+      timeout: 20 * 60 * 1000,
+      killSignal: "SIGTERM",
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  } catch {
+    // Never print CLI output, retry a partial migration, or relabel history.
+    throw new Error(
+      "Database migration command failed or timed out; stop and inspect the hosted ledger before retrying. No automatic rollback was attempted.",
+    );
+  }
+  return { applied: true, reviewedTransition: args.includes("--include-all") };
+}
+
 async function main() {
   const mode = process.argv[2];
-  if (!["capture", "verify", "report"].includes(mode)) {
-    throw new Error("Expected capture, verify, or report mode.");
+  if (!["capture", "verify", "report", "apply"].includes(mode)) {
+    throw new Error("Expected capture, verify, report, or apply mode.");
   }
   const path = baselinePath(process.argv.slice(3));
   const repoRoot = process.cwd();
@@ -447,6 +582,13 @@ async function main() {
       ),
     );
     throw new Error("Backend release baseline changed; refusing database mutation.");
+  }
+  if (mode === "apply") {
+    await applyBackendReleaseMigrations({ repoRoot, baseline, collected });
+    console.log(
+      "Reviewed database migration command completed; post-migration schema verification is still required.",
+    );
+    return;
   }
   console.log("Backend release baseline is unchanged; no hosted mutation was performed.");
 }

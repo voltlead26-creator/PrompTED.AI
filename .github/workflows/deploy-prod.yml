@@ -218,10 +218,15 @@ jobs:
           SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
 
       - name: Apply ordered database migrations
-        run: supabase db push --linked
+        run: >-
+          node scripts/backend-release-baseline.mjs apply
+          --path "$RUNNER_TEMP/prompted-backend-release-baseline.json"
+          --git-sha "$GITHUB_SHA"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
+          SUPABASE_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
 
       - name: Probe the applied live schema
         run: node scripts/probe-supabase-contract.mjs

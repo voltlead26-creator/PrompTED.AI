@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile, readdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { collectBackendReleaseEvidence } from "./backend-release-baseline.mjs";
+import { loadReviewedHostedMigrationTransition } from "./reviewed-hosted-migration-transition.mjs";
 
 import {
   assertMigrationLedgerCannotBeSkipped,
@@ -1468,4 +1472,111 @@ test("declared function smoke records an endpoint failure for HTTP 404", async (
   assert.deepEqual(result.failures, [
     'Function "document-operation" smoke probe returned HTTP 404.',
   ]);
+});
+
+test("inventory admits only the source-checked historical transition and retains other blockers", async () => {
+  const repoRoot = fileURLToPath(new URL("../", import.meta.url));
+  const baseline = JSON.parse(
+    await readFile(
+      new URL(
+        "../docs/evidence/web-operational-readiness/hosted-ledger-upgrade-baseline.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const localVersions = (await readdir(`${repoRoot}/supabase/migrations`))
+    .sort()
+    .map((name) => name.slice(0, 14));
+  const migrationLedger = { localVersions, remoteVersions: baseline.hosted_versions };
+  const reviewedMigrationTransition = await loadReviewedHostedMigrationTransition({
+    repoRoot,
+    projectRef: PROJECT_REF,
+    migrationLedger,
+  });
+  assert.equal(reviewedMigrationTransition.pendingFiles.length, 26);
+  const input = {
+    manifest: { ...INVENTORY_MANIFEST, projectRef: PROJECT_REF },
+    migrationLedger,
+    inventory: safeHostedInventory(),
+    hostedFunctions: [],
+    phase: "pre_migration",
+    reviewedMigrationTransition,
+  };
+  const accepted = validateHostedInventory(input);
+  assert.equal(
+    accepted.failures.some((failure) => failure.code === "MIGRATION_LEDGER_DIVERGED"),
+    false,
+  );
+  assert.ok(
+    accepted.checks.some(
+      (check) => check.code === "MIGRATION_LEDGER_REVIEWED_TRANSITION" && check.ok,
+    ),
+  );
+  for (const override of [
+    { reviewedMigrationTransition: null },
+    { reviewedMigrationTransition: { ...reviewedMigrationTransition } },
+    { phase: "post_function" },
+    { manifest: { ...input.manifest, projectRef: "a".repeat(20) } },
+    {
+      migrationLedger: {
+        ...migrationLedger,
+        remoteVersions: [...migrationLedger.remoteVersions].reverse(),
+      },
+    },
+  ])
+    assert.ok(
+      validateHostedInventory({ ...input, ...override }).failures.some(
+        (failure) => failure.code === "MIGRATION_LEDGER_DIVERGED",
+      ),
+    );
+  const hazardous = validateHostedInventory({
+    ...input,
+    inventory: safeHostedInventory({ duplicate_saved_role_groups: 1 }),
+    hostedFunctions: [{ name: "undeclared", status: "ACTIVE", version: 1, verifyJwt: true }],
+  });
+  assert.ok(hazardous.failures.some((failure) => failure.code === "SAVED_ROLE_DUPLICATES"));
+  assert.ok(hazardous.failures.some((failure) => failure.code === "UNDECLARED_HOSTED_FUNCTION"));
+});
+
+test("backend baseline collector uses the same exact transition without changing hosted evidence", async () => {
+  const repoRoot = fileURLToPath(new URL("../", import.meta.url));
+  const historical = JSON.parse(
+    await readFile(
+      new URL(
+        "../docs/evidence/web-operational-readiness/hosted-ledger-upgrade-baseline.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const ledger = { remoteVersions: historical.hosted_versions, rows: [] };
+  const before = structuredClone(ledger);
+  const calls = [];
+  const collected = await collectBackendReleaseEvidence({
+    repoRoot,
+    projectRef: PROJECT_REF,
+    supabaseUrl: `https://${PROJECT_REF}.supabase.co`,
+    gitSha: "a".repeat(40),
+    fetchMigrationLedger: async ({ projectRef }) => {
+      calls.push(projectRef);
+      return ledger;
+    },
+    fetchInventory: async ({ projectRef }) => {
+      calls.push(projectRef);
+      return safeHostedInventory();
+    },
+    fetchFunctions: async ({ projectRef }) => {
+      calls.push(projectRef);
+      return [];
+    },
+  });
+  assert.deepEqual(calls, [PROJECT_REF, PROJECT_REF, PROJECT_REF]);
+  assert.deepEqual(ledger, before);
+  assert.equal(collected.reviewedMigrationTransition.pendingFiles.length, 26);
+  assert.equal(collected.inventoryFailureCodes.includes("MIGRATION_LEDGER_DIVERGED"), false);
+  assert.equal(
+    collected.evidence.migration_sources_sha256,
+    collected.reviewedMigrationTransition.migrationSourcesSha256,
+  );
 });

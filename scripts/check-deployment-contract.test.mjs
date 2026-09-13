@@ -982,7 +982,12 @@ jobs:
           SUPABASE_DB_PASSWORD: \${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
           SUPABASE_URL: \${{ secrets.PROD_SUPABASE_URL }}
           SUPABASE_PROJECT_REF: \${{ secrets.PROD_SUPABASE_PROJECT_REF }}
-      - run: supabase db push --linked
+      - run: node scripts/backend-release-baseline.mjs apply --path \"$RUNNER_TEMP/prompted-backend-release-baseline.json\" --git-sha \"$GITHUB_SHA\"
+        env:
+          SUPABASE_ACCESS_TOKEN: \${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: \${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: \${{ secrets.PROD_SUPABASE_URL }}
+          SUPABASE_PROJECT_REF: \${{ secrets.PROD_SUPABASE_PROJECT_REF }}
       - run: node scripts/probe-supabase-contract.mjs
         env:
           SUPABASE_ACCESS_TOKEN: \${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -1199,8 +1204,9 @@ test("production workflow requires hosted inventory before link and database pus
   )?.[0];
   assert.ok(inventoryStep);
   const afterPush = SAFE_PRODUCTION_WORKFLOW.replace(inventoryStep, "").replace(
-    "      - run: supabase db push --linked\n",
-    "      - run: supabase db push --linked\n" + inventoryStep,
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n',
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n' +
+      inventoryStep,
   );
   assert.ok(
     validateProductionWorkflow(afterPush).some((failure) =>
@@ -1250,15 +1256,16 @@ test("production backend mutation is bound to one immutable baseline and immedia
     /      - name: Revalidate immutable backend release baseline[\s\S]*?          SUPABASE_PROJECT_REF: \$\{\{ secrets[.]PROD_SUPABASE_PROJECT_REF \}\}\n/,
     "",
   ).replace(
-    "      - run: supabase db push --linked\n",
-    "      - run: supabase db push --linked\n" +
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n',
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n' +
       SAFE_PRODUCTION_WORKFLOW.match(
         /      - name: Revalidate immutable backend release baseline[\s\S]*?          SUPABASE_PROJECT_REF: \$\{\{ secrets[.]PROD_SUPABASE_PROJECT_REF \}\}\n/,
       )[0],
   );
   const interveningMutation = SAFE_PRODUCTION_WORKFLOW.replace(
-    "      - run: supabase db push --linked\n",
-    "      - run: supabase functions deploy unsafe\n" + "      - run: supabase db push --linked\n",
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n',
+    "      - run: supabase functions deploy unsafe\n" +
+      '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n',
   );
 
   for (const unsafe of [withoutCapture, withoutVerify, verifyAfterPush, interveningMutation]) {
@@ -1276,8 +1283,8 @@ test("production backend failures emit a read-only report and never automate dat
     "",
   );
   const automaticRepair = SAFE_PRODUCTION_WORKFLOW.replace(
-    "      - run: supabase db push --linked\n",
-    "      - run: supabase db push --linked\n" +
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n',
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n' +
       "      - run: supabase migration repair --status reverted 20260902018000\n",
   );
 
@@ -1321,7 +1328,7 @@ test("production Supabase link receives the protected database password non-inte
 
 test("production probes the applied schema with scoped database credentials before functions", () => {
   const unsafe = SAFE_PRODUCTION_WORKFLOW.replace(
-    "      - run: supabase db push --linked\n",
+    '      - run: node scripts/backend-release-baseline.mjs apply --path "$RUNNER_TEMP/prompted-backend-release-baseline.json" --git-sha "$GITHUB_SHA"\n',
     "",
   ).replace(
     "      - run: node scripts/probe-supabase-contract.mjs\n" +
@@ -1619,4 +1626,16 @@ jobs:
 
   assert.deepEqual(validateWorkflowAuthority("ci.yml", ci), []);
   assert.deepEqual(validateWorkflowAuthority("stale.yml", stale), []);
+});
+
+test("production rejects direct database pushes even beside a valid guarded apply", () => {
+  const unsafe = SAFE_PRODUCTION_WORKFLOW.replace(
+    "      - run: supabase link",
+    "      - run: supabase db push --linked --include-all\n      - run: supabase link",
+  );
+  assert.ok(
+    validateProductionWorkflow(unsafe).some((failure) =>
+      failure.includes("guarded backend baseline apply"),
+    ),
+  );
 });
