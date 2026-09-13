@@ -19,6 +19,7 @@ import {
   fetchOpenApiDoc,
   fetchPreMigrationLedger,
   fetchSchemaAttestation,
+  parseAppliedMigrationVersions,
   parseMigrationLedgerOutput,
   pingFunctionEndpoint,
   requiredProbeEnvironmentVariables,
@@ -230,6 +231,9 @@ test("migration ledger parser fails closed on blank, header-only, and malformed 
     " LOCAL | REMOTE | TIME\n unexpected row\n",
     " LOCAL | REMOTE | TIME\n invalid | 20260527111048 | now\n",
     " LOCAL | REMOTE | TIME\n | | now\n",
+    " LOCAL | REMOTE | TIME\n 20260527111048 | 20260527111048 | now\n 20260527111048 | | now\n",
+    " LOCAL | REMOTE | TIME\n 20260906000500 | | now\n 20260527111048 | 20260527111048 | now\n",
+    " LOCAL | REMOTE | TIME\n | 20260906000500 | now\n 20260527111048 | 20260527111048 | now\n",
   ]) {
     assert.throws(() => parseMigrationLedgerOutput(invalid), /migration ledger/i, invalid);
   }
@@ -244,6 +248,56 @@ test("migration ledger parser fails closed on blank, header-only, and malformed 
       remoteVersions: [BASELINE_MIGRATION],
     },
   );
+});
+
+test("migration ledger accepts the structured CLI response and preserves each side independently", () => {
+  const response = JSON.stringify({
+    migrations: [
+      { local: BASELINE_MIGRATION, remote: BASELINE_MIGRATION, time: "2026-05-27 11:10:48" },
+      { local: "20260906000500", remote: "", time: "2026-09-06 00:05:00" },
+      { local: "", remote: "20260906010846", time: "2026-09-06 01:08:46" },
+    ],
+    message: "Informational text is not an applied migration identity.",
+  });
+  assert.deepEqual(parseMigrationLedgerOutput(response), {
+    rows: [
+      { localVersion: BASELINE_MIGRATION, remoteVersion: BASELINE_MIGRATION },
+      { localVersion: "20260906000500", remoteVersion: null },
+      { localVersion: null, remoteVersion: "20260906010846" },
+    ],
+    localVersions: [BASELINE_MIGRATION, "20260906000500"],
+    remoteVersions: [BASELINE_MIGRATION, "20260906010846"],
+  });
+  assert.deepEqual(
+    [...parseAppliedMigrationVersions(response)],
+    [BASELINE_MIGRATION, "20260906010846"],
+  );
+});
+
+test("structured migration ledger rejects malformed envelopes and ambiguous identities", () => {
+  const row = { local: BASELINE_MIGRATION, remote: BASELINE_MIGRATION, time: "now" };
+  const invalidResponses = [
+    "{\n LOCAL | REMOTE | TIME\n 20260527111048 | 20260527111048 | now",
+    "[]",
+    JSON.stringify({ migrations: [] }),
+    JSON.stringify({ migrations: [row], error: "query failed" }),
+    JSON.stringify({ migrations: [row], message: {} }),
+    JSON.stringify({ migrations: [null] }),
+    JSON.stringify({ migrations: [{ ...row, local: null }] }),
+    JSON.stringify({ migrations: [{ ...row, remote: 20260527111048 }] }),
+    JSON.stringify({ migrations: [{ ...row, local: "", remote: "" }] }),
+    JSON.stringify({ migrations: [{ ...row, local: "invalid" }] }),
+    JSON.stringify({ migrations: [{ ...row, local: ` ${BASELINE_MIGRATION}` }] }),
+    JSON.stringify({ migrations: [{ ...row, time: null }] }),
+    JSON.stringify({ migrations: [{ ...row, applied: true }] }),
+    JSON.stringify({ migrations: [row, row] }),
+    JSON.stringify({ migrations: [{ ...row, local: "20260906000500", remote: "" }, row] }),
+    JSON.stringify({ migrations: [{ ...row, local: "", remote: "20260906000500" }, row] }),
+    JSON.stringify({ migrations: Array.from({ length: 501 }, () => row) }),
+  ];
+  for (const response of invalidResponses) {
+    assert.throws(() => parseMigrationLedgerOutput(response), /migration ledger/i);
+  }
 });
 
 test("validateSupabaseUrl accepts only the exact canonical HTTPS project origin", () => {
@@ -389,14 +443,15 @@ test("hosted inventory CLI calls are shell-free, bounded, and contain no credent
   assert.deepEqual(calls[0].args, ["migration", "list", "--project-ref", PROJECT_REF]);
   assert.equal(calls[1].args[0], "db");
   assert.equal(calls[1].args[1], "query");
-  assert.deepEqual(calls[1].args.slice(2, 6), [
+  assert.deepEqual(calls[1].args.slice(2, 7), [
+    "--linked",
     "--project-ref",
     PROJECT_REF,
     "--output-format",
     "json",
   ]);
-  assert.equal(calls[1].args[6], "--file");
-  assert.match(calls[1].args[7], /prompted-release-inventory-.*inventory[.]sql$/);
+  assert.equal(calls[1].args[7], "--file");
+  assert.match(calls[1].args[8], /prompted-release-inventory-.*inventory[.]sql$/);
   assert.deepEqual(calls[2].args, [
     "functions",
     "list",

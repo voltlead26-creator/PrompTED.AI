@@ -630,10 +630,9 @@ export function validateRoutingAttestation({
   return { failures, checks };
 }
 
-// Parses `supabase migration list --linked` output. That command prints a
-// pipe-delimited table of (LOCAL, REMOTE, TIME) migration timestamps; a
-// migration is "applied live" only when its timestamp appears in the REMOTE
-// column -- a migration can be present locally and absent remotely, which is
+// Parses table or structured JSON output from `supabase migration list --linked`.
+// A migration is "applied live" only when its timestamp appears on the REMOTE
+// side -- a migration can be present locally and absent remotely, which is
 // exactly the "deployed ahead of its migration" bug this script exists to
 // catch, so the LOCAL column must never be treated as evidence of anything.
 export function parseAppliedMigrationVersions(cliOutput) {
@@ -687,6 +686,73 @@ export function parseMigrationLedgerOutput(cliOutput) {
   if (typeof cliOutput !== "string" || cliOutput.length > 1024 * 1024) {
     throw new Error("Hosted migration ledger response was invalid.");
   }
+  let sourceRows;
+  if (/^[\[{]/.test(cliOutput.trimStart())) {
+    let response;
+    try {
+      response = JSON.parse(cliOutput);
+    } catch {
+      throw new Error("Hosted migration ledger response contained invalid JSON.");
+    }
+    if (
+      !response ||
+      Array.isArray(response) ||
+      typeof response !== "object" ||
+      Object.keys(response).some((key) => !["migrations", "message"].includes(key)) ||
+      (Object.hasOwn(response, "message") && typeof response.message !== "string") ||
+      !Array.isArray(response.migrations)
+    ) {
+      throw new Error("Hosted migration ledger response contained an invalid envelope.");
+    }
+    sourceRows = response.migrations.map((row) => {
+      if (
+        !row ||
+        Array.isArray(row) ||
+        typeof row !== "object" ||
+        Object.keys(row).some((key) => !["local", "remote", "time"].includes(key)) ||
+        typeof row.local !== "string" ||
+        typeof row.remote !== "string" ||
+        typeof row.time !== "string"
+      ) {
+        throw new Error("Hosted migration ledger response contained an invalid row.");
+      }
+      return { local: row.local, remote: row.remote };
+    });
+  } else {
+    sourceRows = parseMigrationLedgerTableRows(cliOutput);
+  }
+  if (sourceRows.length === 0 || sourceRows.length > 500) {
+    throw new Error("Hosted migration ledger response contained an invalid migration row count.");
+  }
+  const rows = [];
+  const localVersions = [];
+  const remoteVersions = [];
+  for (const { local, remote } of sourceRows) {
+    const localVersion = /^\d{14}$/.test(local) ? local : null;
+    const remoteVersion = /^\d{14}$/.test(remote) ? remote : null;
+    if (
+      (local && !localVersion) ||
+      (remote && !remoteVersion) ||
+      (!localVersion && !remoteVersion)
+    ) {
+      throw new Error("Hosted migration ledger response contained an invalid version.");
+    }
+    if (
+      (localVersion && localVersions.length && localVersion <= localVersions.at(-1)) ||
+      (remoteVersion && remoteVersions.length && remoteVersion <= remoteVersions.at(-1))
+    ) {
+      throw new Error(
+        "Hosted migration ledger response contained duplicate or unordered versions.",
+      );
+    }
+    rows.push({ localVersion, remoteVersion });
+    if (localVersion) localVersions.push(localVersion);
+    if (remoteVersion) remoteVersions.push(remoteVersion);
+  }
+  return { rows, localVersions, remoteVersions };
+}
+
+function parseMigrationLedgerTableRows(cliOutput) {
   const lines = cliOutput.replace(/\r\n?/g, "\n").split("\n");
   const headerIndex = lines.findIndex((line) => {
     const columns = line.split("|").map((column) => column.trim().toUpperCase());
@@ -701,33 +767,15 @@ export function parseMigrationLedgerOutput(cliOutput) {
     throw new Error("Hosted migration ledger response was unrecognizable.");
   }
   const rows = [];
-  const localVersions = [];
-  const remoteVersions = [];
   for (const line of lines.slice(headerIndex + 1)) {
     if (line.trim() === "" || /^[-\s|+:]+$/.test(line)) continue;
     const columns = line.split("|");
     if (columns.length < 3) {
       throw new Error("Hosted migration ledger response contained an invalid row.");
     }
-    const local = columns[0].trim();
-    const remote = columns[1].trim();
-    const localVersion = /^\d{14}$/.test(local) ? local : null;
-    const remoteVersion = /^\d{14}$/.test(remote) ? remote : null;
-    if (
-      (local && !localVersion) ||
-      (remote && !remoteVersion) ||
-      (!localVersion && !remoteVersion)
-    ) {
-      throw new Error("Hosted migration ledger response contained an invalid version.");
-    }
-    rows.push({ localVersion, remoteVersion });
-    if (localVersion) localVersions.push(localVersion);
-    if (remoteVersion) remoteVersions.push(remoteVersion);
+    rows.push({ local: columns[0].trim(), remote: columns[1].trim() });
   }
-  if (rows.length === 0) {
-    throw new Error("Hosted migration ledger response contained no migration rows.");
-  }
-  return { rows, localVersions, remoteVersions };
+  return rows;
 }
 
 export async function fetchPreMigrationLedger({
@@ -1055,6 +1103,7 @@ export async function fetchHostedInventory({
       [
         "db",
         "query",
+        "--linked",
         "--project-ref",
         exactProjectRef,
         "--output-format",
