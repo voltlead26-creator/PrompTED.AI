@@ -15,6 +15,37 @@ Deno.test("uploaded catalogue headings remain evidence rather than the requested
   assertEquals(context.messages.some((turn) => turn.content === `Attached document content:\n${source}`), true);
 });
 
+Deno.test("resume clarification preserves distinct jobs and an explicit history-scope answer across replay", () => {
+  const situation = "resume";
+  const current = "Warehouse Supervisor at Northstar Distribution, started March 2021. End date and current status unknown.";
+  const prior = "Earlier role: Storeperson at Eastbank Supplies, January 2018 to February 2021. Picked and packed customer orders.";
+  const answer = "Include those two roles only. There are no other roles I want included.";
+  const request = {
+    situation,
+    extracted_text: prior,
+    history: [
+      { role: "user", content: situation },
+      { role: "user", content: current },
+      { role: "assistant", content: "Are there earlier roles you want included?" },
+    ],
+    answer,
+  };
+  const context = clarificationContext(request);
+  assertEquals(context.messages.filter(turn => turn.content === current).length, 1);
+  assertEquals(context.messages.filter(turn => turn.content === `Attached document content:\n${prior}`).length, 1);
+  assertEquals(context.messages.filter(turn => turn.content === answer).length, 1);
+  const resumed = clarificationContext({
+    ...request,
+    history: [...request.history, { role: "user", content: answer }],
+  });
+  assertEquals(resumed.messages, context.messages,
+    "Resubmitting the latest answer preserves both jobs without duplicating the scope answer");
+  const prompt = buildSystemPrompt({ task: "clarify", profileHint: resumed.profileHint });
+  assertStringIncludes(prompt, "Respect an explicit request to include only one role");
+  assertStringIncludes(prompt, "Do not infer that an unprovided end date means Present");
+  assertStringIncludes(prompt, "Include each intended role and its unresolved details in the knowledge summary");
+});
+
 Deno.test("an assistant's earlier catalogue heading cannot override the user's requested profile", () => {
   const context = clarificationContext({
     situation: "Please write a cover letter",

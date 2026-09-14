@@ -10,7 +10,7 @@ import type { QualityAuditIssue } from "./document-output-contracts.ts";
 import { buildSystemPrompt } from "./prompt-builder.ts";
 import { resolveTemplate } from "./template-engine.ts";
 import { resolveDocumentProfilePolicy } from "./document-profile-projection.ts";
-import { createDocumentPlaceholderToken } from "./document-placeholder-policy.ts";
+import { createDocumentPlaceholderToken, resolveDocumentPlaceholders } from "./document-placeholder-policy.ts";
 
 const originalWording = "I was charged $10 twice.";
 const siblingWording = "Please review the duplicate charge.";
@@ -51,6 +51,7 @@ type Options = {
   auditBindingResponse?: "missing" | "malformed" | "changed";
   deniedRepair?: { stage: string; code: string; message: string };
   qualityIssuesByRound?: QualityAuditIssue[][];
+  plannedLabels?: Record<string, string>;
   assessmentPolicy?: {
     version: "legacy-wording-assessment.1";
     executionPolicySha256: string;
@@ -304,7 +305,7 @@ async function withPipeline(
           section_context: input.template.sections.map(({ key, label }) => ({
             key,
             relevant_content: originalWording,
-            display_label: label,
+            display_label: options.plannedLabels?.[key] ?? label,
           })),
         };
         break;
@@ -598,6 +599,80 @@ Deno.test("invented placeholder identities cannot escape the declared resolution
   });
 });
 
+Deno.test("date range placeholders cannot stand in for only one endpoint", async () => {
+  const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
+  assert(profile?.informationContract);
+  const item = profile.informationContract!.sections.find(section => section.sectionKey === "experience")!
+    .requiredInformation.find(item => item.key === "employment_dates")!;
+  const token = createDocumentPlaceholderToken("resume.experience.employment_dates", item.placeholderLabel);
+  const repaired = `Northstar Distribution\nStarted March 2021.\nEmployment period: ${token}`;
+  for (const dates of [`March 2021–${token}`, `March 2021 to ${token}`, `${token}–March 2021`,
+    `${token}\nMarch 2021–${token}`, `March 2021–\n  ${token}`, `${token}–\n  March 2021`,
+    `between March 2021 and ${token}`, `between ${token} and March 2021`,
+    `${token} — May 2021`, `${token} — current`, `between ${token} and May 2021`]) {
+    await withPipeline({ initial: `Northstar Distribution | ${dates}`, replacement: repaired,
+      finalGrounding: "approve", missingInformation: { experience: [item.key] } }, async fixture => {
+      fixture.input.situation = "Northstar Distribution. Started March 2021; finish date is not supplied.";
+      fixture.input.resolvedProfile = profile;
+      fixture.input.template.sections[0].key = "experience";
+      const result = await fixture.run();
+      assertEquals(result.sections[0].content, repaired,
+        "A full-range answer must not be inserted beside an already printed range endpoint");
+      assertEquals(result.sections[1].content, siblingWording);
+      assertEquals(result.unresolvedPlaceholders.map(value => value.id), ["resume.experience.employment_dates"]);
+      assertEquals(fixture.groundingDrafts.length, 2, "Repaired wording needs a new audit");
+      const resolved = resolveDocumentPlaceholders(Object.fromEntries(result.sections.map(section => [section.key, section.content])), result.unresolvedPlaceholders,
+        "resume.experience.employment_dates", "March 2021 to February 2026");
+      assertEquals(resolved.contentBySection.experience,
+        "Northstar Distribution\nStarted March 2021.\nEmployment period: March 2021 to February 2026");
+    });
+  }
+});
+
+Deno.test("standalone date range slots and known dates remain valid without repair", async () => {
+  const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
+  assert(profile?.informationContract);
+  const item = profile.informationContract.sections.find(section => section.sectionKey === "experience")!
+    .requiredInformation.find(item => item.key === "employment_dates")!;
+  const token = createDocumentPlaceholderToken("resume.experience.employment_dates", item.placeholderLabel);
+  for (const initial of [`Northstar Distribution\nStarted March 2021.\nEmployment period: ${token}`,
+    `Northstar Distribution\n- ${token}`, `Started March 2021\n- ${token}`,
+    `Milestone 3–${token}`, `Employment period: ${token} and further details available on request.`,
+    `${token} — May require rescheduling.`, `${token} — Current planning estimate.`,
+    `Review between ${token} and current planning cycle.`,
+    `Earlier employment: March 2021 to February 2026.\nCurrent employment period: ${token}`]) {
+    await withPipeline({ initial, finalGrounding: "approve", missingInformation: { experience: [item.key] } }, async fixture => {
+      fixture.input.situation = "Northstar Distribution. Started March 2021. Earlier employment ended February 2026.";
+      fixture.input.resolvedProfile = profile;
+      fixture.input.template.sections[0].key = "experience";
+      const result = await fixture.run();
+      assertEquals(result.sections[0].content, initial);
+      assertEquals(fixture.groundingDrafts.length, 1, "Valid range slots should not spend a repair attempt");
+    });
+  }
+});
+
+Deno.test("unrepaired date range misuse remains a recorded blocking failure", async () => {
+  const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
+  assert(profile?.informationContract);
+  const item = profile.informationContract.sections.find(section => section.sectionKey === "experience")!
+    .requiredInformation.find(item => item.key === "employment_dates")!;
+  const token = createDocumentPlaceholderToken("resume.experience.employment_dates", item.placeholderLabel);
+  const initial = `Northstar Distribution | March 2021–${token}`;
+  await withPipeline({ initial, replacement: initial, finalGrounding: "approve", assessmentPolicy,
+    missingInformation: { experience: [item.key] } }, async fixture => {
+    fixture.input.situation = "Northstar Distribution. Started March 2021; finish date is not supplied.";
+    fixture.input.resolvedProfile = profile;
+    fixture.input.template.sections[0].key = "experience";
+    const result = await fixture.run();
+    assertEquals(result.sections[1].content, siblingWording);
+    assert(result.wordingAssessment?.review.quality.deterministicIssues.some(issue =>
+      issue.severity === "high" && issue.finding.includes("only one range endpoint")));
+    assertEquals(result.wordingAssessment?.sections[0].requiredFacts, "blocked");
+    assert(!result.sections[0].content.includes(initial));
+  });
+});
+
 Deno.test("both reviewers receive only the resolved section's exact neutral fallback", async () => {
   const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
   assert(profile?.informationContract);
@@ -621,6 +696,63 @@ Deno.test("both reviewers receive only the resolved section's exact neutral fall
       assertEquals(contract.declared_tokens, []);
     }
   });
+});
+
+Deno.test("selectable replacement wording remains pending user choice across intent writing and review", async () => {
+  const profile = resolveDocumentProfilePolicy(resolveTemplate("resume")!)!.profile;
+  assert(profile?.informationContract);
+  const item = profile.informationContract.sections.find(section => section.sectionKey === "summary")!
+    .requiredInformation.find(item => item.key === "value_statement")!;
+  assert(item.neutralReplacementOptions.length > 0 && !item.automaticFallback);
+  const token = createDocumentPlaceholderToken("resume.summary.value_statement", item.placeholderLabel);
+  const requests: Array<{ schema: string | undefined; body: Record<string, unknown> }> = [];
+  const seen = new Set<string>();
+  await withPipeline({ initial: token, replacement: token, finalGrounding: "approve",
+    missingInformation: { summary: [item.key] }, onProviderRequest(schema, body) {
+      if (schema === "prompted_document_section_plan") return;
+      requests.push({ schema, body: structuredClone(body) });
+    } }, async fixture => {
+      fixture.input.resolvedProfile = profile;
+      fixture.input.template.sections[0].key = "summary";
+      const result = await fixture.run();
+      assertEquals(result.sections[0].content, token);
+      assertEquals(result.unresolvedPlaceholders.map(item => item.id), ["resume.summary.value_statement"]);
+      for (const { schema, body } of requests) {
+        seen.add(schema ?? "writer");
+        const prompt = JSON.stringify(body);
+        assert(prompt.includes("Selectable neutral replacements are choices for the user, not automatic fallbacks"),
+          "Provider stages must not promote a selectable option or its suitability text into user approval");
+        if (schema?.endsWith("_audit")) {
+          const contract = String(body.instructions).split("APPLICATION RESOLUTION CONTRACT — supplied by the resolved template, not user facts:\n")[1];
+          assertEquals(JSON.parse(contract.split("\n")[0]).automatic_fallbacks, [],
+            "A selectable value statement cannot acquire automatic-fallback authority in review");
+        }
+      }
+      assertEquals(seen, new Set(["prompted_document_intent_brief", "writer",
+        "prompted_document_grounding_audit", "prompted_document_quality_audit"]));
+    });
+});
+
+Deno.test("initial writer omits source-absence commentary while retaining explicit negative facts and required gaps", async () => {
+  const retained = "No injury or damage was reported.";
+  const writerPrompts: string[] = [];
+  await withPipeline({ initial: retained, replacement: retained, evidenceQuote: retained,
+    finalGrounding: "approve", onProviderRequest(schema, body) {
+      if (schema !== undefined) return;
+      writerPrompts.push(JSON.stringify(body));
+    } }, async fixture => {
+      fixture.input.situation = retained;
+      const result = await fixture.run();
+      assert(writerPrompts.length > 0);
+      for (const prompt of writerPrompts) {
+        assert(prompt.includes("Do not add commentary about what the conversation or supplied account does not contain"));
+        assert(prompt.includes("Preserve explicit source-supported negative facts"));
+        assert(prompt.includes("Keep required unknown facts in their declared tokens"));
+      }
+      assertEquals(result.sections[0].content, retained);
+      assert(fixture.groundingDrafts.length > 0 && fixture.qualityDrafts.length > 0,
+        "The producer instruction must not bypass either factual or quality review");
+    });
 });
 
 Deno.test("factual review can return the complete roster for a longer document", async () => {
@@ -687,6 +819,52 @@ Deno.test("factual repair receives the exact rejected clause, not only generic c
       "The writer must receive the finding that identifies the rejected factual clause");
     assert(corrections.includes("Remove only the unsupported factual clause"));
     assertEquals(fixture.writes.length, 3, "The passing sibling is not rewritten");
+  });
+});
+
+Deno.test("repair requests retain original evidence without restarting the generated section plan", async () => {
+  const requests: string[] = [];
+  await withPipeline({ initial: inventedWording, replacement: originalWording,
+    unsupportedText: inventedWording, onProviderRequest: (schema, body) => {
+      if (schema === undefined) requests.push(JSON.stringify(body));
+    } }, async fixture => {
+    fixture.input.uploadContext = "Owned upload evidence: reference alpha.";
+    fixture.input.extractedText = "Original extracted evidence: reference beta.";
+    fixture.input.memoryContext = "Saved evidence: reference gamma.";
+    const result = await fixture.run();
+    assertEquals(result.sections.map(section => section.content), [originalWording, siblingWording]);
+    const repair = requests.at(-1)!;
+    for (const source of [fixture.input.uploadContext, fixture.input.extractedText, fixture.input.memoryContext]) {
+      assert(repair.includes(source), "Repair needs original evidence, not a generated summary of it");
+    }
+    assert(!repair.includes("Relevant material gathered for this section:"),
+      "The original model plan must not reinstate material removed by factual repair");
+    assert(!repair.includes("Apply the outcome brief's safe assumptions decisively."),
+      "A narrow repair must not restart draft expansion from the old brief");
+    assert(repair.includes("Required audit corrections:"));
+    assert(repair.includes("Current draft of this exact section"));
+    assertEquals(fixture.writes.length, 3, "The unaffected sibling is retained");
+  });
+});
+
+Deno.test("repair removes a flagged generated label without reinstating it on later repairs", async () => {
+  const inventedLabel = "Issue — Company Admitted Fraud";
+  const labelIssue: QualityAuditIssue = { severity: "high", category: "fact", section_key: "issue",
+    finding: `The label “${inventedLabel}” makes an unsupported allegation.`,
+    required_correction: "Remove that allegation from the section label; retain the factual body." };
+  await withPipeline({ initial: originalWording, replacement: originalWording,
+    plannedLabels: { issue: inventedLabel }, qualityIssuesByRound: [[labelIssue],
+      [{ severity: "low", category: "tone", section_key: "issue",
+        finding: "The issue wording could be more direct.", required_correction: "Keep the supported wording concise." }], []],
+  }, async fixture => {
+    fixture.input.conversationContext = originalWording;
+    const result = await fixture.run();
+    assertEquals(result.sections[0].label, "Issue");
+    assertEquals(result.sections[0].content, originalWording);
+    assertEquals(result.sections[1].content, siblingWording);
+    assert(fixture.qualityDrafts[0].includes(inventedLabel));
+    for (const audited of fixture.qualityDrafts.slice(1)) assert(!audited.includes(inventedLabel),
+      "The corrected label must be audited and retained instead of reloaded from the original plan");
   });
 });
 

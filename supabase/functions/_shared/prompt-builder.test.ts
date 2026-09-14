@@ -76,6 +76,32 @@ Deno.test("the selected document profile takes precedence over unrelated user me
   assert(prompt.includes("information_key=move_date"));
 });
 
+Deno.test("resume clarification collects the intended employment history before knowledge review", () => {
+  const before = JSON.stringify(DIPS);
+  for (const task of ["intent", "clarify"]) {
+    const prompt = buildSystemPrompt({ task, profileHint: "resume" });
+    assert(prompt.includes("One supplied role does not establish that the intended employment history is complete"));
+    assert(prompt.includes("earlier roles the user wants included"));
+    assert(prompt.includes("Respect an explicit request to include only one role"));
+    assert(prompt.includes("Do not infer that an unprovided end date means Present"));
+    assert(prompt.includes("Include each intended role and its unresolved details in the knowledge summary"));
+    assert(prompt.includes("Do not invent additional placeholder identities"));
+    assert(prompt.includes("obtain explicit user confirmation first"));
+  }
+  assertEquals(JSON.stringify(DIPS), before, "Clarification guidance must not mutate versioned profile definitions");
+});
+
+Deno.test("employment history clarification follows the resolved profile and does not reopen generation", () => {
+  const marker = "One supplied role does not establish";
+  for (const task of ["document", "edit", "review", "recommend"]) {
+    assert(!buildSystemPrompt({ task, profileHint: "resume" }).includes(marker));
+  }
+  assert(!buildSystemPrompt({ task: "clarify", profileHint: "cover-letter", extra: "Past resume work" }).includes(marker));
+  assert(!buildSystemPrompt({ task: "clarify", profileHint: "resume", resolvedProfile: null }).includes(marker));
+  const moving = DIPS.find(profile => profile.key === "moving-house-checklist")!;
+  assert(!buildSystemPrompt({ task: "clarify", profileHint: "resume", resolvedProfile: moving }).includes(marker));
+});
+
 
 Deno.test("server profile selection snapshot preserves all existing candidates and selector defaults", () => {
   const before = JSON.stringify(DIPS);

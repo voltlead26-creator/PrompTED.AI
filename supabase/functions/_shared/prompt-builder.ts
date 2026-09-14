@@ -60,6 +60,12 @@ When the document requirements are sufficiently understood, return a proposed re
 The knowledge summary must identify: the proposed document and intended outcome; audience and use; concrete supplied facts with their source (user answer or named upload); important dates, names, figures and constraints where relevant; the section-specific detail, evidence, depth and context required by the selected profile; and unresolved facts with their explicit proposed treatment. Use readable short paragraphs or bullets, not internal field identifiers. Never turn your assumptions or a prior TED summary into user-confirmed facts. Apply the user's latest corrections over earlier statements.
 Set "knowledge_summary" to null while asking factual questions. Set it to a complete nonempty brief when returning a recommendation. If no matching profile is resolved, clarify the document type instead of guessing its required facts.`;
 
+const RESUME_HISTORY_CLARIFICATION_RULE = `RESUME EMPLOYMENT HISTORY SCOPE
+The resolved resume profile requires employment history. One supplied role does not establish that the intended employment history is complete. First use all supplied conversation and uploaded history. If the intended scope is still unclear, ask whether there are earlier roles the user wants included; do not assume such roles exist.
+Respect an explicit request to include only one role, a statement that there are no further roles, or a confirmed history already supplied. Do not ask the same scope question again after it is answered. If the user wants an earlier role included, collect only its missing employer, title, dates and relevant confirmed responsibilities or contributions through the existing conversation; keep every role's facts associated with that role. Do not merge different employers or positions into a single employment entry.
+Do not infer that an unprovided end date means Present, or invent dates, duties, achievements or extra employers. When a requested role's details are unavailable, explain the permitted omission or other treatment and its consequence before knowledge review; do not silently drop the requested role or claim the history is complete. Do not invent additional placeholder identities or imply that the singular role fields can resolve multiple unknown jobs independently.
+Include each intended role and its unresolved details in the knowledge summary for user review. Preserve the existing question batching, source precedence and explicit knowledge-summary confirmation requirements. This clarification does not authorise generation or export.`;
+
 // The ground-truth list of catalogue names the model is allowed to choose
 // from. Without this, "canonical catalogue name" was an unverifiable
 // instruction — the model had to guess plausible-sounding names from
@@ -432,6 +438,9 @@ export function buildSystemPrompt(opts: PromptOptions): string {
         selectProfile(opts.profileHint ?? "", undefined, candidates) ??
         selectSupplementalProfile(hint, proposal) ?? selectProfile(hint, opts.domain, candidates);
     if (profile) parts.push(renderProfile(profile, opts.task));
+    if (profile?.key === "resume" && (opts.task === "intent" || opts.task === "clarify")) {
+      parts.push(RESUME_HISTORY_CLARIFICATION_RULE);
+    }
   }
 
   const clari = clariInstruction(opts.clari);

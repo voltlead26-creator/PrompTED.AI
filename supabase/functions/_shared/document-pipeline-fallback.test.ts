@@ -3,7 +3,10 @@ import {
   mergeFinalPlaceholders,
   sectionFallbackPlaceholder,
 } from "./document-pipeline.ts";
-import { parseDocumentPlaceholderTokens } from "./document-placeholder-policy.ts";
+import {
+  parseDocumentPlaceholderTokens,
+  resolveDocumentPlaceholders,
+} from "./document-placeholder-policy.ts";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -64,6 +67,43 @@ Deno.test("sectionFallbackPlaceholder falls back to a generic question when no s
     result.placeholder.question.length > 0,
     "a section can fail for reasons other than missing info (e.g. only ever producing weak/instructional output), so the question must still be non-empty",
   );
+});
+
+Deno.test("sectionFallbackPlaceholder asks for the complete section that the answer actually replaces", () => {
+  for (const missing_information of [
+    ["Two or three confirmed strengths to emphasise"],
+    [],
+  ]) {
+    const result = sectionFallbackPlaceholder(
+      brief,
+      null,
+      { key: "summary", label: "Professional Summary" },
+      {
+        key: "summary",
+        ready: false,
+        missing_information,
+        missing_information_keys: [],
+      },
+    );
+    assert(
+      /complete.*Professional Summary/i.test(result.placeholder.question) &&
+        /answer.*replace.*entire section/i.test(result.placeholder.question),
+      "a whole-section replacement must explicitly request complete section text and explain the scope of the answer",
+    );
+    const answer = "Warehouse supervisor with confirmed strengths in stock control and team coordination.";
+    const resolved = resolveDocumentPlaceholders(
+      { summary: result.section.content, experience: "Started in March 2021." },
+      [result.placeholder],
+      result.placeholder.id,
+      answer,
+    );
+    assert(
+      resolved.contentBySection.summary === answer &&
+        resolved.contentBySection.experience === "Started in March 2021." &&
+        resolved.unresolved.length === 0,
+      "the existing resolver inserts the complete answer verbatim, resolves the fallback, and preserves adjacent sections",
+    );
+  }
 });
 
 Deno.test("sectionFallbackPlaceholder is deterministic for the same inputs, so it can be used to detect a fallback after the fact", () => {
