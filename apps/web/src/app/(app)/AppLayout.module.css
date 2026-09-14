@@ -25,11 +25,24 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+}
+
+.header { flex-shrink: 0; }
+
+/* Expansion overlays this stable rail rather than resizing the document. */
+.navigationSlot {
+  position: relative;
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
+  min-height: 0;
+  z-index: 40;
 }
 
 .main {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding: var(--space-4);
 }
@@ -37,8 +50,10 @@
 /* Mobile navigation is a drawer, so content no longer reserves space
    for the retired fixed bottom bar. */
 @media (max-width: 767px) {
+  .navigationSlot { width: 0; flex-basis: 0; }
   .main {
     width: 100%;
-    padding: var(--space-3);
+    padding: var(--space-3) max(var(--space-3), env(safe-area-inset-right))
+      max(var(--space-3), env(safe-area-inset-bottom)) max(var(--space-3), env(safe-area-inset-left));
   }
 }

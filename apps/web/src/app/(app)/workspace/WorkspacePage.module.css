@@ -1,0 +1,6 @@
+.page {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+  align-content: start;
+}

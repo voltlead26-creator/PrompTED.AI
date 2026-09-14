@@ -1,5 +1,6 @@
 import { MasterWorkspaceImport } from "./MasterWorkspaceImport";
 import { RetainedWorkspaceUploads } from "./RetainedWorkspaceUploads";
+import styles from "./WorkspacePage.module.css";
 
 export default async function WorkspacePage({ searchParams }: {
   searchParams: Promise<{ upload?: string | string[]; review?: string | string[] }>;
@@ -7,7 +8,7 @@ export default async function WorkspacePage({ searchParams }: {
   const query = await searchParams;
   const selectedUploadId = typeof query.upload === "string" ? query.upload : query.upload ? "invalid" : null;
   const reviewUploadId = query.review === "text" ? selectedUploadId : null;
-  return <div style={{ overflowY: "auto", height: "100%" }}>
+  return <div className={styles.page}>
     {selectedUploadId && !reviewUploadId && <RetainedWorkspaceUploads selectedUploadId={selectedUploadId} />}
     <MasterWorkspaceImport initialUploadId={reviewUploadId} />
     {(!selectedUploadId || reviewUploadId) && <RetainedWorkspaceUploads selectedUploadId={selectedUploadId} />}

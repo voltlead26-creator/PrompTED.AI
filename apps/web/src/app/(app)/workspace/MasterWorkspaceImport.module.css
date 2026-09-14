@@ -1,37 +1,23 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 14px 12px;
+  gap: var(--space-4);
+  min-width: 0;
   background: var(--paper, #F7F1E7);
   box-sizing: border-box;
 }
 
-@media (min-width: 900px) {
-  .screen {
-    height: 100%;
-    max-height: 100%;
-    overflow: hidden;
-  }
-}
-
-/* Doc dropzone leads at 2fr vs sections' 1fr, matching WorkspaceScreen's
-   doc:sections ratio once a document exists. Proofread has no placeholder
-   here since there's no document yet to proofread. */
+/* Keep upload instructions beside the section preview on wide screens. */
 .body {
   display: grid;
-  /* Sections column is a fixed width sized to the card (not a fraction
-     of the doc panel) \u2014 just enough wider than the portrait card to
-     give it breathing room, not an arbitrary fr split. */
   grid-template-columns: minmax(0, 3fr) minmax(16rem, 1fr);
   gap: 16px;
   align-items: stretch;
-  /* .screen is a flex column; without flex:1 this box would only be as
-     tall as its content, leaving dead space below it instead of the
-     dropzone/sections panels running the full remaining screen height. */
+  /* Let import and retained-file panels share the page's natural flow. */
   flex: 1;
   min-height: 0;
-  padding: 18px 20px 20px;
+  min-width: 0;
+  padding: clamp(var(--space-3), 2vw, var(--space-5));
   border: 1px solid var(--line, #E2D7C2);
   border-radius: 22px;
   background: var(--paper-deep, #EFE5D4);
@@ -42,10 +28,6 @@
 @media (max-width: 899px) {
   .body { grid-template-columns: 1fr; }
 }
-@media (max-width: 899px) {
-  .screen { height: auto; max-height: none; overflow: visible; }
-  .body { max-height: none; overflow: visible; }
-}
 
 .sidePanel {
   background: var(--card, #FFFDF8);
@@ -53,33 +35,28 @@
   border-radius: 14px;
   padding: 12px 14px;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  /* The panel itself no longer scrolls \u2014 heading/sub stay fixed;
-     only .sectionsStack below scrolls. See that rule for why. */
   overflow: hidden;
 }
 .panelHeading { margin: 0; font-size: 1.05rem; color: var(--ink, #2B2521); }
 .panelSub { margin: 0 0 10px; font-size: 0.8rem; color: var(--ink-soft, #5E544A); }
 .sectionsStack {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
   gap: 10px;
   padding-top: 4px;
-  /* Only this element scrolls \u2014 heading/sub above it are outside
-     this box, so they stay put while cards scroll underneath. */
-  flex: 1;
+  width: 100%;
+  max-width: 24rem;
   min-height: 0;
-  overflow-y: auto;
 }
-/* Fixed card width (not a % of the panel) so the panel column can be a
-   tight fixed width too, instead of being sized to leave a wide gutter
-   around a proportionally-sized card. Handles any number of sections
-   \u2014 no cap on how many render, the list just scrolls. */
+/* These three decorative pages are an empty-state illustration, not a
+   scrollable list of actual document sections. */
 .sectionThumb {
-  width: 160px;
+  width: 100%;
   aspect-ratio: 3 / 4;
   flex-shrink: 0;
   border: 1px solid var(--line, #E2D7C2);
@@ -111,13 +88,13 @@
   align-items: center;
   justify-content: center;
   min-width: 0;
-  min-height: 0;
+  min-height: 18rem;
   border: 2px dashed var(--line, #E2D7C2);
   border-radius: 18px;
   background: var(--card, #FFFDF8);
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
-  padding: 24px;
+  padding: clamp(var(--space-4), 3vw, var(--space-6));
   box-sizing: border-box;
 }
 .dropzone:hover, .dropzone:focus-visible {

@@ -102,6 +102,14 @@
   flex: none;
 }
 
+.accountNav > a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+}
+
 .accountNav :global([class*="ghost"]) {
   color: rgba(240, 235, 228, 0.75);
 }
@@ -144,7 +152,9 @@
   .bar {
     justify-content: flex-start;
     gap: var(--space-2);
-    padding-inline: var(--space-3);
+    padding-top: max(var(--space-1), env(safe-area-inset-top));
+    padding-right: max(var(--space-3), env(safe-area-inset-right));
+    padding-left: max(var(--space-3), env(safe-area-inset-left));
   }
 
   .menuButton {
