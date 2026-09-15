@@ -148,6 +148,26 @@ describe("durable manual plan editor", () => {
     expect(api.save).toHaveBeenCalledTimes(1); expect(api.save.mock.calls[0]![0].plan_id).toBe(id);
   });
 
+  it("retains a new session when its recovery URL arrives before the router plan prop", async () => {
+    window.history.replaceState(null, "", "/plans?create=manual");
+    const opening = deferred<ManualPlanSnapshot | null>();
+    api.read.mockReturnValueOnce(opening.promise).mockResolvedValue(null);
+    const { result, rerender } = renderHook(({ planId }: { planId?: string }) =>
+      useManualPlanPersistence(owner, planId), { initialProps: {} });
+    const id = result.current.plan!.id;
+    const session = result.current.sessionId;
+    // Next observes replaceState before its search-param consumer supplies planId.
+    rerender({});
+    act(() => result.current.update(plan => ({ ...plan, title: "Keep first edits" })));
+    rerender({ planId: id });
+    expect(result.current.sessionId).toBe(session);
+    expect(api.read).toHaveBeenCalledTimes(1);
+    await act(async () => opening.resolve(null));
+    await waitFor(() => expect(result.current.status).toBe("saved"));
+    expect(api.save).toHaveBeenCalledTimes(1);
+    expect(api.save.mock.calls[0]![0]).toMatchObject({ plan_id: id, title: "Keep first edits" });
+  });
+
   it("selects a different recovery copy for the same plan after query navigation", async () => {
     const current = snapshot();
     const expected = { outcome_id: outcome, artifact_id: artifact, revision: current.revision, updated_at: current.updated_at };

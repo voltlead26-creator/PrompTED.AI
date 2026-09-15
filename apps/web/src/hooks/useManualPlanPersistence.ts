@@ -244,6 +244,10 @@ export function useManualPlanPersistence(ownerUserId?: string | null, planId?: s
     if (adopted) {
       previous.routeKey = routeKey; previous.selectedRecoveryId = selectedRecoveryId; publish(previous);
       return () => {
+        // replaceState may expose recovery first and planId on a later render.
+        // Keep this new-plan lifetime across both halves of its own URL update.
+        if (previous.routeKey === `${ownerToken}:new` && currentRoute.current === `${ownerToken}:${previous.plan.id}` &&
+          currentRecovery.current === previous.recoveryId) return;
         if ((currentRoute.current === previous.routeKey || currentRoute.current === `${ownerToken}:${previous.plan.id}`) && currentRecovery.current === previous.recoveryId &&
           currentRecovery.current !== previous.selectedRecoveryId) return;
         dispose(previous);
